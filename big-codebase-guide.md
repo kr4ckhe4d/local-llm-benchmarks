@@ -1,7 +1,8 @@
 # Using these models on a real codebase
 
-The [benchmarks](README.md) show Qwen3.6-35B-A3B at 32K context doing ~46 tok/s
-with a comfortable VRAM margin. This guide is about what to actually *do* with
+The [benchmarks](README.md) show Qwen3.6-35B-A3B at 32K context doing ~44 tok/s
+generation and ~1,975 tok/s prompt processing on the ROCm build, with a
+comfortable VRAM margin. This guide is about what to actually *do* with
 that — because 32K (or even 128K) tokens is nowhere near "paste in the repo,"
 and the naive approach (dump everything you can fit) is usually the wrong one
 even when it technically fits.
@@ -28,7 +29,7 @@ for the model's own output**. If you fill the context window with input, the
 model has nowhere to write its answer and generation degrades or gets cut off
 mid-response (`finish_reason: "length"`, as seen in earlier tests).
 
-Worked example for Qwen3.6-35B-A3B at 32K (`-ncmoe 14`):
+Worked example for Qwen3.6-35B-A3B at 32K (`-ncmoe 16 -ub 1024`):
 
 | Budget item | Tokens |
 |---|---|
@@ -73,14 +74,19 @@ turn by turn — the same pattern Claude Code itself uses. This scales far bette
 than retrieval-then-stuff for tasks where you don't know up front which files
 matter.
 
-**Caveat before building this on Qwen3.6:** earlier testing found
+**Caveat before building this on Qwen3.6 or Coder-Next:** earlier testing found
 Qwen2.5-Coder-14B's tool-calling was broken — it reasoned about tool calls
 correctly but emitted them as `<tools>...</tools>` plain text instead of the
-structured `tool_calls` API field, because of a chat-template mismatch (see
-[README § Known issues](README.md#known-issues)). **Verify Qwen3.6 actually
-returns proper `tool_calls` with `finish_reason: "tool_calls"` via
-`/v1/chat/completions` before relying on this pattern** — if it has the same
-template issue, the retrieval strategy above is the fallback.
+structured `tool_calls` API field, a chat-template mismatch. (That model has
+since been deleted; the detail is recorded here because the failure mode
+recurs across models and is easy to misdiagnose as the model being bad at
+tool use.)
+
+**Verify whichever model you pick actually returns proper `tool_calls` with
+`finish_reason: "tool_calls"` via `/v1/chat/completions` before relying on this
+pattern** — if it has the same template issue, the retrieval strategy above is
+the fallback. Serving with `--jinja` makes `llama-server` use the model's own
+chat template and is the usual fix for Qwen tool-calling.
 
 ## Exploit prompt caching for repeated context
 
@@ -89,15 +95,18 @@ enabled, size limit: 8192 MiB` — visible in `/tmp/llama-server.log`). Keep a
 **stable prefix** — system prompt, repo map, core files referenced every turn —
 identical across requests, and only the *new* part of each prompt (the actual
 question, newly-retrieved files) pays full prompt-processing cost. Given prompt
-tok/s is much higher than generation tok/s (126.4 vs 45.9 for Qwen3.6 @ 32K),
-this matters most for interactive back-and-forth, less for one-shot calls.
+tok/s is far higher than generation tok/s (1,975 vs 43.9 for Qwen3.6 @ 32K on
+ROCm — a 45x ratio, up from 2.8x on the old Vulkan build), this matters most
+for interactive back-and-forth, less for one-shot calls. The ROCm switch made
+re-sending a large stable prefix dramatically cheaper relative to generation.
 
 ## Match context tier to the task
 
 | Task | Context | Why |
 |---|---|---|
-| Single-file edit, quick question | 32K (`-ncmoe 14`, Qwen3.6) | Fastest (45.9 tok/s), plenty of room for one task |
-| Multi-file refactor, "explain this subsystem" | 128K (`-ncmoe 18`, Qwen3.6) | Needs cross-file context; only ~14% slower |
+| Single-file edit, quick question | 32K (`-ncmoe 16`, Qwen3.6) | Fastest (43.9 tok/s), plenty of room for one task |
+| Multi-file refactor, "explain this subsystem" | 128K (`-ncmoe 20`, Qwen3.6) | Needs cross-file context; only ~5% slower generation |
+| Serious coding over a large context | 128K-256K (Qwen3-Coder-Next) | Coding specialist; ~25 tok/s but answers without a reasoning preamble |
 | "Summarize/understand the whole repo" | Neither — see map-reduce below | No single context tier holds a real codebase |
 
 ## When even 128K isn't enough: map-reduce
@@ -116,12 +125,25 @@ context-scaling table: gains shrink and cost grows well before 128K). Instead:
 This keeps the expensive large-context call proportional to *summary* size, not
 raw repo size, and is generally cheaper than reaching for a bigger context window.
 
-That said, extreme context is more viable than it first looks: Qwen3.6-35B-A3B
-was actually benchmarked up to its full 1,010,000-token extended context on this
-16GB card (`-ncmoe 40 -fa on -ctk q8_0 -ctv q8_0`, ~29 tok/s, 20.7GB host RAM —
-see [README § Pushing further](README.md#pushing-further-262k--512k--1m-qwen36-35b-a3b-only)).
-It works, but the VRAM margin at that size is thin (193MiB free) and host RAM
-usage is high, so treat 512K-1M as a deliberate, occasional tool for a task that
-genuinely needs it whole — not the default. Map-reduce stays the better choice
-for routine large-context work, since it keeps the model running at its faster,
-comfortably-margined 32K/128K configs instead.
+That said, extreme context is more viable than it first looks — because both
+Qwen models here use **hybrid attention**, where only 1 layer in 4 keeps a KV
+cache (see [README § Why 1M context is possible](README.md#why-1m-context-is-possible-at-all-hybrid-attention)).
+That is what makes 1M fit in 16GB at all; a conventional full-attention coder
+would need ~52GB of KV at the same context.
+
+Both are verified at 1,048,576 tokens on this card
+(see [README § Verified server configs](README.md#verified-server-configs)):
+
+- **Qwen3.6-35B-A3B** — `-ncmoe 40 -ub 256 -b 1024 -fa on -ctk q8_0 -ctv q8_0`,
+  15,480 MiB used (824 free).
+- **Qwen3-Coder-Next** — `-ncmoe 46 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0`,
+  13,874 MiB used. **This is the one to use for coding at 1M.** It needs q4_0 KV
+  (q8_0 overflows) and ~47GB host RAM.
+
+The real cost at 1M isn't generation speed — it's **prompt processing**, which
+the forced `-ub 256` cuts to roughly a third (Coder-Next: ~236 tok/s at 1M
+versus ~722 at 128K-256K). Feeding a genuinely huge prompt is the slow part,
+not the reply. So treat 512K-1M as a deliberate tool for a task that needs the
+whole thing in one shot — not the default. Map-reduce stays the better choice
+for routine large-context work, since it keeps the model at its faster,
+comfortably-margined 128K/256K configs with `-ub 1024`.
