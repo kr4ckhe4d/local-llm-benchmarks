@@ -30,13 +30,21 @@ declare -A MODEL_LABEL=(
   [qwen3-coder]="Qwen3-Coder-Next"
 )
 
-# Which llama.cpp build to serve each model with. See the note at the top —
-# measured per model, not guessed.
+# Which llama.cpp build to serve each model with. Measured, not guessed.
 declare -A MODEL_BACKEND=(
-  [gpt-oss-20b]="build-vulkan"   # MXFP4: Vulkan is 40% faster pp, 27% faster tg
+  [gpt-oss-20b]="build-vulkan"   # MXFP4: Vulkan wins generation, 181 vs 148 tok/s
   [qwen3.6]="build"              # Q4_K_M: ROCm 2.1x pp
-  [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp
+  [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [qwen3-coder]="build"          # Q4_K_M: ROCm
+)
+
+# Per-context overrides, where the winner changes with depth.
+# gpt-oss at 128k: Vulkan's generation collapses to 22 tok/s at ~131k depth
+# (VRAM pressure — 11.3GB model + 3GB f16 KV + compute vs 16.3GB). ROCm holds
+# 70 tok/s there at the same prompt speed, so 128k goes to ROCm even though
+# 32k stays on Vulkan.
+declare -A BACKEND_OVERRIDE=(
+  ["gpt-oss-20b:128k"]="build"
 )
 
 # Only contexts within each model's NATIVE trained range are exposed.
@@ -115,16 +123,21 @@ USAGE
 }
 
 list_combos() {
-  echo "Verified model/context combinations:"
+  echo "Verified model/context combinations (backend shown per context):"
   for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder; do
-    printf '  %-13s [%-12s] ' "$model" "${MODEL_BACKEND[$model]}"
+    printf '  %-13s ' "$model"
     for ctx in 32k 128k 256k; do
-      if [[ -n "${CONFIG[${model}:${ctx}]+set}" ]]; then
-        printf '%s ' "$ctx"
+      local k="${model}:${ctx}"
+      if [[ -n "${CONFIG[$k]+set}" ]]; then
+        local b="${BACKEND_OVERRIDE[$k]:-${MODEL_BACKEND[$model]}}"
+        [[ "$b" == "build" ]] && b="rocm" || b="vulkan"
+        printf '%s[%s] ' "$ctx" "$b"
       fi
     done
     echo
   done
+  echo
+  echo "  rocm = build/   vulkan = build-vulkan/"
 }
 
 status() {
@@ -167,7 +180,7 @@ switch_model() {
   local extra="${CONFIG[$key]}"
   local tokens="${CTX_TOKENS[$ctx]}"
   local file="${MODEL_FILE[$model]}"
-  local backend="${MODEL_BACKEND[$model]}"
+  local backend="${BACKEND_OVERRIDE[$key]:-${MODEL_BACKEND[$model]}}"
   local bin="$LLAMA_DIR/$backend/bin/llama-server"
 
   if [[ ! -x "$bin" ]]; then

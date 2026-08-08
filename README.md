@@ -12,32 +12,38 @@ Both builds exist: `build/` is `GGML_HIP=ON` (`AMDGPU_TARGETS=gfx1201`),
 
 ## Headline: pick the backend by quant format
 
-Measured head-to-head, same model, same flags, `llama-bench` `pp4096`/`tg64`:
+Measured head-to-head, `llama-bench`, **`-fa 1`** throughout (`llama-bench`
+defaults flash attention *off*, but `llama-server` resolves `auto → enabled`,
+so `-fa 0` numbers do not reflect real serving — an earlier revision of this
+file got that wrong):
 
 | Model | Quant | ROCm pp / tg | Vulkan pp / tg | Use |
 |---|---|---|---|---|
 | Qwen3.6-35B-A3B (`-ncmoe 40 -ub 512`) | Q4_K_M | **706.0** / — | 333.4 / 29.3 | ROCm |
-| Gemma 4-26B-A4B (`-ncmoe 8`) | Q4_K_M | **1803.7** / 48.1 | 1055.2 / 48.5 | ROCm |
-| GPT-OSS-20B | MXFP4 | 2691.7 / 139.1 | **3759.5** / **176.6** | **Vulkan** |
+| Gemma 4-26B-A4B (`-ncmoe 8`) | Q4_K_M | **1949.9** / **50.3** | 1064.7 / 48.0 | ROCm |
+| GPT-OSS-20B, shallow | MXFP4 | **5529.9** / 148.5 | 4952.0 / **180.8** | Vulkan |
+| GPT-OSS-20B, @131k depth | MXFP4 | **1035.2** / **70.5** | 1063.7 / 22.3 | **ROCm** |
 
-Two rules fall out of this:
+**K-quants (Q4_K_M) → ROCm**, unambiguously: 1.8-2.1x prompt, and it wins
+generation too once flash attention is on (Gemma 50.3 vs 48.0).
 
-1. **K-quants (Q4_K_M) → ROCm.** 1.7-2.1x faster prompt processing.
-2. **MXFP4 (GPT-OSS) → Vulkan.** 1.4x prompt *and* 1.27x generation. The ROCm
-   HIP path handles MXFP4 noticeably worse on gfx1201.
+**MXFP4 (GPT-OSS) → depends on depth.** Shallow, Vulkan wins generation by 22%
+(180.8 vs 148.5) while ROCm wins prompt by 12%. The two cross over at roughly
+**57 prompt tokens per generated token** — below that ratio Vulkan is faster
+overall, above it ROCm is.
 
-**Generation speed is essentially backend-independent** on K-quants — Gemma 4
-gets 48.1 vs 48.5 tok/s, a tie. ROCm's win is prompt processing. Generation is
-governed by `-ncmoe` and memory bandwidth, not by the backend. MXFP4 is the
-exception, where Vulkan wins both.
+At depth the picture changes completely: **Vulkan's generation collapses to
+22.3 tok/s at 131k** while ROCm holds 70.5 at the same prompt speed. That is
+VRAM pressure — 11.3GB model + 3GB f16 KV + compute against a 16,304 MiB card.
+Quantising KV to q8_0 rescues Vulkan (99.9 tok/s) but halves its prompt speed
+to 532. ROCm with f16 KV is the best 128k configuration overall, so
+`switch-model.sh` routes `gpt-oss-20b:128k` to ROCm while leaving 32k on Vulkan.
 
 Combining the ROCm switch with `-ncmoe`/`-ub` tuning gives **4.8x prompt /
 +33% generation** over the old Qwen3.6 config (333.4/29.3 → 1616.2/39.0) — but
 note the generation share of that comes from `-ncmoe 40 → 24`, not the backend.
 
-**The Vulkan numbers at the bottom of this file are superseded for the Qwen and
-Gemma models. They remain correct for GPT-OSS-20B**, which should still be
-served from `build-vulkan/`.
+**All Vulkan numbers at the bottom of this file are superseded.**
 
 ---
 
@@ -136,11 +142,12 @@ read from
 Host RAM at these settings is ~47GB (the 46,767 MiB CPU-mapped model buffer),
 so this model wants the machine otherwise idle.
 
-### GPT-OSS-20B — 11.3GB, MoE 21B/~3.6B active — **serve on Vulkan**
+### GPT-OSS-20B — 11.3GB, MoE 21B/~3.6B active — **backend varies by context**
 
-MXFP4, so this one stays on `build-vulkan/` (176.6 vs 139.1 tok/s generation).
-Configs unchanged and verified on both backends. Half its layers use a
-768-token sliding window, which is why 128K costs only ~3GB of KV:
+32K on Vulkan (180.7 tok/s generation), 128K on ROCm (Vulkan's generation
+collapses to 22.3 there — see the throughput section). Configs verified on both
+backends. Half its layers use a 768-token sliding window, which is why 128K
+costs only ~3GB of KV:
 
 | Context | Extra flags | VRAM used | Free |
 |---|---|---|---|
@@ -204,20 +211,35 @@ whatever the target context leaves room for (see the config table).
 The `-ub 256` rows are the 1M-capable configs — note prompt throughput is ~3x
 lower there. 1M costs a lot of prompt speed on this model.
 
-### GPT-OSS-20B and Gemma 4 — both backends, pp4096/tg64
+### GPT-OSS-20B — Vulkan, `-fa 1`, depth sweep
 
-| Model | Backend | Prompt tok/s | Gen tok/s |
-|---|---|---|---|
-| GPT-OSS-20B (`-ngl 99`) | **Vulkan** | **3759.5** | **176.6** |
-| GPT-OSS-20B (`-ngl 99`) | ROCm | 2691.7 | 139.1 |
-| Gemma 4-26B (`-ncmoe 8`) | **ROCm** | **1803.7** | 48.1 |
-| Gemma 4-26B (`-ncmoe 8`) | Vulkan | 1055.2 | 48.5 |
+| Depth | Prompt tok/s | Gen tok/s |
+|---|---|---|
+| 0 | 4921.1 | 180.7 |
+| 32K | 2587.9 | 143.5 |
+| 131K | 1063.7 | **22.3** ← VRAM cliff, use ROCm here |
 
-GPT-OSS-20B is by far the fastest model here — it is fully GPU-resident at
-11.3GB with no `-ncmoe` at all, reading weights from VRAM at ~640 GB/s instead
-of streaming from DDR4 at ~40 GB/s. Real-world: the same "write a Rust backend
-and React frontend" prompt took **15s** on GPT-OSS-20B vs **1m55s** on
+At 131k on **ROCm** instead: 1035.2 prompt / **70.5** generation — same prompt
+speed, 3.2x the generation. This is why `gpt-oss-20b:128k` is routed to ROCm.
+
+Flash attention is worth having: on Vulkan at depth 0, `-fa 1` gives 4921/180.7
+versus 3775/178.0 with `-fa 0` — **+30% prompt**. The presets pass no `-fa`
+flag, which is fine: `llama-server` defaults to `auto` and resolves it to
+enabled (`sched_reserve: Flash Attention was auto, set to enabled`).
+
+GPT-OSS-20B is by far the fastest model here — fully GPU-resident at 11.3GB
+with no `-ncmoe` at all, reading weights from VRAM at ~640 GB/s instead of
+streaming from DDR4 at ~40 GB/s. Real-world: the same "write a Rust backend and
+React frontend" prompt took **15s** on GPT-OSS-20B vs **1m55s** on
 Qwen3-Coder-Next.
+
+### Gemma 4-26B-A4B — ROCm, `-fa 1`, pp4096/tg64
+
+| `-ncmoe` | Used at | Prompt tok/s | Gen tok/s |
+|---|---|---|---|
+| 8 | 32K | 1960.6 | 49.8 |
+| 12 | 128K | 1603.6 | 42.6 |
+| 20 | 256K | 1276.0 | 33.9 |
 
 ### Generation decay with depth — Qwen3.6, `-ncmoe 40 -ub 1024`
 
