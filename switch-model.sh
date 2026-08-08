@@ -6,10 +6,11 @@
 set -euo pipefail
 
 LLAMA_DIR="$HOME/llama.cpp"
-# ROCm/HIP build — ~2x faster than build-vulkan/ on this GPU (gfx1201).
-# Do not switch this back to build-vulkan/ without re-verifying every -ncmoe
-# below: Gemma 4's Vulkan values do NOT load on ROCm and vice versa.
-BIN="$LLAMA_DIR/build/bin/llama-server"
+# Backend is PER-MODEL — there is no single best build on this GPU:
+#   K-quants (Q4_K_M):  ROCm wins prompt processing by 1.7-2.1x, generation ties.
+#   MXFP4 (gpt-oss):    Vulkan wins BOTH (pp 3760 vs 2692, tg 177 vs 139).
+# The -ncmoe values below are backend-specific — Gemma 4's Vulkan values do not
+# load on ROCm. Do not change a model's backend without re-verifying its configs.
 MODEL_DIR="$LLAMA_DIR/models"
 LOG="/tmp/llama-server.log"
 PORT=8090
@@ -29,9 +30,21 @@ declare -A MODEL_LABEL=(
   [qwen3-coder]="Qwen3-Coder-Next"
 )
 
+# Which llama.cpp build to serve each model with. See the note at the top —
+# measured per model, not guessed.
+declare -A MODEL_BACKEND=(
+  [gpt-oss-20b]="build-vulkan"   # MXFP4: Vulkan is 40% faster pp, 27% faster tg
+  [qwen3.6]="build"              # Q4_K_M: ROCm 2.1x pp
+  [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp
+  [qwen3-coder]="build"          # Q4_K_M: ROCm
+)
+
+# Only contexts within each model's NATIVE trained range are exposed.
+# Native maxima (from GGUF metadata): gpt-oss 131072, everything else 262144.
+# Beyond-native configs were measured and do load — see the README — but are
+# deliberately not presets, because they need YaRN and degrade output quality.
 declare -A CTX_TOKENS=(
-  [4k]=4096 [32k]=32768 [128k]=131072
-  [256k]=262144 [512k]=524288 [1m]=1048576
+  [32k]=32768 [128k]=131072 [256k]=262144
 )
 
 # key "<model>:<ctx>" -> extra llama-server flags beyond "-ngl 99 -c <tokens>".
@@ -40,41 +53,33 @@ declare -A CTX_TOKENS=(
 # tightest -ncmoe found. Combos not listed were either not tested or exceed
 # that model's supported context.
 declare -A CONFIG=(
-  # GPT-OSS-20B — Vulkan-era values, re-verified as still loading on ROCm.
-  ["gpt-oss-20b:4k"]=""
+  # GPT-OSS-20B — native 131072, and that is already YaRN-stretched 32x from a
+  # 4096 base (see gpt-oss.rope.scaling.* in the GGUF). 128k is its ceiling.
   ["gpt-oss-20b:32k"]=""
   ["gpt-oss-20b:128k"]=""
-  ["gpt-oss-20b:256k"]="-fa on -ctk q8_0 -ctv q8_0"
-  ["gpt-oss-20b:512k"]="-ncmoe 9 -fa on -ctk q8_0 -ctv q8_0"
-  ["gpt-oss-20b:1m"]="-ncmoe 24 -fa on -ctk q4_0 -ctv q4_0"
 
-  # Qwen3.6-35B-A3B — hybrid attention, 40 layers, 10 with KV.
-  ["qwen3.6:4k"]="-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
+  # Qwen3.6-35B-A3B — hybrid attention, 40 layers, 10 with KV. Native 262144.
   ["qwen3.6:32k"]="-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
   ["qwen3.6:128k"]="-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
   ["qwen3.6:256k"]="-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
-  ["qwen3.6:512k"]="-ncmoe 32 -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
-  ["qwen3.6:1m"]="-ncmoe 40 -ub 256 -b 1024 -fa on -ctk q8_0 -ctv q8_0"
 
-  # Gemma 4 — RE-TUNED for ROCm. The old Vulkan values (3/5/8/16) do not load.
-  # Not a hybrid-attention model; hard-caps at 256K.
-  ["gemma4:4k"]="-ncmoe 6"
+  # Gemma 4 — RE-TUNED for ROCm. The old Vulkan values (5/8/16) do not load.
+  # Not a hybrid-attention model. Native 262144.
   ["gemma4:32k"]="-ncmoe 8"
   ["gemma4:128k"]="-ncmoe 12"
   ["gemma4:256k"]="-ncmoe 20"
 
-  # Qwen3-Coder-Next — hybrid attention, 48 layers, 12 with KV. ~47GB host RAM.
-  # 1M requires q4_0 KV: q8_0 KV is 13,056 MiB and the compute buffer then
-  # overflows 16,304 MiB.
-  ["qwen3-coder:4k"]="-ncmoe 38 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
+  # Qwen3-Coder-Next — hybrid attention, 48 layers, 12 with KV. Native 262144.
+  # ~47GB host RAM at these settings.
   ["qwen3-coder:32k"]="-ncmoe 38 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
   ["qwen3-coder:128k"]="-ncmoe 40 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
   ["qwen3-coder:256k"]="-ncmoe 42 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
-  ["qwen3-coder:1m"]="-ncmoe 46 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0"
 )
 
-# Contexts beyond a model's native 262144 need YaRN for output quality.
-# Applied automatically for the 1m preset on the two Qwen models.
+# Kept as a guard, not currently reachable: every preset above is within its
+# model's native range. If a beyond-native context is ever re-added to
+# CTX_TOKENS/CONFIG, this ensures it gets RoPE scaling rather than silently
+# running out of trained range and emitting garbage.
 declare -A YARN=(
   [qwen3.6]="--rope-scaling yarn --rope-scale 4 --yarn-orig-ctx 262144"
   [qwen3-coder]="--rope-scaling yarn --rope-scale 4 --yarn-orig-ctx 262144"
@@ -87,32 +92,33 @@ Usage: $(basename "$0") <model> <context>
        $(basename "$0") list
 
 Models:
-  gpt-oss-20b    GPT-OSS-20B      11.3GB  MoE 21B total / 3.6B active
+  gpt-oss-20b    GPT-OSS-20B      11.3GB  MoE 21B / 3.6B active, native 128K
+                                          fastest by far (~177 tok/s, all in VRAM)
   qwen3.6        Qwen3.6-35B-A3B  20.6GB  MoE 35B / 3B active, hybrid attn (40L)
-  gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L, max 256K)
+  gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L)
   qwen3-coder    Qwen3-Coder-Next 49.3GB  MoE 80B / 3B active, hybrid attn (48L)
-                                          coding specialist — best 1M option
+                                          coding specialist, ~25 tok/s
 
-Context: 4k 32k 128k 256k 512k 1m  (not every model supports every size —
-run '$(basename "$0") list' to see the verified combinations)
+Context: 32k 128k 256k  (only sizes within each model's native trained range;
+gpt-oss-20b caps at 128k, the rest at 256k. Run '$(basename "$0") list'.)
 
 Notes:
-  * Uses the ROCm build (build/), ~2x faster than Vulkan on this GPU.
+  * Backend is chosen per model: ROCm for K-quants, Vulkan for MXFP4.
   * Close DaVinci Resolve first — it holds ~10.4GB VRAM and will cause
     allocation failures on the tighter configs.
 
 Examples:
-  $(basename "$0") qwen3-coder 1m
-  $(basename "$0") qwen3.6 256k
+  $(basename "$0") qwen3-coder 256k
+  $(basename "$0") gpt-oss-20b 128k
   $(basename "$0") status
 USAGE
 }
 
 list_combos() {
-  echo "Verified model/context combinations (ROCm build):"
+  echo "Verified model/context combinations:"
   for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder; do
-    printf '  %-13s ' "$model"
-    for ctx in 4k 32k 128k 256k 512k 1m; do
+    printf '  %-13s [%-12s] ' "$model" "${MODEL_BACKEND[$model]}"
+    for ctx in 32k 128k 256k; do
       if [[ -n "${CONFIG[${model}:${ctx}]+set}" ]]; then
         printf '%s ' "$ctx"
       fi
@@ -161,6 +167,13 @@ switch_model() {
   local extra="${CONFIG[$key]}"
   local tokens="${CTX_TOKENS[$ctx]}"
   local file="${MODEL_FILE[$model]}"
+  local backend="${MODEL_BACKEND[$model]}"
+  local bin="$LLAMA_DIR/$backend/bin/llama-server"
+
+  if [[ ! -x "$bin" ]]; then
+    echo "Error: $bin not found or not executable." >&2
+    exit 1
+  fi
 
   # Past 262144 the model is out of its trained range without RoPE scaling.
   if (( tokens > 262144 )) && [[ -n "${YARN[$model]:-}" ]]; then
@@ -192,10 +205,11 @@ switch_model() {
   fi
 
   echo "==> Starting ${MODEL_LABEL[$model]} @ ${ctx} (${tokens} tokens)"
+  echo "    backend: $backend"
   echo "    flags: -ngl 99 -c $tokens $extra"
   cd "$LLAMA_DIR"
   # shellcheck disable=SC2086
-  nohup "$BIN" -m "models/$file" -ngl 99 -c "$tokens" $extra -np 1 \
+  nohup "$bin" -m "models/$file" -ngl 99 -c "$tokens" $extra -np 1 \
     --host "$HOST" --port "$PORT" > "$LOG" 2>&1 < /dev/null &
   disown
 

@@ -131,19 +131,21 @@ cache (see [README § Why 1M context is possible](README.md#why-1m-context-is-po
 That is what makes 1M fit in 16GB at all; a conventional full-attention coder
 would need ~52GB of KV at the same context.
 
-Both are verified at 1,048,576 tokens on this card
-(see [README § Verified server configs](README.md#verified-server-configs)):
+Both models are verified working at 1,048,576 tokens on this card. **But 1M is
+past their native 262,144, so it is deliberately not a `switch-model.sh`
+preset** — it requires YaRN RoPE scaling, which trades away some short-context
+quality. See [README § If you do want 1M](README.md#if-you-do-want-1m) for the
+hand-rolled command; Qwen3-Coder-Next is the right pick there.
 
-- **Qwen3.6-35B-A3B** — `-ncmoe 40 -ub 256 -b 1024 -fa on -ctk q8_0 -ctv q8_0`,
-  15,480 MiB used (824 free).
-- **Qwen3-Coder-Next** — `-ncmoe 46 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0`,
-  13,874 MiB used. **This is the one to use for coding at 1M.** It needs q4_0 KV
-  (q8_0 overflows) and ~47GB host RAM.
+Two reasons the default stops at 256K:
 
-The real cost at 1M isn't generation speed — it's **prompt processing**, which
-the forced `-ub 256` cuts to roughly a third (Coder-Next: ~236 tok/s at 1M
-versus ~722 at 128K-256K). Feeding a genuinely huge prompt is the slow part,
-not the reply. So treat 512K-1M as a deliberate tool for a task that needs the
-whole thing in one shot — not the default. Map-reduce stays the better choice
-for routine large-context work, since it keeps the model at its faster,
-comfortably-margined 128K/256K configs with `-ub 1024`.
+1. **Prompt processing collapses.** Fitting 1M forces `-ub 256`, cutting
+   Coder-Next from ~722 to ~236 tok/s. Generation barely moves (23.8 vs 25.8).
+   Feeding the huge prompt is the slow part, not the reply — so 1M is worst
+   exactly where you'd want it.
+2. **You are outside the trained range.** Retrieval accuracy past the native
+   window is an empirical question, not a given. If you rely on it, test it
+   with a needle-in-a-haystack probe at your actual depth first.
+
+Map-reduce stays the better choice for routine large-context work: it keeps the
+model at its faster, natively-supported 128K/256K configs with `-ub 1024`.

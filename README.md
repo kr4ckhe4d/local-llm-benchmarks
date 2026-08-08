@@ -3,29 +3,41 @@
 **Hardware:** AMD Ryzen 9 5950X (16C/32T) · AMD RX 9070 XT (gfx1201, RDNA4,
 16304 MiB VRAM) · 64GB DDR4-3200 dual-channel · `llama.cpp` b8918.
 
-**Backend: use the ROCm build at `~/llama.cpp/build/bin/`.** Not
-`build-vulkan/`. See below — this is the single biggest win on this machine.
-Switching script: `~/llama.cpp/switch-model.sh`.
+**Backend depends on the quant format — there is no single best build.**
+`~/llama.cpp/switch-model.sh` picks the right one per model automatically.
+Both builds exist: `build/` is `GGML_HIP=ON` (`AMDGPU_TARGETS=gfx1201`),
+`build-vulkan/` is RADV.
 
 ---
 
-## Headline: the ROCm build is ~2x faster than Vulkan
+## Headline: pick the backend by quant format
 
-Same model, same flags, same benchmark (`llama-bench`, `pp4096`/`tg64`, `-r 2`):
+Measured head-to-head, same model, same flags, `llama-bench` `pp4096`/`tg64`:
 
-| Backend | Config | Prompt tok/s | Gen tok/s |
-|---|---|---|---|
-| Vulkan (`build-vulkan/`) | `-ncmoe 40 -ub 512` | 333.4 | 29.3 |
-| ROCm (`build/`) | `-ncmoe 40 -ub 512` | 706.0 | — |
-| ROCm (`build/`) | `-ncmoe 24 -ub 1024` | **1616.2** | **39.0** |
+| Model | Quant | ROCm pp / tg | Vulkan pp / tg | Use |
+|---|---|---|---|---|
+| Qwen3.6-35B-A3B (`-ncmoe 40 -ub 512`) | Q4_K_M | **706.0** / — | 333.4 / 29.3 | ROCm |
+| Gemma 4-26B-A4B (`-ncmoe 8`) | Q4_K_M | **1803.7** / 48.1 | 1055.2 / 48.5 | ROCm |
+| GPT-OSS-20B | MXFP4 | 2691.7 / 139.1 | **3759.5** / **176.6** | **Vulkan** |
 
-Backend swap alone is **2.1x** on prompt processing. With `-ncmoe` and `-ub`
-tuned on top, **4.8x prompt / +33% generation** versus the old Vulkan config.
-Both builds already exist; `build/` is `GGML_HIP=ON` with
-`AMDGPU_TARGETS=gfx1201`.
+Two rules fall out of this:
 
-**Every Vulkan number in the old version of this file is superseded.** They are
-kept at the bottom for reference only.
+1. **K-quants (Q4_K_M) → ROCm.** 1.7-2.1x faster prompt processing.
+2. **MXFP4 (GPT-OSS) → Vulkan.** 1.4x prompt *and* 1.27x generation. The ROCm
+   HIP path handles MXFP4 noticeably worse on gfx1201.
+
+**Generation speed is essentially backend-independent** on K-quants — Gemma 4
+gets 48.1 vs 48.5 tok/s, a tie. ROCm's win is prompt processing. Generation is
+governed by `-ncmoe` and memory bandwidth, not by the backend. MXFP4 is the
+exception, where Vulkan wins both.
+
+Combining the ROCm switch with `-ncmoe`/`-ub` tuning gives **4.8x prompt /
++33% generation** over the old Qwen3.6 config (333.4/29.3 → 1616.2/39.0) — but
+note the generation share of that comes from `-ncmoe 40 → 24`, not the backend.
+
+**The Vulkan numbers at the bottom of this file are superseded for the Qwen and
+Gemma models. They remain correct for GPT-OSS-20B**, which should still be
+served from `build-vulkan/`.
 
 ---
 
@@ -51,22 +63,50 @@ quant. When shopping for long-context models on this box, check
 `full_attention_interval` in the GGUF metadata first; parameter count matters
 far less than attention topology.
 
-### The 1M coding recommendation
+### Native context limits — and why the presets stop there
 
-**Qwen3-Coder-Next, already on disk.** It is the only coding-specialist model
-with the hybrid architecture that makes 1M viable in 16GB VRAM. There is no
-separate "1M" GGUF to download — native context is 262,144 and 1M is reached
-with runtime YaRN flags. Nothing needed installing.
+From GGUF metadata:
 
-At 1M it needs **q4_0 KV** — q8_0 KV is 13,056 MiB and the ~1.9 GB compute
-buffer pushes it past 16,304 MiB. Measured failure, not an estimate.
+| Model | Native context | Note |
+|---|---|---|
+| GPT-OSS-20B | **131,072** | already YaRN 32x from a 4,096 base |
+| Qwen3.6-35B-A3B | 262,144 | |
+| Gemma 4-26B-A4B | 262,144 | |
+| Qwen3-Coder-Next | 262,144 | |
+
+`switch-model.sh` exposes **only contexts within these ranges** (32k/128k/256k).
+Anything beyond needs YaRN RoPE scaling, which trades short-context quality for
+reach — fine as a deliberate experiment, wrong as a preset you might pick by
+accident. GPT-OSS-20B is the sharpest case: its 128K is *already* a 32x YaRN
+stretch, so pushing further stacks a second extension on top.
+
+### If you do want 1M
+
+It works, and the configs below are measured, but you have to opt in by hand.
+**Qwen3-Coder-Next is the only sensible choice** — it is the only
+coding-specialist model whose hybrid architecture makes 1M viable in 16GB. A
+conventional full-attention coder needs ~52GB of KV at 1M. There is no separate
+"1M" GGUF to download; 1M is a runtime flag on the 262,144-native weights.
+
+```bash
+~/llama.cpp/build/bin/llama-server -m models/Qwen3-Coder-Next-UD-Q4_K_M.gguf \
+  -ngl 99 -ncmoe 46 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0 -c 1048576 \
+  --rope-scaling yarn --rope-scale 4 --yarn-orig-ctx 262144 \
+  -np 1 --host 0.0.0.0 --port 8090
+```
+
+Verified: 13,874 / 16,304 MiB, ~93s cold load. It requires **q4_0 KV** — q8_0
+is 13,056 MiB and the ~1.9GB compute buffer then overflows the card (measured
+failure, not an estimate). Prompt processing drops to ~236 tok/s because the
+fit forces `-ub 256`; generation is barely affected (23.8 vs 25.8).
 
 ---
 
 ## Verified server configs
 
-Every row below was **actually loaded on the ROCm build** and confirmed to
-reach `server is listening`, with the VRAM figure read from
+Every row below was **actually loaded on the backend named in its section
+heading** and confirmed to reach `server is listening`, with the VRAM figure
+read from
 `/sys/class/drm/card1/device/mem_info_vram_used` while resident. All include
 `-ngl 99`. Contexts are exact token counts, not rounded labels.
 
@@ -74,12 +114,13 @@ reach `server is listening`, with the VRAM figure read from
 
 | Context | Extra flags | VRAM used | Free |
 |---|---|---|---|
-| 4K | `-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,635 | 1,669 |
 | 32K | `-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,932 | 1,372 |
 | 128K | `-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,090 | 2,214 |
 | 256K | `-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,471 | 1,833 |
-| 512K | `-ncmoe 32 -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 13,338 | 2,966 |
-| 1M | `-ncmoe 40 -ub 256 -b 1024 -fa on -ctk q8_0 -ctv q8_0` | 15,480 | 824 |
+| *512K †* | `-ncmoe 32 -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 13,338 | 2,966 |
+| *1M †* | `-ncmoe 40 -ub 256 -b 1024 -fa on -ctk q8_0 -ctv q8_0` | 15,480 | 824 |
+
+† Beyond native 262,144 — needs YaRN, not a `switch-model.sh` preset.
 
 ### Qwen3-Coder-Next — 49.3GB, MoE 80B/~3B active, coding specialist
 
@@ -88,21 +129,30 @@ reach `server is listening`, with the VRAM figure read from
 | 32K | `-ncmoe 38 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 13,444 | 2,860 |
 | 128K | `-ncmoe 40 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 13,181 | 3,123 |
 | 256K | `-ncmoe 42 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 13,894 | 2,410 |
-| 1M | `-ncmoe 46 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0` | 13,874 | 2,430 |
+| *1M †* | `-ncmoe 46 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0` | 13,874 | 2,430 |
+
+† Beyond native 262,144 — needs YaRN, not a `switch-model.sh` preset.
 
 Host RAM at these settings is ~47GB (the 46,767 MiB CPU-mapped model buffer),
 so this model wants the machine otherwise idle.
 
-### GPT-OSS-20B — 11.3GB, MoE 21B/~3.6B active
+### GPT-OSS-20B — 11.3GB, MoE 21B/~3.6B active — **serve on Vulkan**
 
-Vulkan-era `-ncmoe` values re-verified as still loading on ROCm, unchanged:
+MXFP4, so this one stays on `build-vulkan/` (176.6 vs 139.1 tok/s generation).
+Configs unchanged and verified on both backends. Half its layers use a
+768-token sliding window, which is why 128K costs only ~3GB of KV:
 
 | Context | Extra flags | VRAM used | Free |
 |---|---|---|---|
+| 32K | *(none)* | — | — |
 | 128K | *(none)* | 15,326 | 978 |
-| 256K | `-fa on -ctk q8_0 -ctv q8_0` | 15,917 | 387 |
-| 512K | `-ncmoe 9 -fa on -ctk q8_0 -ctv q8_0` | 16,028 | 276 |
-| 1M | `-ncmoe 24 -fa on -ctk q4_0 -ctv q4_0` | 11,632 | 4,672 |
+| *256K †* | `-fa on -ctk q8_0 -ctv q8_0` | 15,917 | 387 |
+| *512K †* | `-ncmoe 9 -fa on -ctk q8_0 -ctv q8_0` | 16,028 | 276 |
+| *1M †* | `-ncmoe 24 -fa on -ctk q4_0 -ctv q4_0` | 11,632 | 4,672 |
+
+† Beyond native **131,072**, which is itself already a 32x YaRN stretch from a
+4,096 base. These load and produce tokens, but stack a second extension on an
+already-extended model — the least trustworthy rows in this file.
 
 ### Gemma 4-26B-A4B — 15.8GB, MoE 25.2B/~3.8B active, 30 layers
 
@@ -111,7 +161,6 @@ Vulkan-era `-ncmoe` values re-verified as still loading on ROCm, unchanged:
 
 | Context | Old (Vulkan) | New (ROCm) | VRAM used | Free |
 |---|---|---|---|---|
-| 4K | `-ncmoe 3` | `-ncmoe 6` | 14,688 | 1,616 |
 | 32K | `-ncmoe 5` | `-ncmoe 8` | 14,338 | 1,966 |
 | 128K | `-ncmoe 8` ✗ | `-ncmoe 12` | 14,437 | 1,867 |
 | 256K | `-ncmoe 16` ✗ | `-ncmoe 20` | 13,811 | 2,493 |
@@ -154,6 +203,21 @@ whatever the target context leaves room for (see the config table).
 
 The `-ub 256` rows are the 1M-capable configs — note prompt throughput is ~3x
 lower there. 1M costs a lot of prompt speed on this model.
+
+### GPT-OSS-20B and Gemma 4 — both backends, pp4096/tg64
+
+| Model | Backend | Prompt tok/s | Gen tok/s |
+|---|---|---|---|
+| GPT-OSS-20B (`-ngl 99`) | **Vulkan** | **3759.5** | **176.6** |
+| GPT-OSS-20B (`-ngl 99`) | ROCm | 2691.7 | 139.1 |
+| Gemma 4-26B (`-ncmoe 8`) | **ROCm** | **1803.7** | 48.1 |
+| Gemma 4-26B (`-ncmoe 8`) | Vulkan | 1055.2 | 48.5 |
+
+GPT-OSS-20B is by far the fastest model here — it is fully GPU-resident at
+11.3GB with no `-ncmoe` at all, reading weights from VRAM at ~640 GB/s instead
+of streaming from DDR4 at ~40 GB/s. Real-world: the same "write a Rust backend
+and React frontend" prompt took **15s** on GPT-OSS-20B vs **1m55s** on
+Qwen3-Coder-Next.
 
 ### Generation decay with depth — Qwen3.6, `-ncmoe 40 -ub 1024`
 
@@ -227,8 +291,8 @@ verify with a retrieval test at depth if it matters for your use.
 
 ## Commands
 
-Persistent server (OpenAI-compatible API, reachable on the LAN) — note the
-`build/` path:
+Persistent server (OpenAI-compatible API, reachable on the LAN). **Pick the
+build by quant format** — `build/` for Q4_K_M, `build-vulkan/` for MXFP4:
 
 ```bash
 nohup ~/llama.cpp/build/bin/llama-server -m models/<file>.gguf -ngl 99 [-ncmoe N] \
