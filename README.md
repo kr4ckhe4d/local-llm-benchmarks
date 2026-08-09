@@ -251,6 +251,75 @@ Qwen3-Coder-Next.
 
 ---
 
+## Context quality: measured, not assumed
+
+The common warning is that long-context recall degrades well before the nominal
+window ("lost in the middle"). **On Qwen3-Coder-Next that does not happen
+anywhere inside its native 262,144 range.** Tested two ways at four depths:
+
+| Depth | Needle recall | Semantic recall | Cold prefill | Effective prefill | Cached follow-up |
+|---|---|---|---|---|---|
+| ~9.7K | 5/5 | 5/5 | 19.3s | 502 tok/s | 3.6s |
+| ~38K | 5/5 | 5/5 | 68.8s | 552 tok/s | 4.7s |
+| ~119K | 5/5 | 5/5 | 268.3s | 445 tok/s | 6.5s |
+| ~241K | — | **5/5** | 749.0s | 322 tok/s | 8.3s |
+
+Two probes, in this repo and copied to `~/llama.cpp/`:
+
+- **`needle-test.py`** — plants distinct facts at 5/25/50/75/95% depth and asks
+  for each. The easy case: verbatim fact, distinctive surface form, no
+  competitors.
+- **`semantic-recall-test.py`** — the hard case, and the one that matters for
+  coding. Plants real helper functions among hundreds of similar utilities,
+  then poses tasks describing what each helper *does* without ever naming it,
+  with a deliberate near-miss distractor for each (`chunk_list` by count vs
+  `chunk_by_weight` by weight; `parse_iso_date` vs `coerce_epoch_millis`).
+  Each distractor sits *closer* to the question than its target, so proximity
+  cannot be the cue. This is the "did it notice the helper already exists, or
+  reimplement it" failure mode.
+
+Both score 5/5 everywhere, including the 50% mid-context position. The model
+retrieved on meaning and rejected every near-miss.
+
+Both scripts take `--depth N` against any running server:
+
+```bash
+~/llama.cpp/semantic-recall-test.py --depth 200000
+```
+
+**Limits of this result:** single-hop (each task maps to exactly one helper),
+clean signal (planted docstrings are accurate, unlike real code), and n=5 per
+depth. This rules out a systematic collapse, not a subtle degradation. Nothing
+here covers the beyond-native 512K/1M configs, where YaRN and (at 1M) q4_0 KV
+both plausibly hurt — those remain untested.
+
+### The real cost is prefill, not forgetting
+
+**Prefill throughput nearly halves with depth** — 552 tok/s at 38K down to 322
+at 241K — so cost grows superlinearly. 119K → 241K is 2.02x the tokens but
+2.8x the time.
+
+| | Cold | Warm (cached prefix) |
+|---|---|---|
+| 128K preset | ~4.5 min | ~6.5s |
+| 256K preset | ~12.5 min | ~8.3s |
+
+A 90x gap. At these depths the prompt cache is not an optimisation, it is the
+entire viability of the mode. **Treat 256K as load-once-then-iterate**: dump a
+subsystem in, then ask twenty questions against it. Any change to the prefix —
+reordering files, editing the system prompt, inserting anything ahead of the
+bulk source — costs the full cold prefill again.
+
+If your workflow rebuilds the prompt every turn, 256K is unusable; use 32K or
+128K, where a cache miss costs 20-270s instead of 750.
+
+So keep context lean because rebuilding it is expensive, **not** because the
+model forgets. If you can hold the prefix stable, there is no measured quality
+reason to avoid the full window.
+
+Practical ceiling: `143,777 tokens exceeds the available context size (131072)`
+— usable input at the 128K preset is ~119K once you leave room for the reply.
+
 ## Tuning findings
 
 **`-ub` (ubatch) is the most under-used flag.** Qwen3.6, `-ncmoe 40`, pp4096:
@@ -329,7 +398,29 @@ curl -s http://192.168.4.228:8090/v1/chat/completions -H 'Content-Type: applicat
 ```
 
 Recommended sampling for Qwen3-Coder-Next: `temp 1.0`, `top_p 0.95`,
-`top_k 40`, `min_p 0.01`, repeat penalty disabled.
+`top_k 40`, `min_p 0.01`, repeat penalty disabled. These are Qwen's published
+values — `temp 1.0` looks wrong if you habitually lower temperature for code,
+but it is tuned for it, and llama.cpp's default `min_p 0.05` is also wrong here.
+
+### Sending a real coding prompt
+
+`coder-prompt.sh` wraps all of the above — system prompt, correct sampling,
+file assembly, and a token-budget check that refuses to send rather than let
+the reply be truncated mid-function:
+
+```bash
+./coder-prompt.sh "add rate limiting to /upload" src/api/*.rs
+./coder-prompt.sh -m 8000 "explain how auth flows through this" $(rg -l auth src/)
+```
+
+Two rules in its system prompt exist because the model failed without them:
+output a unified diff when editing an existing file (asking for "the full
+updated file" made it reproduce a 300-line script and blow the token budget
+before reaching the change), and never print line numbers in a code block.
+
+It deliberately does **not** ask the model to think step by step —
+Qwen3-Coder-Next answers directly, and prompting for a reasoning preamble
+fights the training while burning tokens at ~25 tok/s.
 
 ### Reading GGUF metadata
 

@@ -94,11 +94,27 @@ chat template and is the usual fix for Qwen tool-calling.
 enabled, size limit: 8192 MiB` — visible in `/tmp/llama-server.log`). Keep a
 **stable prefix** — system prompt, repo map, core files referenced every turn —
 identical across requests, and only the *new* part of each prompt (the actual
-question, newly-retrieved files) pays full prompt-processing cost. Given prompt
-tok/s is far higher than generation tok/s (1,975 vs 43.9 for Qwen3.6 @ 32K on
-ROCm — a 45x ratio, up from 2.8x on the old Vulkan build), this matters most
-for interactive back-and-forth, less for one-shot calls. The ROCm switch made
-re-sending a large stable prefix dramatically cheaper relative to generation.
+question, newly-retrieved files) pays full prompt-processing cost.
+
+**At large contexts this is the single most important thing in this guide.**
+Measured on Qwen3-Coder-Next, cold versus cache-warm:
+
+| Context | Cold prefill | Warm |
+|---|---|---|
+| 128K | ~4.5 min | ~6.5s |
+| 256K | ~12.5 min | ~8.3s |
+
+A 90x gap. Prefill throughput also degrades with depth (552 tok/s at 38K down
+to 322 at 241K), so cost grows superlinearly — doubling context from 119K to
+241K costs 2.8x the time, not 2x.
+
+The practical consequence: **anything that changes the prefix throws away the
+cache and costs you the full cold prefill again.** Reordering files between
+turns, editing the system prompt mid-session, inserting a new file ahead of the
+existing ones — each is a 12-minute mistake at 256K. Append; never insert.
+
+At small contexts the same principle is just a nice speedup (Qwen3.6 @32K does
+1,975 prompt tok/s against 43.9 generation).
 
 ## Match context tier to the task
 
@@ -144,8 +160,11 @@ Two reasons the default stops at 256K:
    Feeding the huge prompt is the slow part, not the reply — so 1M is worst
    exactly where you'd want it.
 2. **You are outside the trained range.** Retrieval accuracy past the native
-   window is an empirical question, not a given. If you rely on it, test it
-   with a needle-in-a-haystack probe at your actual depth first.
+   window is an empirical question, not a given. Inside the native range it has
+   been measured and is clean (see
+   [README § Context quality](README.md#context-quality-measured-not-assumed));
+   past it, nothing has been tested. Probe your actual depth first with
+   `~/llama.cpp/semantic-recall-test.py --depth N`.
 
 Map-reduce stays the better choice for routine large-context work: it keeps the
 model at its faster, natively-supported 128K/256K configs with `-ub 1024`.
