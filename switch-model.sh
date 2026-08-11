@@ -16,9 +16,19 @@ LOG="/tmp/llama-server.log"
 PORT=8090
 HOST="0.0.0.0"
 
-# Remembers the last model/context launched, so 'start' can bring it back
-# without retyping the pair.
+# Remembers the last thing launched — either "<model> <context>" for a single
+# pinned model, or "router" — so 'start' can bring it back.
 STATE="$HOME/.cache/switch-model.last"
+
+# Router mode: one process fronts every preset in models-preset.ini and loads
+# them on demand, so Open WebUI's dropdown switches models with no shell at all.
+# The router spawns children from /proc/self/exe, so every model runs on the
+# binary the ROUTER was launched with — there is no per-model backend here, and
+# that is the one thing this mode costs (gpt-oss-20b at 32k gives up Vulkan's
+# 181 vs 148 tok/s). Everything else prefers ROCm anyway.
+PRESET="$LLAMA_DIR/models-preset.ini"
+ROUTER_BACKEND="build"   # ROCm
+MODELS_MAX=1             # 16GB card — a second resident model will not allocate
 
 # Idle sleep: after this many seconds with no requests, llama-server calls
 # destroy() and releases the model — VRAM drops to ~0 while the process keeps
@@ -128,9 +138,11 @@ declare -A YARN=(
 
 usage() {
   cat <<USAGE
-Usage: $(basename "$0") <model> <context>
+Usage: $(basename "$0") router            serve ALL presets, switchable from the
+                                          Open WebUI dropdown (recommended)
+       $(basename "$0") <model> <context>  pin one model, per-model backend
        $(basename "$0") stop      free the GPU completely (SIGTERM, then SIGKILL)
-       $(basename "$0") start     relaunch the last model/context used
+       $(basename "$0") start     relaunch whatever was running last
        $(basename "$0") status
        $(basename "$0") list
 
@@ -149,6 +161,11 @@ range; muse-glimmer caps at 128k, gpt-oss-20b at 128k, the rest at 256k.
 Run '$(basename "$0") list'.)
 
 Notes:
+  * 'router' vs '<model> <context>': the router serves every preset in
+    models-preset.ini and loads on demand, so you switch models from the
+    client instead of the shell. Its one cost is that every model runs on
+    the router's own binary (ROCm), so gpt-oss-20b at 32k gives up Vulkan's
+    181 vs 148 tok/s. Pin that one explicitly if you want the speed.
   * Backend is chosen per model: ROCm for K-quants, Vulkan for MXFP4.
   * Close DaVinci Resolve first — it holds ~10.4GB VRAM and will cause
     allocation failures on the tighter configs.
@@ -158,11 +175,12 @@ Notes:
     process outright. Override with SLEEP_IDLE=<seconds>, or -1 to disable.
 
 Examples:
+  $(basename "$0") router
   $(basename "$0") qwen3-coder 256k
   $(basename "$0") gpt-oss-20b 128k
   $(basename "$0") stop
   $(basename "$0") start
-  SLEEP_IDLE=-1 $(basename "$0") gpt-oss-20b 32k   # never sleep
+  SLEEP_IDLE=-1 $(basename "$0") router            # never sleep
 USAGE
 }
 
@@ -219,16 +237,71 @@ stop_server() {
   echo "==> Stopped. VRAM in use: $(vram_used) / 16304 MiB"
 }
 
+start_router() {
+  local bin="$LLAMA_DIR/$ROUTER_BACKEND/bin/llama-server"
+  if [[ ! -x "$bin" ]]; then
+    echo "Error: $bin not found or not executable." >&2; exit 1
+  fi
+  if [[ ! -f "$PRESET" ]]; then
+    echo "Error: preset file $PRESET not found." >&2; exit 1
+  fi
+
+  if ! stop_server; then
+    echo "ERROR: could not stop the running server, aborting." >&2
+    exit 1
+  fi
+
+  echo "==> Starting router over $(basename "$PRESET")"
+  echo "    backend: $ROUTER_BACKEND (applies to every model — see notes)"
+  echo "    models-max: $MODELS_MAX"
+  if (( SLEEP_IDLE > 0 )); then
+    # Not in unset_reserved_args(), so children inherit it and each loaded model
+    # releases its own VRAM after idling.
+    echo "    idle sleep: ${SLEEP_IDLE}s (inherited by each spawned model)"
+  fi
+  mkdir -p "$(dirname "$STATE")"
+  printf 'router\n' > "$STATE"
+  cd "$LLAMA_DIR"
+  nohup "$bin" --models-preset "$PRESET" --models-max "$MODELS_MAX" \
+    --sleep-idle-seconds "$SLEEP_IDLE" \
+    --host "$HOST" --port "$PORT" > "$LOG" 2>&1 < /dev/null &
+  disown
+
+  echo "==> Waiting for health check..."
+  local ok=0 st
+  for _ in $(seq 1 40); do
+    st=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/health" 2>/dev/null || echo "000")
+    if [[ "$st" == "200" ]]; then ok=1; break; fi
+    sleep 3
+  done
+  if [[ "$ok" -ne 1 ]]; then
+    echo "ERROR: router did not become healthy in time. Check $LOG" >&2
+    exit 1
+  fi
+
+  echo "==> Router live at http://192.168.4.228:${PORT} — presets available:"
+  curl -s "http://localhost:${PORT}/v1/models" 2>/dev/null | python3 -c '
+import json, sys
+for m in json.load(sys.stdin)["data"]:
+    print("     ", m["id"], "" if m.get("status", {}).get("value") != "loaded" else "[loaded]")
+' 2>/dev/null || echo "     (could not list — see $LOG)"
+}
+
 start_last() {
   if [[ ! -f "$STATE" ]]; then
     echo "No previous model recorded in $STATE." >&2
-    echo "Launch one explicitly first, e.g. '$(basename "$0") gpt-oss-20b 32k'." >&2
+    echo "Launch one explicitly first, e.g. '$(basename "$0") router'." >&2
     exit 1
   fi
   local model ctx
   read -r model ctx < "$STATE"
+  if [[ "${model:-}" == "router" ]]; then
+    echo "==> Restarting last config: router"
+    start_router
+    return
+  fi
   if [[ -z "${model:-}" || -z "${ctx:-}" ]]; then
-    echo "Malformed state file $STATE — expected '<model> <context>'." >&2
+    echo "Malformed state file $STATE — expected '<model> <context>' or 'router'." >&2
     exit 1
   fi
   echo "==> Restarting last config: $model $ctx"
@@ -385,6 +458,7 @@ case "${1:-}" in
   list) list_combos ;;
   stop) stop_server ;;
   start) start_last ;;
+  router) start_router ;;
   *)
     if [[ $# -lt 2 ]]; then usage; exit 1; fi
     switch_model "$1" "$2"

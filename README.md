@@ -567,7 +567,9 @@ build leaves you with no server at all.
 ### Serving
 
 Persistent server (OpenAI-compatible API, reachable on the LAN). **Pick the
-build by quant format** — `build/` for Q4_K_M, `build-vulkan/` for MXFP4:
+build by quant format** — `build/` for Q4_K_M, `build-vulkan/` for MXFP4. This
+is the raw form; `switch-model.sh` wraps it, and `switch-model.sh router` serves
+all presets at once (see [How to switch models](#how-to-switch-models)):
 
 ```bash
 nohup ~/llama.cpp/build/bin/llama-server -m models/<file>.gguf -ngl 99 [-ncmoe N] \
@@ -621,15 +623,36 @@ downloading anything large:
 edit it here, run it from either path.
 
 ```bash
-~/llama.cpp/switch-model.sh <model> <context>   # gpt-oss-20b|qwen3.6|gemma4|qwen3-coder|muse-glimmer
+~/llama.cpp/switch-model.sh router              # serve ALL presets, switch from the client
+~/llama.cpp/switch-model.sh <model> <context>   # pin one: gpt-oss-20b|qwen3.6|gemma4|qwen3-coder|muse-glimmer
 ~/llama.cpp/switch-model.sh stop                # SIGTERM, then SIGKILL — frees the GPU
-~/llama.cpp/switch-model.sh start               # relaunch the last model/context
+~/llama.cpp/switch-model.sh start               # relaunch whatever ran last
 ~/llama.cpp/switch-model.sh status              # what's running now
 ~/llama.cpp/switch-model.sh list                # verified combinations
 ```
 
-There is no hot-swap — one `llama-server` process holds one model, and clients
-cannot switch it by changing the `"model"` field in a request.
+### Router mode is the default worth using
+
+`router` starts one process over every preset in `models-preset.ini`. Picking a
+model from Open WebUI's dropdown loads it on demand and unloads the previous one,
+so switching needs no shell at all — and each preset carries its full verified
+config (`-ncmoe`, KV quant, DFlash, `reasoning_strength`) rather than you
+retyping flags.
+
+It costs exactly one thing. The router spawns children from `/proc/self/exe`, so
+every model runs on **the binary the router was launched with**. There is no
+per-model backend in this mode. Since the router starts from `build/` (ROCm),
+gpt-oss-20b at 32k gives up Vulkan's 181 vs 148 tok/s — pin it explicitly with
+`switch-model.sh gpt-oss-20b 32k` when you want that back. Every other model
+prefers ROCm anyway, so nothing else loses.
+
+Run with `--models-max 1`: this card has 16GB, and a second resident model will
+not allocate.
+
+**Correction to an earlier claim in this file:** hot-swapping by changing the
+`"model"` field in a request *does* work — that is precisely what the router
+does. The no-hot-swap limitation applies only to the pinned single-model mode,
+where one `llama-server` holds one model.
 
 ### Getting the GPU back without stopping the server
 
@@ -645,6 +668,11 @@ all pass `create_response(true)`, which deliberately **bypasses** sleep — so t
 answer without waking the model, which also means none of them can tell you it
 is asleep. `status` infers it from low VRAM against a live process. The useful
 consequence: polling `status` never triggers a reload.
+
+This composes with router mode. `--sleep-idle-seconds` is not in
+`unset_reserved_args()`, so each spawned child **inherits** it from the router's
+own argv (verified in the child's `/proc` cmdline) and releases its own VRAM
+after idling, while the router stays up on 8090 serving the full model list.
 
 `stop` covers the router case too. Under `--models-preset` the router spawns a
 per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
