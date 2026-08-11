@@ -360,6 +360,72 @@ reason to avoid the full window.
 Practical ceiling: `143,777 tokens exceeds the available context size (131072)`
 — usable input at the 128K preset is ~119K once you leave room for the reply.
 
+## Tool calling: verified, and previously broken by llama.cpp
+
+Native tool calling — the OpenAI `tools` field, parsed by llama.cpp into
+structured `tool_calls` — works on this hardware. This is worth stating
+explicitly because for most of 2026-08-11 it did not, and the cause was not
+the models.
+
+### The probe
+
+Prompt-based tool schemes (Cline, Open WebUI's "Default" function calling)
+inject tool descriptions into the prompt and parse text back, so they succeed
+even when the API path is broken. To test the real path, use **Native**
+function calling and a tool whose output cannot be guessed:
+
+```python
+def get_probe_token(self, seed: int) -> str:
+    """
+    Return the secret probe token for a given seed. There is no way to
+    derive this value without calling this function.
+    :param seed: Integer seed for the token.
+    """
+    return f"PROBE-{random.Random(seed).randint(100000, 999999)}"
+```
+
+Expected: seed 42 → `PROBE-770487`, seed 7 → `PROBE-439563`, seed 1234 →
+`PROBE-915965`. A model answering without calling cannot produce these.
+
+### Results
+
+| Model | Single call | Parallel calls | Notes |
+|---|---|---|---|
+| GPT-OSS-20B @128K | ✓ `PROBE-770487` | ✓ sum `1355528` | two calls in one turn, arithmetic correct |
+| Qwen3-Coder-Next @128K | ✓ `PROBE-770487` | untested | crashed the server before the rebuild |
+| Muse Glimmer 30B @32K | ✓ | untested | via Open WebUI's own `write_note` tool |
+
+### The llama.cpp bug worth knowing about
+
+On build `e583f3b4f` (2026-04-24), **every Qwen3-Coder-Next tool call 500'd**:
+
+```
+Failed to parse input at pos 22: <tool_call>
+<function=Edit>
+```
+
+`pos 22` is exactly `len("<|im_start|>assistant\n")` — the parser consumed the
+generation prompt and rejected the very first character the model produced. The
+model was right: its GGUF chat template renders tool calls as
+`'\n<tool_call>\n<function=' + name + '>\n'`, precisely what it emitted.
+
+The cause is llama.cpp's `peg-native` format, which *derives* a grammar from
+the model's chat template rather than using a hand-written parser (Gemma 4 is
+one of the few with a dedicated `COMMON_CHAT_FORMAT_PEG_GEMMA4` mapper). The
+derived grammar rejected valid output. Observed correlation: calls preceded by
+prose parsed fine; a bare tool call at the start of a response did not.
+
+**Fixed by 2026-08-11 (`153d324bc`).** Same model, same prompt, same harness
+now returns the correct token.
+
+Two lessons that generalise:
+
+* A tool-calling failure is not evidence the model is bad at tool use. Check
+  the server build before blaming the model — retrying cannot help, since the
+  model regenerates the same valid-but-rejected shape.
+* `--jinja` is **enabled by default** in current builds (`common.h`:
+  `bool use_jinja = true`). Adding the flag is not a fix for anything.
+
 ## Tuning findings
 
 **`-ub` (ubatch) is the most under-used flag.** Qwen3.6, `-ncmoe 40`, pp4096:
