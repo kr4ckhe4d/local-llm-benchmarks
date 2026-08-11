@@ -432,6 +432,50 @@ Two lessons that generalise:
 * `--jinja` is **enabled by default** in current builds (`common.h`:
   `bool use_jinja = true`). Adding the flag is not a fix for anything.
 
+### Code execution, and how silently it fails without it
+
+Open WebUI's Code Interpreter must be enabled in **two** places: Admin Panel →
+Settings → Code Execution, *and* the per-chat toggle in the `+` menu next to the
+message box. With only the first done there is no error and no warning — the
+model simply answers from nothing.
+
+Same model (Qwen3-Coder-Next @128K), same three questions, twenty minutes apart:
+
+| Question | No interpreter | With interpreter | Correct |
+|---|---|---|---|
+| sha256 of `nipuna-rx9070xt-muse-glimmer-2026-08-11` | `c4e1e9e7b2a8…` | `0f68974a8db2ab1b22a17ff82b4ac21198c38b22d8fa0a448caa69cf8f169043` | ✓ |
+| primes below 987654 | 77,597 | **77,614** | ✓ |
+| digit sum of 7^777 | 3,519 | **2,989** | ✓ |
+
+With execution available it used it unprompted, on all three, and got every
+answer right. Without it, it fabricated all three.
+
+**Pick test values that cannot be memorised.** An earlier run of this test used
+`sha256("hello world")`, the count of primes below 100000, and the 5000th prime
+— and "passed" without executing anything, because all three are in training
+data. The tell was formatting: the sum came back as `4,543,965,37`, comma-grouped
+wrong, which is what recalled digits look like rather than a formatted integer.
+The fabricated hash has a similar signature — its tail reads `a8b9c0d1e2f3a4b5`,
+ascending hex pairs.
+
+The prime count is the dangerous case. A wrong hash is obviously wrong; 77,597
+against 77,614 passes a glance.
+
+### llama.cpp parses tool calls even when none were offered
+
+With no tools installed or enabled, the model emitted a call to
+`calculate_timestamp` — a function that does not exist anywhere — and Open WebUI
+rendered it as `View Result from calculate_timestamp` above a fabricated answer.
+
+Nothing malfunctioned. Asked to compute something it could not, the model emitted
+its native `<tool_call><function=…>` syntax for an invented tool; llama.cpp's
+`peg-native` parser converts that to a structured `tool_calls` field regardless
+of whether the client sent a `tools` array; Open WebUI displayed the result.
+Every layer behaved as designed and the output was still invented.
+
+So a result badge in a chat UI is **not** evidence that a real tool ran. Check
+the tool name against the tools you actually installed.
+
 ## Tuning findings
 
 **`-ub` (ubatch) is the most under-used flag.** Qwen3.6, `-ncmoe 40`, pp4096:
