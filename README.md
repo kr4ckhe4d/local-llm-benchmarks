@@ -79,6 +79,7 @@ From GGUF metadata:
 | Qwen3.6-35B-A3B | 262,144 | |
 | Gemma 4-26B-A4B | 262,144 | |
 | Qwen3-Coder-Next | 262,144 | |
+| Muse Glimmer 30B | 131,072 | dense, but 2 KV heads + sliding window |
 
 `switch-model.sh` exposes **only contexts within these ranges** (32k/128k/256k).
 Anything beyond needs YaRN RoPE scaling, which trades short-context quality for
@@ -174,6 +175,45 @@ already-extended model — the least trustworthy rows in this file.
 
 Gemma 4 hard-caps at 256K. It is *not* a hybrid-attention model, which is why
 its VRAM scales so much worse with context than the two Qwen models.
+
+### Muse Glimmer 30B — 12.4GB, **dense** 30B, 52 layers
+
+The only dense model in the set, and the first one where `-ncmoe` is irrelevant —
+every layer goes to the GPU or none does. It fits anyway because of its attention
+layout: **2 KV heads against 32 query heads (16:1 GQA)**, and a 2048-token sliding
+window on 3 of every 4 layers. Only 13 layers keep a full KV cache, so 128K costs
+under a gigabyte.
+
+| Context | Config | VRAM used | Free | Gen tok/s | Draft acceptance |
+|---|---|---|---|---|---|
+| 32K | DFlash, `-ub 512` | 15,422 | 882 | **52.4** | 70.9%, mean run 3.13 |
+| 64K | DFlash, `-ub 256` | 15,374 | 930 | 50.5 | 67.7%, mean run 3.03 |
+| 128K | no DFlash | 14,462 | 1,842 | 31.9 | — |
+
+**DFlash is worth 1.64x.** It is a real 1.5GB drafter sidecar (5 blocks,
+`block_size 16`), not a generic draft model — llama.cpp has first-class support
+via `--spec-type draft-dflash` alongside `-md`. It costs ~0.9GB, which is why it
+is dropped at 128K: with it VRAM sits at 16,255 of 16,304 MiB — 49 MiB free — and
+any real prompt OOMs.
+
+**`reasoning_strength` defaults to `high` and will eat your entire token budget
+before writing a single character of content.** It is a Jinja variable in the
+chat template, *not* a system-prompt string — putting "Reasoning: low" in a
+system message does nothing at all. Only `--chat-template-kwargs` sets it:
+
+| Setting | Reasoning output | Result |
+|---|---|---|
+| `high` (default) | 1,611 chars | truncated at the cap, no code |
+| `low` | 428 chars | `finish: stop`, complete answer |
+
+llama.cpp splits it into `reasoning_content`, so `content` stays clean for
+API clients either way — the problem is purely that reasoning consumes the
+`max_tokens` budget.
+
+Its tool-call format is `<atem:function_calls>` / `<atem:invoke>` XML with
+`<|start|>assistant to=self<|message|>` channels — neither Qwen's nor Gemma's
+shape. Whether llama.cpp's parser handles it under a native-tool-call harness
+is **untested**; Cline bypasses the question by using prompt-based XML tools.
 
 ---
 
@@ -382,6 +422,34 @@ verify with a retrieval test at depth if it matters for your use.
 
 ## Commands
 
+### Rebuilding the ROCm backend
+
+`HIP_PATH` is needed at **both configure and build time**. Every guide shows it
+only at configure, which gets you a clean `cmake` run and then fails every `.cu`
+file with a misleading `fatal error: 'hip/hip_fp16.h' file not found`:
+
+```bash
+cd ~/llama.cpp
+HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+  cmake -B build -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1201 -DCMAKE_BUILD_TYPE=Release
+HIP_PATH=/opt/rocm cmake --build build -j16
+```
+
+Two traps, both of which cost a full build cycle each:
+
+* **`HIPCXX` must point at `clang`, not `clang++`.** Let CMake auto-detect and it
+  picks `clang++`, compiles the `.cu` files in CUDA language mode, and dies with
+  `unsupported CUDA gpu architecture: gfx1201`.
+* **A stale `CMakeCache.txt` survives `git pull`.** When llama.cpp changes how it
+  derives HIP include paths, a cache from the previous version keeps "working"
+  right up to the point every compile fails on a missing header. `rm -rf
+  build/CMakeCache.txt build/CMakeFiles` and reconfigure.
+
+Back up the working binary first (`cp build/bin/llama-server /tmp/`) — a failed
+build leaves you with no server at all.
+
+### Serving
+
 Persistent server (OpenAI-compatible API, reachable on the LAN). **Pick the
 build by quant format** — `build/` for Q4_K_M, `build-vulkan/` for MXFP4:
 
@@ -452,6 +520,7 @@ cannot switch it by changing the `"model"` field in a request.
 | Qwen3.6-35B-A3B | 35B | ~3B | MoE hybrid, 40L | UD-Q4_K_M | 20.6GB | yes |
 | Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | UD-Q4_K_M | 15.8GB | yes |
 | Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | yes |
+| Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
 | Qwen2.5-Coder-14B | 14B | 14B | Dense | Q4_K_M / Q8_0 | 8.4 / 14.6GB | deleted |
 | Qwen2.5-Coder-32B | 32B | 32B | Dense | Q4_K_M | ~19GB | deleted |
 | GPT-OSS-120B | 117B | ~5.1B | MoE | MXFP4 | 59.0GB | deleted |

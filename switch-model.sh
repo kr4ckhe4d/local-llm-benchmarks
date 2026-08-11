@@ -21,6 +21,7 @@ declare -A MODEL_FILE=(
   [qwen3.6]="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
+  [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
 )
 
 declare -A MODEL_LABEL=(
@@ -28,6 +29,7 @@ declare -A MODEL_LABEL=(
   [qwen3.6]="Qwen3.6-35B-A3B"
   [gemma4]="Gemma 4-26B-A4B"
   [qwen3-coder]="Qwen3-Coder-Next"
+  [muse-glimmer]="Muse Glimmer 30B"
 )
 
 # Which llama.cpp build to serve each model with. Measured, not guessed.
@@ -36,6 +38,7 @@ declare -A MODEL_BACKEND=(
   [qwen3.6]="build"              # Q4_K_M: ROCm 2.1x pp
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [qwen3-coder]="build"          # Q4_K_M: ROCm
+  [muse-glimmer]="build"         # Q3_K_XL: ROCm
 )
 
 # Per-context overrides, where the winner changes with depth.
@@ -52,7 +55,7 @@ declare -A BACKEND_OVERRIDE=(
 # Beyond-native configs were measured and do load — see the README — but are
 # deliberately not presets, because they need YaRN and degrade output quality.
 declare -A CTX_TOKENS=(
-  [32k]=32768 [128k]=131072 [256k]=262144
+  [32k]=32768 [64k]=65536 [128k]=131072 [256k]=262144
 )
 
 # key "<model>:<ctx>" -> extra llama-server flags beyond "-ngl 99 -c <tokens>".
@@ -82,6 +85,24 @@ declare -A CONFIG=(
   ["qwen3-coder:32k"]="-ncmoe 38 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
   ["qwen3-coder:128k"]="-ncmoe 40 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
   ["qwen3-coder:256k"]="-ncmoe 42 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
+
+  # Muse Glimmer 30B — DENSE (no -ncmoe), 52 layers, 2 KV heads (16:1 GQA) and a
+  # 2048-token sliding window on 3 of every 4 layers. That attention layout is
+  # why a 12.4GB dense model still fits 128K KV on a 16GB card. Native 131072.
+  #
+  # reasoning_strength defaults to 'high' in the chat template and will eat the
+  # whole token budget before writing any content. It is a Jinja variable, not a
+  # system-prompt string — only --chat-template-kwargs sets it. The JSON has no
+  # spaces or glob chars, so it survives the unquoted $extra word-split intact.
+  #
+  # DFlash is a real 1.5GB drafter sidecar (5 blocks, block_size 16), not a
+  # generic -md draft model. Measured 70.9% acceptance, mean run 3.13 tokens:
+  # 52.4 vs 31.9 tok/s, a 1.64x speedup. It costs ~0.9GB VRAM, which is why it
+  # is dropped at 128k — with it, VRAM sits at 15.87/15.92 GiB and any real
+  # prompt OOMs.
+  ["muse-glimmer:32k"]="-md models/dflash-kquant.gguf --spec-type draft-dflash -ub 512 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
+  ["muse-glimmer:64k"]="-md models/dflash-kquant.gguf --spec-type draft-dflash -ub 256 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
+  ["muse-glimmer:128k"]="-fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
 )
 
 # Kept as a guard, not currently reachable: every preset above is within its
@@ -106,9 +127,12 @@ Models:
   gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L)
   qwen3-coder    Qwen3-Coder-Next 49.3GB  MoE 80B / 3B active, hybrid attn (48L)
                                           coding specialist, ~25 tok/s
+  muse-glimmer   Muse Glimmer 30B 12.4GB  DENSE 30B, sliding-window attn (52L)
+                                          agentic specialist, 52 tok/s with DFlash
 
-Context: 32k 128k 256k  (only sizes within each model's native trained range;
-gpt-oss-20b caps at 128k, the rest at 256k. Run '$(basename "$0") list'.)
+Context: 32k 64k 128k 256k  (only sizes within each model's native trained
+range; muse-glimmer caps at 128k, gpt-oss-20b at 128k, the rest at 256k.
+Run '$(basename "$0") list'.)
 
 Notes:
   * Backend is chosen per model: ROCm for K-quants, Vulkan for MXFP4.
@@ -124,9 +148,9 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder; do
+  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer; do
     printf '  %-13s ' "$model"
-    for ctx in 32k 128k 256k; do
+    for ctx in 32k 64k 128k 256k; do
       local k="${model}:${ctx}"
       if [[ -n "${CONFIG[$k]+set}" ]]; then
         local b="${BACKEND_OVERRIDE[$k]:-${MODEL_BACKEND[$model]}}"
@@ -230,7 +254,12 @@ switch_model() {
   local ok=0 st
   # Qwen3-Coder-Next is 49GB and can take a couple of minutes to load cold.
   for _ in $(seq 1 80); do
-    if grep -qi 'failed to \(allocate\|create\)' "$LOG" 2>/dev/null; then
+    # DFlash always emits "[spec] failed to measure draft model memory: failed
+    # to create llama_context" during its memory-fitting probe, and the log
+    # itself calls that normal. Filter it out or every muse-glimmer launch
+    # aborts on a healthy server.
+    if grep -i 'failed to \(allocate\|create\)' "$LOG" 2>/dev/null \
+         | grep -qv '\[spec\] failed to measure'; then
       echo "ERROR: allocation failed. Last lines of $LOG:" >&2
       grep -iE 'allocating|failed' "$LOG" | tail -5 >&2
       exit 1
