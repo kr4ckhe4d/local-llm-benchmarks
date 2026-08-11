@@ -391,9 +391,15 @@ Expected: seed 42 → `PROBE-770487`, seed 7 → `PROBE-439563`, seed 1234 →
 
 | Model | Single call | Parallel calls | Notes |
 |---|---|---|---|
-| GPT-OSS-20B @128K | ✓ `PROBE-770487` | ✓ sum `1355528` | two calls in one turn, arithmetic correct |
-| Qwen3-Coder-Next @128K | ✓ `PROBE-770487` | untested | crashed the server before the rebuild |
+| GPT-OSS-20B @128K | ✓ `PROBE-770487` | ✓ sum `1355528` | two calls in one turn, did the arithmetic itself |
+| Qwen3-Coder-Next @128K | ✓ `PROBE-770487` | ✓ sum `1355528` | three calls — also delegated the addition to `add_numbers` |
 | Muse Glimmer 30B @32K | ✓ | untested | via Open WebUI's own `write_note` tool |
+
+Both models that were tested on the parallel case passed, but they solved it
+differently: GPT-OSS made the two `get_probe_token` calls and added the results
+in-head, while Qwen3-Coder made a third call to `add_numbers`. Both correct;
+Qwen's is the behaviour you want in an agent loop, where reaching for the tool
+beats trusting arithmetic done in the forward pass.
 
 ### The llama.cpp bug worth knowing about
 
