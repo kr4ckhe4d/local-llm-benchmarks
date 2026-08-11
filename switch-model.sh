@@ -16,6 +16,18 @@ LOG="/tmp/llama-server.log"
 PORT=8090
 HOST="0.0.0.0"
 
+# Remembers the last model/context launched, so 'start' can bring it back
+# without retyping the pair.
+STATE="$HOME/.cache/switch-model.last"
+
+# Idle sleep: after this many seconds with no requests, llama-server calls
+# destroy() and releases the model — VRAM drops to ~0 while the process keeps
+# listening on $PORT. The next request calls load_model() and reloads it, so
+# nothing breaks, it just pays a cold start. This is what makes it safe to
+# leave the server up while gaming. Set SLEEP_IDLE=-1 to disable (upstream's
+# own default), or SLEEP_IDLE=<seconds> to override.
+SLEEP_IDLE="${SLEEP_IDLE:-900}"
+
 declare -A MODEL_FILE=(
   [gpt-oss-20b]="gpt-oss-20b-mxfp4.gguf"
   [qwen3.6]="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
@@ -117,6 +129,8 @@ declare -A YARN=(
 usage() {
   cat <<USAGE
 Usage: $(basename "$0") <model> <context>
+       $(basename "$0") stop      free the GPU completely (SIGTERM, then SIGKILL)
+       $(basename "$0") start     relaunch the last model/context used
        $(basename "$0") status
        $(basename "$0") list
 
@@ -138,11 +152,17 @@ Notes:
   * Backend is chosen per model: ROCm for K-quants, Vulkan for MXFP4.
   * Close DaVinci Resolve first — it holds ~10.4GB VRAM and will cause
     allocation failures on the tighter configs.
+  * Gaming: you do not need 'stop'. After ${SLEEP_IDLE}s idle the server
+    releases the model and VRAM drops to ~0 on its own, while staying up on
+    port ${PORT}; the next request reloads it. Use 'stop' only to kill the
+    process outright. Override with SLEEP_IDLE=<seconds>, or -1 to disable.
 
 Examples:
   $(basename "$0") qwen3-coder 256k
   $(basename "$0") gpt-oss-20b 128k
-  $(basename "$0") status
+  $(basename "$0") stop
+  $(basename "$0") start
+  SLEEP_IDLE=-1 $(basename "$0") gpt-oss-20b 32k   # never sleep
 USAGE
 }
 
@@ -164,6 +184,57 @@ list_combos() {
   echo "  rocm = build/   vulkan = build-vulkan/"
 }
 
+vram_used() {
+  awk '{printf "%d", $1/1024/1024}' /sys/class/drm/card1/device/mem_info_vram_used 2>/dev/null || echo "?"
+}
+
+# SIGTERM first — llama-server shuts down cleanly on it. In router mode
+# (--models-preset) this matches both the router and the child process it
+# spawned per model, since both are named llama-server.
+stop_server() {
+  if ! pgrep -x llama-server > /dev/null 2>&1 && ! pgrep -x llama-cli > /dev/null 2>&1; then
+    echo "No llama-server running. VRAM in use: $(vram_used) / 16304 MiB"
+    return 0
+  fi
+  echo "==> Stopping llama-server/llama-cli..."
+  pkill -x llama-server 2>/dev/null || true
+  pkill -x llama-cli 2>/dev/null || true
+  for _ in $(seq 1 10); do
+    pgrep -x llama-server > /dev/null 2>&1 || pgrep -x llama-cli > /dev/null 2>&1 || break
+    sleep 1
+  done
+  # A model mid-load can ignore SIGTERM until it finishes; escalate rather than
+  # leaving the GPU pinned.
+  if pgrep -x llama-server > /dev/null 2>&1 || pgrep -x llama-cli > /dev/null 2>&1; then
+    echo "    still running after SIGTERM, sending SIGKILL..."
+    pkill -9 -x llama-server 2>/dev/null || true
+    pkill -9 -x llama-cli 2>/dev/null || true
+    sleep 2
+  fi
+  if pgrep -x llama-server > /dev/null 2>&1 || pgrep -x llama-cli > /dev/null 2>&1; then
+    echo "ERROR: a process is still running after SIGKILL." >&2
+    ps -o pid,etime,cmd -C llama-server 2>/dev/null | tail -n +2 >&2 || true
+    return 1
+  fi
+  echo "==> Stopped. VRAM in use: $(vram_used) / 16304 MiB"
+}
+
+start_last() {
+  if [[ ! -f "$STATE" ]]; then
+    echo "No previous model recorded in $STATE." >&2
+    echo "Launch one explicitly first, e.g. '$(basename "$0") gpt-oss-20b 32k'." >&2
+    exit 1
+  fi
+  local model ctx
+  read -r model ctx < "$STATE"
+  if [[ -z "${model:-}" || -z "${ctx:-}" ]]; then
+    echo "Malformed state file $STATE — expected '<model> <context>'." >&2
+    exit 1
+  fi
+  echo "==> Restarting last config: $model $ctx"
+  switch_model "$model" "$ctx"
+}
+
 status() {
   if ! pgrep -x llama-server > /dev/null 2>&1; then
     echo "No llama-server running."
@@ -176,8 +247,23 @@ status() {
   st=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/health" 2>/dev/null || echo "000")
   echo "Health: $st"
   local vram
-  vram=$(awk '{printf "%d", $1/1024/1024}' /sys/class/drm/card1/device/mem_info_vram_used 2>/dev/null || echo "?")
+  vram=$(vram_used)
   echo "VRAM in use: ${vram} / 16304 MiB"
+  # /health, /props and /v1/models all bypass the sleep state upstream, so none
+  # of them report it and none of them wake the model — checking status is free.
+  # Low VRAM against a live process is the observable signal.
+  if [[ "$st" == "200" && "$vram" != "?" ]] && (( vram < 1500 )); then
+    # Report the value the RUNNING process was launched with, not this shell's
+    # $SLEEP_IDLE — they differ whenever the server was started with an override.
+    local idle
+    idle=$(pgrep -a -x llama-server 2>/dev/null \
+             | grep -o -- '--sleep-idle-seconds [0-9-]\+' | head -1 | awk '{print $2}')
+    if [[ -n "${idle:-}" ]]; then
+      echo "State: sleeping (model released after ${idle}s idle; next request reloads it)"
+    else
+      echo "State: sleeping (model released; next request reloads it)"
+    fi
+  fi
   if [[ "$st" == "200" ]]; then
     curl -s "http://localhost:${PORT}/v1/models" 2>/dev/null | python3 -m json.tool 2>/dev/null || true
   fi
@@ -222,12 +308,8 @@ switch_model() {
     exit 1
   fi
 
-  echo "==> Stopping any running llama-server/llama-cli..."
-  pkill -x llama-server 2>/dev/null || true
-  pkill -x llama-cli 2>/dev/null || true
-  sleep 2
-  if pgrep -x llama-server > /dev/null 2>&1 || pgrep -x llama-cli > /dev/null 2>&1; then
-    echo "ERROR: a process is still running after kill, aborting." >&2
+  if ! stop_server; then
+    echo "ERROR: could not stop the running server, aborting." >&2
     exit 1
   fi
 
@@ -244,9 +326,15 @@ switch_model() {
   echo "==> Starting ${MODEL_LABEL[$model]} @ ${ctx} (${tokens} tokens)"
   echo "    backend: $backend"
   echo "    flags: -ngl 99 -c $tokens $extra"
+  if (( SLEEP_IDLE > 0 )); then
+    echo "    idle sleep: ${SLEEP_IDLE}s (releases VRAM, reloads on next request)"
+  fi
+  mkdir -p "$(dirname "$STATE")"
+  printf '%s %s\n' "$model" "$ctx" > "$STATE"
   cd "$LLAMA_DIR"
   # shellcheck disable=SC2086
   nohup "$bin" -m "models/$file" -ngl 99 -c "$tokens" $extra -np 1 \
+    --sleep-idle-seconds "$SLEEP_IDLE" \
     --host "$HOST" --port "$PORT" > "$LOG" 2>&1 < /dev/null &
   disown
 
@@ -295,6 +383,8 @@ case "${1:-}" in
   ""|-h|--help) usage ;;
   status) status ;;
   list) list_combos ;;
+  stop) stop_server ;;
+  start) start_last ;;
   *)
     if [[ $# -lt 2 ]]; then usage; exit 1; fi
     switch_model "$1" "$2"

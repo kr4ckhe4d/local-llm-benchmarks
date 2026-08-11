@@ -617,14 +617,37 @@ downloading anything large:
 
 ## How to switch models
 
+`~/llama.cpp/switch-model.sh` is a symlink to `switch-model.sh` in this repo —
+edit it here, run it from either path.
+
 ```bash
-~/llama.cpp/switch-model.sh <model> <context>   # gpt-oss-20b|qwen3.6|gemma4|qwen3-coder
+~/llama.cpp/switch-model.sh <model> <context>   # gpt-oss-20b|qwen3.6|gemma4|qwen3-coder|muse-glimmer
+~/llama.cpp/switch-model.sh stop                # SIGTERM, then SIGKILL — frees the GPU
+~/llama.cpp/switch-model.sh start               # relaunch the last model/context
 ~/llama.cpp/switch-model.sh status              # what's running now
 ~/llama.cpp/switch-model.sh list                # verified combinations
 ```
 
 There is no hot-swap — one `llama-server` process holds one model, and clients
 cannot switch it by changing the `"model"` field in a request.
+
+### Getting the GPU back without stopping the server
+
+Launches pass `--sleep-idle-seconds 900`. After 15 idle minutes llama-server
+calls `destroy()` and releases the model — VRAM drops to ~0 (measured: 12464 →
+595 MiB) while the process keeps listening on 8090. The next request calls
+`load_model()` and reloads it, so nothing breaks; it just pays a cold start.
+This is what makes it safe to leave the server up and go play a game. Upstream's
+default is `-1`, disabled; override with `SLEEP_IDLE=<seconds>` or `-1`.
+
+Sleep state is not reported by any endpoint. `/health`, `/props` and `/v1/models`
+all pass `create_response(true)`, which deliberately **bypasses** sleep — so they
+answer without waking the model, which also means none of them can tell you it
+is asleep. `status` infers it from low VRAM against a live process. The useful
+consequence: polling `status` never triggers a reload.
+
+`stop` covers the router case too. Under `--models-preset` the router spawns a
+per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 
 ---
 
