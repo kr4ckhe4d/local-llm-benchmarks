@@ -44,6 +44,7 @@ declare -A MODEL_FILE=(
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
+  [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL.gguf"
 )
 
 declare -A MODEL_LABEL=(
@@ -52,6 +53,7 @@ declare -A MODEL_LABEL=(
   [gemma4]="Gemma 4-26B-A4B"
   [qwen3-coder]="Qwen3-Coder-Next"
   [muse-glimmer]="Muse Glimmer 30B"
+  [qwen3.8]="Qwen3.8-27B"
 )
 
 # Which llama.cpp build to serve each model with. Measured, not guessed.
@@ -61,6 +63,7 @@ declare -A MODEL_BACKEND=(
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [qwen3-coder]="build"          # Q4_K_M: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
+  [qwen3.8]="build"              # Q3_K_XL: ROCm
 )
 
 # Per-context overrides, where the winner changes with depth.
@@ -125,6 +128,30 @@ declare -A CONFIG=(
   ["muse-glimmer:32k"]="-md models/dflash-kquant.gguf --spec-type draft-dflash -ub 512 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
   ["muse-glimmer:64k"]="-md models/dflash-kquant.gguf --spec-type draft-dflash -ub 256 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
   ["muse-glimmer:128k"]="-fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
+
+  # Qwen3.8-27B — DENSE 27B (no -ncmoe), hybrid attention, 64 layers, 16 with
+  # KV. Native 262144, but this card cannot reach it: 4 KV heads x 256 across 16
+  # layers costs 34,816 B/token at q8_0, which is 2.7x Qwen3-Coder-Next. The
+  # weights are 12,818 MiB and dense, so there is no expert offload to trade
+  # against that — 256k needs 4,608 MiB of q4_0 KV on top and simply does not
+  # fit. 128k only fits with q4_0 KV *and* -ub 256, at 281 MiB free; that margin
+  # holds because the compute buffer is sized from -ub at load time and does not
+  # grow with prompt length (verified: 127,116-token prompt, 5/5 needle recall,
+  # no OOM). It leaves no room for a second GPU consumer, though.
+  #
+  # Unlike Qwen3.6, -ub barely matters here (1180 -> 1307 pp, +11% from 256 to
+  # 1024) because the model is fully GPU-resident: there is no CPU-offloaded
+  # weight traffic to amortise. So -ub 256 at 128k costs ~10%, not the ~3x it
+  # costs Qwen3-Coder-Next.
+  #
+  # --reasoning-budget is not optional. reasoning_effort defaults to 'xhigh' and
+  # on a hard prompt the model produces 4,684 chars of thinking and ZERO content
+  # at max_tokens 1200. reasoning_effort 'low' does NOT fix it (still 0 content),
+  # and on an ill-posed prompt thinking never terminates at all — 28,174 chars
+  # with no </think> at max_tokens 8000. Capping the budget restores content.
+  ["qwen3.8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:64k"]="-ub 1024 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:128k"]="-ub 256 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 )
 
 # Kept as a guard, not currently reachable: every preset above is within its
@@ -155,10 +182,13 @@ Models:
                                           coding specialist, ~25 tok/s
   muse-glimmer   Muse Glimmer 30B 12.4GB  DENSE 30B, sliding-window attn (52L)
                                           agentic specialist, 52 tok/s with DFlash
+  qwen3.8        Qwen3.8-27B      12.5GB  DENSE 27B, hybrid attn (64L), thinking
+                                          32 tok/s shallow, but 9.6 at 131k depth
 
 Context: 32k 64k 128k 256k  (only sizes within each model's native trained
 range; muse-glimmer caps at 128k, gpt-oss-20b at 128k, the rest at 256k.
-Run '$(basename "$0") list'.)
+qwen3.8 is native 256k but VRAM-capped at 128k here — dense weights plus
+4-KV-head attention leave no room. Run '$(basename "$0") list'.)
 
 Notes:
   * 'router' vs '<model> <context>': the router serves every preset in
@@ -186,7 +216,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer; do
+  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer qwen3.8; do
     printf '  %-13s ' "$model"
     for ctx in 32k 64k 128k 256k; do
       local k="${model}:${ctx}"

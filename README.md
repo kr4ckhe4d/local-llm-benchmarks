@@ -49,18 +49,32 @@ note the generation share of that comes from `-ncmoe 40 → 24`, not the backend
 
 ## Why 1M context is possible at all: hybrid attention
 
-Qwen3.6-35B-A3B (`qwen35moe`) and Qwen3-Coder-Next (`qwen3next`) are **hybrid
-attention** models. `full_attention_interval = 4` means only every 4th layer
-keeps a KV cache; the rest are SSM/gated-linear layers with a **constant-size
-recurrent state** that does not grow with context.
+Qwen3.6-35B-A3B (`qwen35moe`), Qwen3-Coder-Next (`qwen3next`) and Qwen3.8-27B
+(`qwen35`) are **hybrid attention** models. `full_attention_interval = 4` means
+only every 4th layer keeps a KV cache; the rest are SSM/gated-linear layers
+with a **constant-size recurrent state** that does not grow with context.
 
-| Model | Layers | Layers with KV | SSM state | KV @1M (q8_0) |
-|---|---|---|---|---|
-| Qwen3.6-35B-A3B | 40 | 10 | 62.81 MiB | 10,880 MiB |
-| Qwen3-Coder-Next | 48 | 12 | 75.38 MiB | 13,056 MiB |
+| Model | Layers | Layers with KV | KV heads | SSM state | KV @1M (q8_0) |
+|---|---|---|---|---|---|
+| Qwen3.6-35B-A3B | 40 | 10 | 2 | 62.81 MiB | 10,880 MiB |
+| Qwen3-Coder-Next | 48 | 12 | 2 | 75.38 MiB | 13,056 MiB |
+| Qwen3.8-27B | 64 | 16 | **4** | — | **34,816 MiB** |
 
-Both use 2 KV heads × 256 key/value length — tiny per-layer KV on top of the
-1-in-4 layer count.
+The first two use 2 KV heads × 256 key/value length — tiny per-layer KV on top
+of the 1-in-4 layer count.
+
+**Qwen3.8-27B is the counter-example, and it matters.** Same
+`full_attention_interval = 4`, but 4 KV heads instead of 2 and 64 layers
+instead of 40-48, so 16 layers keep KV at double the per-layer cost:
+**34,816 bytes/token**, 2.7x Qwen3-Coder-Next. Confirmed exactly, not
+estimated — asking for 131,072 tokens of q8_0 KV fails with `failed to
+allocate ROCm0 buffer of size 4563402752`, which is 4,352 MiB, precisely
+16 × 4 × 256 × 2 × 1.0625 × 131072.
+
+So "hybrid attention" is not by itself a promise of cheap long context. Read
+`head_count_kv` and `block_count` alongside `full_attention_interval` — the
+interval tells you what fraction of layers cache, the other two tell you what
+each of those layers costs.
 
 **This is the whole reason 1M fits in 16GB.** A conventional full-attention
 coder such as Qwen3-Coder-30B-A3B has KV on all 48 layers with 4 KV heads ×
@@ -80,6 +94,7 @@ From GGUF metadata:
 | Gemma 4-26B-A4B | 262,144 | |
 | Qwen3-Coder-Next | 262,144 | |
 | Muse Glimmer 30B | 131,072 | dense, but 2 KV heads + sliding window |
+| Qwen3.8-27B | 262,144 | **VRAM-capped at 131,072 here** — 256K does not fit |
 
 `switch-model.sh` exposes **only contexts within these ranges** (32k/128k/256k).
 Anything beyond needs YaRN RoPE scaling, which trades short-context quality for
@@ -215,6 +230,48 @@ Its tool-call format is `<atem:function_calls>` / `<atem:invoke>` XML with
 shape. Whether llama.cpp's parser handles it under a native-tool-call harness
 is **untested**; Cline bypasses the question by using prompt-based XML tools.
 
+### Qwen3.8-27B — 12.5GB, **dense** 27B, 64 layers, hybrid attention, thinking
+
+Arch is `qwen35`, so build `153d324bc` already serves it — no rebuild, and
+upstream has no Qwen3.8-specific commits to pull. It is the first model here
+that is dense *and* hybrid-attention, and the combination is unkind: no
+`-ncmoe` to trade, and 34,816 B/token of KV.
+
+| Context | Extra flags | VRAM used | Free |
+|---|---|---|---|
+| 32K | `-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,610 | 1,694 |
+| 64K | `-ub 1024 -b 2048 -fa on -ctk q4_0 -ctv q4_0` | 14,801 | 1,503 |
+| 128K | `-ub 256 -b 2048 -fa on -ctk q4_0 -ctv q4_0` | 16,023 | **281** |
+
+Rejected along the way, all measured:
+
+| Attempt | Result |
+|---|---|
+| 128K, q8_0 KV | **fails to allocate** — wants 4,352 MiB of KV |
+| 128K, q4_0, `-ub 1024` | loads at 16,247 — **57 MiB free** |
+| 128K, q4_0, `-ub 512` | loads at 16,127 — 177 MiB free |
+| 64K, q8_0, `-ub 1024` | loads at 15,811 — 493 MiB free, too tight to keep |
+| 256K, any KV quant | 12,818 MiB weights + 4,608 MiB q4_0 KV > 16,304. Not attempted |
+
+**The 281 MiB margin at 128K is real, not luck.** The obvious worry is the
+Muse Glimmer + DFlash case, where 49 MiB free meant any real prompt OOMed. It
+does not happen here, because the compute buffer is sized from `-ub` at load
+time and does not grow with prompt length. Verified by pushing a
+**127,116-token** prompt through the 128K preset: no OOM, and 5/5 needle
+recall. What that margin does cost you is robustness against *other* GPU
+consumers — 281 MiB is less than any browser compositor, let alone Resolve.
+
+Two GGUF quirks worth knowing:
+
+* `block_count` is **65**, not 64. `blk.64` is a Multi-Token-Prediction head
+  (`nextn.eh_proj`, `nextn.shared_head_norm`, `nextn_predict_layers = 1`) and
+  llama.cpp discards it — `model has unused tensor blk.64.* -- ignoring`.
+  That is **198.8 MiB** of the file you store and never execute. It also means
+  the model's own speculative-decoding mechanism is unavailable, unlike Muse
+  Glimmer where DFlash is first-class and worth 1.64x.
+* Unsloth's `UD-Q3_K_XL` reports internally as `Q4_K - Small` at 3.93 BPW.
+  The name is the recipe, not the block type; do not match on it.
+
 ---
 
 ## Throughput
@@ -281,6 +338,43 @@ Qwen3-Coder-Next.
 | 12 | 128K | 1603.6 | 42.6 |
 | 20 | 256K | 1276.0 | 33.9 |
 
+### Qwen3.8-27B — ROCm, `-fa 1`, pp4096/tg64
+
+Ubatch sweep at q8_0 KV, shallow:
+
+| `-ub` | Prompt tok/s | Gen tok/s |
+|---|---|---|
+| 256 | 1180.7 | 31.9 |
+| 512 | 1279.7 | 31.9 |
+| 1024 | 1306.9 | 31.9 |
+
+**`-ub` almost does not matter on this model — +11% across the whole range,**
+against +188% on Qwen3.6. That is not a contradiction, it is the mechanism
+showing itself: Qwen3.6 at `-ncmoe 40` streams expert weights from DDR4 every
+batch, and a larger ubatch amortises that transfer. Qwen3.8 is dense and fully
+GPU-resident, so there is no host traffic to amortise and ubatch only trades
+compute-buffer size against a little scheduling overhead. The practical payoff
+is that `-ub 256` — mandatory to fit 128K — costs about 10% here, where the
+same drop costs Qwen3-Coder-Next roughly 3x.
+
+Depth sweep, q4_0 KV, `-ub 256` (the 128K preset):
+
+| Depth | Prompt tok/s | Gen tok/s |
+|---|---|---|
+| 0 | 1180.4 | 31.6 |
+| 32K | 551.2 | 20.8 |
+| 131K | 213.4 | **9.6** |
+
+**This is the worst generation decay in the file: 3.3x.** Compare Qwen3.6 over
+the same range, 31.8 → 22.2, only 1.43x. The cause is the same 4-KV-heads ×
+16-layers arithmetic — every generated token reads the whole KV cache, and
+here that cache is 2.7x fatter per token than any other hybrid model in the
+set. At 131K this model generates slower than Qwen3-Coder-Next, an 80B.
+
+So the honest reading of the 128K preset: it fits, it recalls perfectly, and
+it is slow enough that you should reach for 32K or 64K unless you genuinely
+need the window.
+
 ### Generation decay with depth — Qwen3.6, `-ncmoe 40 -ub 1024`
 
 | Depth | Gen tok/s |
@@ -321,6 +415,12 @@ Two probes, in this repo and copied to `~/llama.cpp/`:
 Both score 5/5 everywhere, including the 50% mid-context position. The model
 retrieved on meaning and rejected every near-miss.
 
+**Qwen3.8-27B, spot-checked with `--no-think`:** needle 5/5 at 127,116 tokens
+on the 128K preset (cold prefill 339.2s, ~375 tok/s; cached follow-ups
+2.6-3.3s), and semantic recall 5/5 at 23,474 tokens. Not the full four-depth
+sweep — enough to say that recall is not the reason to avoid its long-context
+mode. Generation speed at that depth is (9.6 tok/s).
+
 Both scripts take `--depth N` against any running server:
 
 ```bash
@@ -360,6 +460,81 @@ reason to avoid the full window.
 Practical ceiling: `143,777 tokens exceeds the available context size (131072)`
 — usable input at the 128K preset is ~119K once you leave room for the reply.
 
+## Thinking models: `reasoning_effort` does not bound anything
+
+Muse Glimmer taught that a thinking model's default effort can eat the whole
+token budget, and that `low` fixes it. **Qwen3.8-27B breaks the second half of
+that lesson.** Its `reasoning_effort` defaults to `xhigh`, and the same
+hard-prompt test gives:
+
+| Setting | Reasoning chars | Content chars | finish |
+|---|---|---|---|
+| default (`xhigh`) | 4,684 | **0** | length |
+| `xhigh` | 4,846 | **0** | length |
+| `medium` | 2,574 | **0** | length |
+| `low` | 2,533 | **0** | length |
+| `enable_thinking=false` | 0 | 2,538 | length |
+
+At `max_tokens: 1200`, **every** thinking setting returns zero content. `low`
+halves the reasoning and still answers nothing. Raising the budget does not
+converge either — it scales with whatever you give it:
+
+| Setting | `max_tokens` | Reasoning chars | Content chars |
+|---|---|---|---|
+| `low` | 2,000 | 5,720 | 0 |
+| `low` | 4,000 | 11,822 | 0 |
+| default | 4,000 | 15,926 | 0 |
+| `low` | 8,000 | 28,174 | 0 |
+
+At 8,000 tokens there is still no `</think>` anywhere in the output, and the
+trace reads `I'm truly stuck. Let me try a completely different approach` —
+genuine non-termination, not a parser artifact.
+
+**Fair caveat:** the prompt driving that table is a logic puzzle I wrote which
+may be ill-posed, and models spin on unsolvable problems. On a well-posed hard
+problem the default terminates normally (`stop` at 3,109 tokens). So the claim
+is not "this model never stops thinking" — it is that **nothing in
+`reasoning_effort` puts a ceiling on it**, so a bad prompt can consume any
+budget you set.
+
+The fix is llama.cpp's own flag, not a template kwarg:
+
+| Config | Reasoning chars | Content chars |
+|---|---|---|
+| `--reasoning-budget 1024`, `max_tokens 1200` | 3,135 | **776** |
+| `--reasoning-budget 1024`, `max_tokens 2000` | 4,298 | **3,584** |
+
+`--reasoning-budget N>0` is supported in this build (`-1` unrestricted, `0`
+immediate end, `N` a token cap), so every `qwen3.8` preset sets 1024. Note
+this also retroactively validates the `reasoning-budget = 1024` already in the
+Gemma 4 presets — it is a real cap, not an ignored value.
+
+Two smaller notes:
+
+* An invalid effort value **500s the request** rather than falling back — the
+  chat template calls `raise_exception` and llama.cpp surfaces it as an
+  internal error. `xhigh`/`medium`/`low` are the only accepted strings.
+* One anecdote on whether the thinking is even buying accuracy: asked how many
+  integers ≤ 1000 have exactly 6 divisors (answer 111), thinking mode said
+  **110** and ran out of budget mid-explanation, while `enable_thinking=false`
+  answered 111 and finished. n=1, so not a quality verdict — but it is not
+  evidence for leaving thinking on either.
+
+### The probes needed a flag for this
+
+`needle-test.py` sends `max_tokens: 60` and reads only `content`, so against
+any thinking model it scores 0/5 regardless of actual recall — the reasoning
+consumes the budget first. Both probes now take `--no-think`, which sends
+`chat_template_kwargs: {"enable_thinking": false}`:
+
+```bash
+./needle-test.py --depth 119000 --no-think
+./semantic-recall-test.py --depth 20000 --no-think
+```
+
+This also keeps the comparison fair: every long-context number already in this
+file was measured on Qwen3-Coder-Next, which does not think at all.
+
 ## Tool calling: verified, and previously broken by llama.cpp
 
 Native tool calling — the OpenAI `tools` field, parsed by llama.cpp into
@@ -394,6 +569,7 @@ Expected: seed 42 → `PROBE-770487`, seed 7 → `PROBE-439563`, seed 1234 →
 | GPT-OSS-20B @128K | ✓ `PROBE-770487` | ✓ sum `1355528` | two calls in one turn, did the arithmetic itself |
 | Qwen3-Coder-Next @128K | ✓ `PROBE-770487` | ✓ sum `1355528` | three calls — also delegated the addition to `add_numbers` |
 | Muse Glimmer 30B @32K | ✓ | untested | via Open WebUI's own `write_note` tool |
+| Qwen3.8-27B @32K | ✓ `PROBE-770487` | ✓ sum `1355528` | three calls — also delegated the addition to `add_numbers`; passes with thinking on *and* off |
 
 Both models that were tested on the parallel case passed, but they solved it
 differently: GPT-OSS made the two `get_probe_token` calls and added the results
@@ -488,6 +664,14 @@ the tool name against the tools you actually installed.
 
 **+70% over the default** for larger VRAM cost. Raise it whenever the context
 budget allows; drop to 256 only when squeezing in 1M.
+
+**But this is a claim about CPU-offloaded models, not about ubatch itself.**
+The gain comes from amortising expert-weight transfers over PCIe, so it scales
+with how much of the model lives in system RAM. On a fully GPU-resident model
+there is nothing to amortise: Qwen3.8-27B moves only 1180.7 → 1306.9 across
+the same 256 → 1024 range, **+11%**. Check whether you are actually offloading
+before paying VRAM for a bigger ubatch — and if you are not, `-ub 256` is a
+cheap way to buy back compute buffer for context.
 
 **KV cache type — match them, never mix.** Qwen3.6, `-ncmoe 36`, pp512/tg128:
 
@@ -624,7 +808,7 @@ edit it here, run it from either path.
 
 ```bash
 ~/llama.cpp/switch-model.sh router              # serve ALL presets, switch from the client
-~/llama.cpp/switch-model.sh <model> <context>   # pin one: gpt-oss-20b|qwen3.6|gemma4|qwen3-coder|muse-glimmer
+~/llama.cpp/switch-model.sh <model> <context>   # pin one: gpt-oss-20b|qwen3.6|gemma4|qwen3-coder|muse-glimmer|qwen3.8
 ~/llama.cpp/switch-model.sh stop                # SIGTERM, then SIGKILL — frees the GPU
 ~/llama.cpp/switch-model.sh start               # relaunch whatever ran last
 ~/llama.cpp/switch-model.sh status              # what's running now
@@ -688,6 +872,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | UD-Q4_K_M | 15.8GB | yes |
 | Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | yes |
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
+| Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL | 12.5GB | yes |
 | Qwen2.5-Coder-14B | 14B | 14B | Dense | Q4_K_M / Q8_0 | 8.4 / 14.6GB | deleted |
 | Qwen2.5-Coder-32B | 32B | 32B | Dense | Q4_K_M | ~19GB | deleted |
 | GPT-OSS-120B | 117B | ~5.1B | MoE | MXFP4 | 59.0GB | deleted |
