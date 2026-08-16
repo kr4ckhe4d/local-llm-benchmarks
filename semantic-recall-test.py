@@ -148,6 +148,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="http://127.0.0.1:8090")
     ap.add_argument("--depth", type=int, default=128000)
+    # See needle-test.py: on a thinking model the reasoning eats the whole
+    # max_tokens budget and every answer comes back empty, which scores as MISS.
+    ap.add_argument("--no-think", action="store_true",
+                    help="disable reasoning (Qwen3.8, Gemma 4, Muse Glimmer)")
     a = ap.parse_args()
 
     print(f"Building utils module (~{a.depth} tokens)...", file=sys.stderr)
@@ -165,9 +169,12 @@ def main():
                   "and call it. Only write a new function if none exists. "
                   "Answer in at most three lines.")
         t0 = time.time()
-        r = post(a.host, "/v1/chat/completions", {
+        body = {
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 120, "temperature": 0.0})
+            "max_tokens": 120, "temperature": 0.0}
+        if a.no_think:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        r = post(a.host, "/v1/chat/completions", body)
         el = time.time() - t0
         ans = (r["choices"][0]["message"]["content"] or "")
         found = name in ans

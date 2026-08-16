@@ -9,6 +9,7 @@ full prefill is paid once.
 
   ./needle-test.py --depth 128000
   ./needle-test.py --depth 32000 --host http://127.0.0.1:8090
+  ./needle-test.py --depth 119000 --no-think        # thinking models
 """
 import argparse, json, re, sys, time, urllib.request
 
@@ -76,6 +77,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="http://127.0.0.1:8090")
     ap.add_argument("--depth", type=int, default=128000)
+    # Thinking models spend the whole max_tokens budget on reasoning_content
+    # before writing a single character of content, so every needle reads as a
+    # FAIL no matter how good the recall actually is. Turning thinking off is
+    # also the fairer comparison: the numbers already in the README were
+    # measured on Qwen3-Coder-Next, which does not think at all.
+    ap.add_argument("--no-think", action="store_true",
+                    help="disable reasoning (Qwen3.8, Gemma 4, Muse Glimmer)")
     a = ap.parse_args()
 
     print(f"Building haystack (~{a.depth} tokens)...", file=sys.stderr)
@@ -90,10 +98,13 @@ def main():
         q = (hay + f"\n\n---\n\nUsing only the notes above, answer in one short "
                    f"sentence: what is {subject}?")
         t0 = time.time()
-        r = post(a.host, "/v1/chat/completions", {
+        body = {
             "messages": [{"role": "user", "content": q}],
             "max_tokens": 60, "temperature": 0.0,
-        })
+        }
+        if a.no_think:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        r = post(a.host, "/v1/chat/completions", body)
         el = time.time() - t0
         ans = r["choices"][0]["message"]["content"] or ""
         ok = key.lower() in re.sub(r"[,*`]", "", ans.lower())
