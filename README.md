@@ -374,6 +374,12 @@ works on the probes; there is no `reasoning_effort`.
 
 ### Devstral Small 2 24B — 14.3GB, **dense** 24B coding specialist, Apache 2.0
 
+**Deleted from disk** — kept here because the measurements stand. It was
+removed for its 32K ceiling, not for capability: it is the fastest coder
+measured on this box, and on the one head-to-head quality test it scored
+better than Qwen3-Coder-Next. Re-downloading is ~16 minutes if that trade
+ever looks worth it again.
+
 Arch is `mistral3`, already in the build. It is the mirror image of Nemotron:
 **full attention on all 40 layers** at 8 KV heads x 128, which is **87,040
 B/token** at q8_0 — the most expensive KV in this file, 2.5x Qwen3.8 and 26x
@@ -1345,7 +1351,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL | 12.5GB | yes |
 | Nemotron-3-Nano-30B-A3B | 31.6B | ~3.5B | MoE Mamba2 hybrid, 52L | UD-Q4_K_XL | 22.8GB | yes |
-| Devstral Small 2 24B | 23.6B | 23.6B | Dense, full attn, 40L | Q4_K_M | 14.3GB | yes |
+| Devstral Small 2 24B | 23.6B | 23.6B | Dense, full attn, 40L | Q4_K_M | 14.3GB | deleted |
 | Qwen2.5-Coder-14B | 14B | 14B | Dense | Q4_K_M / Q8_0 | 8.4 / 14.6GB | deleted |
 | Qwen2.5-Coder-32B | 32B | 32B | Dense | Q4_K_M | ~19GB | deleted |
 | GPT-OSS-120B | 117B | ~5.1B | MoE | MXFP4 | 59.0GB | deleted |
