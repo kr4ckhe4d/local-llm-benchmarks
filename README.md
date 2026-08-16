@@ -803,8 +803,12 @@ downloading anything large:
 
 ## How to switch models
 
-`~/llama.cpp/switch-model.sh` is a symlink to `switch-model.sh` in this repo —
-edit it here, run it from either path.
+`~/llama.cpp/switch-model.sh` and `~/llama.cpp/models-preset.ini` are both
+symlinks into this repo — edit them here, run from either path. Keeping the
+preset file tracked matters: it carries the verified `-ncmoe`, KV quant,
+DFlash and reasoning-budget values for every router preset, so without it a
+fresh clone gets the docs and the launcher but none of the configs they
+describe.
 
 ```bash
 ~/llama.cpp/switch-model.sh router              # serve ALL presets, switch from the client
