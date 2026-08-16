@@ -437,6 +437,20 @@ the prefix across turns, and 1,071 completion tokens with a fully written
 answer is `--reasoning-budget 1024` doing its job — this is precisely the
 shape of request that returned zero content before the cap.
 
+**The 64K KV switch, measured the same way.** Same preset before and after the
+q4_0 → q8_0 change, at comparable depth:
+
+| 64K preset | Depth | Generation |
+|---|---|---|
+| q4_0, `-ub 1024` | 18,566 | 24.4 tok/s |
+| q8_0, `-ub 512` | 17,052 | **29.1 tok/s** |
+
+**+19.7%**, and `llama-bench` had predicted 29.39 at d16384 against 29.15
+measured slightly deeper — within 0.8%. That is the second time the synthetic
+curve has transferred to the serving path without flattering itself, which is
+the reason to keep taking these readings rather than trusting `llama-bench`
+alone.
+
 **Caveat that bit immediately:** the turn totalled 28,701 tokens against a
 32,768 window, 88% full, from five search results plus history. Search-
 augmented chats fill 32K fast. Use `qwen3.8-64k` for those — it trades q8_0
