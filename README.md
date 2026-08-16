@@ -662,6 +662,14 @@ at 241K — so cost grows superlinearly. 119K → 241K is 2.02x the tokens but
 | 128K preset | ~4.5 min | ~6.5s |
 | 256K preset | ~12.5 min | ~8.3s |
 
+**Seen in the wild on Qwen3-Coder-Next:** a turn reporting `cache_n 46967`
+against `prompt_n 14` — the entire 47K prefix reused, fourteen tokens new. The
+3,825-token reply cost 169s of generation and essentially nothing in prefill,
+where a cold 47K prompt would have added ~85s. That turn also gives the deepest
+generation reading for this model, **22.6 tok/s at 46,981 depth**, against ~25
+shallow: a 10% drop over a range where Qwen3.8 loses 34% and Nemotron 33%. The
+"barely decays with depth" claim for this model is now measured, not asserted.
+
 A 90x gap. At these depths the prompt cache is not an optimisation, it is the
 entire viability of the mode. **Treat 256K as load-once-then-iterate**: dump a
 subsystem in, then ask twenty questions against it. Any change to the prefix —
@@ -785,6 +793,62 @@ consumes the budget first. Both probes now take `--no-think`, which sends
 
 This also keeps the comparison fair: every long-context number already in this
 file was measured on Qwen3-Coder-Next, which does not think at all.
+
+## Output quality: the first measured difference between models
+
+Everything above measures speed, VRAM and recall. None of it says whether a
+model's answers are any *good*, and for a long time nothing here did. This is
+one narrow case where the difference was unambiguous.
+
+**The task:** an SVG/HTML bar chart with axis, labels and title, asked
+conversationally in Open WebUI.
+
+**Nemotron-3-Nano-30B-A3B produced a chart that renders blank.** It computed
+bar geometry as `height="-45"`, anchoring `y` at the baseline and negating the
+value, where a bar rising from a baseline needs `y = baseline - value` and a
+positive height. A negative `width` or `height` on `<rect>` is invalid per the
+SVG spec, so the element is silently not drawn — axis, ticks and labels all
+render correctly and the bars simply are not there. No error anywhere.
+
+The confounds were eliminated one at a time:
+
+| Suspect | Ruled out by |
+|---|---|
+| Quantisation | it is `UD-Q4_K_XL`, not a Q3 like Qwen3.8 |
+| Reasoning cap | identical at `--reasoning-budget` 1024 and 4096 |
+| Sampling temperature | still wrong at `temp 0.25`, not just 1.0 |
+| Unlucky sample | 4 regenerations, all four bars negative each time |
+
+**Qwen3-Coder-Next got it right on a harder version of the same task** — ten
+bars, a legend, rotated category labels and an axis title — three times over.
+That is the control that makes this a comparison rather than an anecdote: same
+box, same client, same quant family, and the *specialist* handled the strictly
+harder chart.
+
+**One honest caveat.** The failure reproduced reliably in a long chat carrying
+web-search history, but did **not** reproduce in isolated single-turn API calls
+— four neutral runs produced four correct charts. So the trigger appears to be
+context-dependent rather than unconditional, and a fresh chat may behave better
+than continuing a long search-heavy thread.
+
+**Scope.** One task, one client, two models. This is not a coding benchmark and
+Nemotron is not a coding model — it is a general reasoning model that happens
+to be excellent at everything else measured in this file. Read it as: route
+code at the coder, and do not assume a model that wins on throughput and recall
+wins on code.
+
+| Job | Model | Why |
+|---|---|---|
+| Code | `qwen3-coder` | correct geometry 3/3, verified tool calling, ~24 tok/s to 47K depth |
+| Long context, general | `nemotron-256k` | 46 tok/s, native 256K, 5/5 recall |
+| Beyond 262,144 | `nemotron-1m` | the only option that is natively trained there |
+| Fast general | `gemma4` | 47 tok/s flat, Q4_K_M |
+
+A related failure worth keeping in mind: the same chart, rendered perfectly,
+was titled "2024 Comparison" and ranked models two years stale — the web search
+had surfaced old pages and the model anchored on them. Correct code, confidently
+outdated content. It is the same shape as the fabrication cases below: nothing
+malfunctions and the output is still wrong.
 
 ## Tool calling: verified, and previously broken by llama.cpp
 
