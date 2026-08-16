@@ -9,7 +9,7 @@ is why each spec keeps showing up in the results.
 |---|---|---|
 | **GPU** | AMD Radeon RX 9070 XT — Navi 48, `gfx1201`, RDNA4, **16,304 MiB VRAM** | The binding constraint on this whole file. Every `-ncmoe`, KV-quant and `-ub` decision is bought against these 16GB |
 | **CPU** | AMD Ryzen 9 5950X — 16C/32T, 64 MiB L3, 5.09 GHz boost | Runs CPU-offloaded expert layers. `-t 32` collapses generation to 23.6 ± 4.6 tok/s on SMT contention; leave threads at 16 |
-| **RAM** | 64 GB DDR4-3200, dual channel | Qwen3-Coder-Next holds ~47 GB resident as a CPU-mapped model buffer, so that model wants the box otherwise idle |
+| **RAM** | 64 GB DDR4-3200 — 4 × 16 GB, dual channel, all four slots filled | Feeds CPU-offloaded expert layers at ~40 GB/s, which is the real ceiling on every `-ncmoe` row. Qwen3-Coder-Next also holds ~47 GB resident, so that model wants the box otherwise idle |
 | **Storage** | Crucial BX500 1 TB — **SATA** SSD (~540 MB/s) | Not NVMe. This is why cold loads cost what they do: ~93s for the 49 GB Qwen3-Coder-Next, ~30s for a 12.5 GB model. Idle-sleep reloads pay it again |
 | **OS** | CachyOS, kernel 7.1.5 | |
 | **ROCm** | 7.2.53211 (`build/`, `GGML_HIP=ON`, `AMDGPU_TARGETS=gfx1201`) | Wins K-quants by 1.7-2.1x prompt |
@@ -18,6 +18,24 @@ is why each spec keeps showing up in the results.
 
 The GPU is `card1` on this box, so VRAM is read from
 `/sys/class/drm/card1/device/mem_info_vram_used` throughout.
+
+**The memory config is worth stating, because `-ncmoe` rows are partly a DDR4
+benchmark.** The four DIMMs are two different kits, interleaved one per channel
+rather than one kit per channel:
+
+| Slot | Module | Rated | Running |
+|---|---|---|---|
+| A1, B1 | G.Skill `F4-3200C16-16GVK` | 3200 CL16 | 3200 |
+| A2, B2 | Corsair `CMW32GX4M2D3600C18` | **3600** CL18 | 3200 |
+
+The Corsair half is downclocked to the G.Skill's SPD speed. That is not
+obviously performance left on the table: four mostly dual-rank DIMMs is
+already the hardest case for a Zen 3 memory controller, and 3200 with all
+slots filled is a reasonable landing point. But anything that moves host
+memory bandwidth moves every CPU-offloaded number in this file, so it belongs
+in the record. (`dmidecode` also reports B1 as single-rank while A1, the same
+part number, reports dual — possibly an SPD reporting quirk, untested either
+way.)
 
 **Backend depends on the quant format — there is no single best build.**
 `~/llama.cpp/switch-model.sh` picks the right one per model automatically.
