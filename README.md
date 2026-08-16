@@ -947,6 +947,53 @@ the SVG case: no amount of thinking recovers a package version you never saw,
 whereas pinning the URLs in the prompt fixes it completely. The geometry
 failures above are not fixable that way.
 
+#### Q8_0 does not buy code quality — tested directly
+
+The obvious next question is whether quantisation was the real limit all
+along. It is not, and the test was unambiguous.
+
+Qwen3-Coder-30B-A3B at **Q8_0** (near-lossless) against Qwen3-Coder-Next at
+**Q4_K_M** — same family, same specialisation, both ~3B active, so the
+comparison isolates *size versus precision*:
+
+| Model | Quant | Scripts resolving | React API | Recharts `layout` | Data sorted |
+|---|---|---|---|---|---|
+| Devstral Small 2 24B | Q4_K_M | 3/4 | `createRoot` ✓ | `vertical` ✓ | ✓ |
+| Qwen3-Coder-Next 80B/3B | Q4_K_M | 2/4 | `createRoot` ✓ | `vertical` ✓ | ✓ |
+| **Qwen3-Coder-30B/3B** | **Q8_0** | **0/1** | `render` ✗ (React 17) | `horizontal` ✗ | ✗ |
+
+The Q8_0 model emitted a **single** script tag — no React, no ReactDOM, no
+Babel — then called `ReactDOM.render` on globals that were never loaded, wrote
+JSX into a plain `<script>` block with no transform, and listed data as
+`88, 91, 72, 77, 65` under a comment claiming it was sorted highest-first.
+Consistent across three runs at `temperature 0.3`.
+
+**Near-lossless precision on a smaller model lost decisively to 4-bit on
+bigger ones.** It failed on things the Q4 models got right — the React 18 API,
+the Recharts layout idiom — which are knowledge questions, not precision ones.
+
+It was also slower. `-ncmoe 30`, q8_0 KV:
+
+| Depth | 30B Q8_0 | Qwen3-Coder-Next Q4_K_M |
+|---|---|---|
+| 0 | 23.5 tok/s / 1315 pp | ~25 / ~700 |
+| 8K | 20.5 | — |
+| 32K | **15.9** | ~24 @23K, 22.6 @47K |
+
+Two structural reasons: Q8_0 weights are ~2x the bytes of Q4_K_M, so with 30
+expert layers streaming from DDR4 at ~40 GB/s the effective throughput roughly
+halves; and its KV is **52,224 B/token** against Coder-Next's 13,056, four
+times the cache to read per generated token.
+
+**So Q4_K_M is not what limits coding here.** That also retires the suspicion
+hanging over Qwen3.8 at Q3_K_XL being unfairly handicapped — Q3 remains a
+legitimate concern, Q4 does not. Total parameters and model recency dominate
+precision at these bitrates.
+
+Verified against its own GGUF while testing: 48 layers, 4 KV heads x 128 =
+52,224 B/token, i.e. ~52 GB at 1M. The estimate stated earlier in this file
+for this model was right.
+
 Practical consequence: if you want a local model to use an unfamiliar library
 from a CDN, **give it the exact script tags**. Verified working set:
 
@@ -1352,6 +1399,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL | 12.5GB | yes |
 | Nemotron-3-Nano-30B-A3B | 31.6B | ~3.5B | MoE Mamba2 hybrid, 52L | UD-Q4_K_XL | 22.8GB | yes |
 | Devstral Small 2 24B | 23.6B | 23.6B | Dense, full attn, 40L | Q4_K_M | 14.3GB | deleted |
+| Qwen3-Coder-30B-A3B | 30.5B | ~3B | MoE, full attn, 48L | Q8_0 | 32.5GB | deleted |
 | Qwen2.5-Coder-14B | 14B | 14B | Dense | Q4_K_M / Q8_0 | 8.4 / 14.6GB | deleted |
 | Qwen2.5-Coder-32B | 32B | 32B | Dense | Q4_K_M | ~19GB | deleted |
 | GPT-OSS-120B | 117B | ~5.1B | MoE | MXFP4 | 59.0GB | deleted |
