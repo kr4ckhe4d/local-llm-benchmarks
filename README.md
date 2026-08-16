@@ -557,6 +557,32 @@ depth other than Gemma 4, and unlike Gemma 4 it can go to 1M. Decay from 0 to
 Recall at depth, `--no-think`: **5/5 needle at 127,569 tokens**, cached
 follow-ups 1.1-1.2s against Qwen3.8's 2.6-3.3s at comparable depth.
 
+#### The 1M preset costs prompt throughput, not generation
+
+Measured on the serving path — `nemotron-1m` in Open WebUI with web search, at
+10,717 depth (`cache_n 8236` + `prompt_n 2481`):
+
+| | `nemotron-256k` (`-ncmoe 24 -ub 1024` q8_0) | `nemotron-1m` (`-ncmoe 32 -ub 256` q4_0) |
+|---|---|---|
+| Prompt | 1912.8 tok/s | **488.3 tok/s** |
+| Generation | 41.7 @32K | **38.8 @10.7K** |
+
+**Generation barely notices; prompt drops ~4x.** Two causes compound — `-ub 256`
+instead of 1024, and eight more layers on the CPU — and both hit prefill rather
+than decode. This is the same shape as Qwen3-Coder-Next at 1M (236 vs 697
+prompt, 23.8 vs 25.8 generation), so it looks like a property of what a 1M
+config has to give up on this card rather than anything model-specific.
+
+**Practical consequence: `nemotron-1m` is not a daily driver.** At the ~10K
+depths typical of a search-augmented chat, `nemotron-256k` gives roughly 4x the
+prompt throughput at the same generation speed *and* better KV precision. Pick
+the 1M preset only when the prompt genuinely exceeds 262,144 tokens.
+
+Native tool calling also works through Open WebUI on this model — two
+`search_web` calls with real result blocks in the same turn — and
+`--reasoning-budget 1024` bounded the thinking ("Thought for 11 seconds")
+rather than consuming the answer.
+
 ### Generation decay with depth — Qwen3.6, `-ncmoe 40 -ub 1024`
 
 | Depth | Gen tok/s |
