@@ -131,6 +131,7 @@ From GGUF metadata:
 | Muse Glimmer 30B | 131,072 | dense, but 2 KV heads + sliding window |
 | Qwen3.8-27B | 262,144 | **VRAM-capped at 131,072 here** — 256K does not fit |
 | Nemotron-3-Nano-30B-A3B | **1,048,576** | reached natively here — no YaRN |
+| Devstral Small 2 24B | 393,216 | **VRAM-capped at 32,768 here** — full attention on 40 layers |
 
 `switch-model.sh` exposes **only contexts within these ranges** (32k/128k/256k).
 Anything beyond needs YaRN RoPE scaling, which trades short-context quality for
@@ -370,6 +371,55 @@ Same thinking trap as Qwen3.8: default reasoning returns **zero content** at
 `max_tokens 1200`. `--reasoning-budget 1024` restores it (850 and 4,459 chars at
 1200 and 2000 tokens). Its template uses `enable_thinking`, so `--no-think`
 works on the probes; there is no `reasoning_effort`.
+
+### Devstral Small 2 24B — 14.3GB, **dense** 24B coding specialist, Apache 2.0
+
+Arch is `mistral3`, already in the build. It is the mirror image of Nemotron:
+**full attention on all 40 layers** at 8 KV heads x 128, which is **87,040
+B/token** at q8_0 — the most expensive KV in this file, 2.5x Qwen3.8 and 26x
+Nemotron. Its native 393,216 is not remotely reachable; 128K alone would want
+10,880 MiB of cache on top of 13,670 MiB of dense weights.
+
+| Context | Extra flags | VRAM used | Free |
+|---|---|---|---|
+| 32K | `-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0` | 15,663 | 641 |
+
+| Attempt | Result |
+|---|---|
+| 32K, q8_0 KV | **fails to allocate** — wants 2,720 MiB |
+| 32K, q4_0, `-ub 1024` | loads at 15,914 — 390 MiB free |
+| 16K, q8_0, `-ub 1024` | loads at 15,800 — 504 MiB free, *less* room than 32K at q4_0 |
+
+That last row is why only one preset exists: **32K at q4_0 leaves more headroom
+than 16K at q8_0**, so halving the window buys nothing.
+
+**It is the fastest coder here, and the shallowest.** Fully GPU-resident, so no
+`-ncmoe` and no host RAM pressure — 14.3GB against Qwen3-Coder-Next's 49.3GB
+and ~47GB resident.
+
+| Depth | Devstral Small 2 | Qwen3-Coder-Next |
+|---|---|---|
+| 0 | **36.0** tok/s / 1459 pp | ~25 / ~700 |
+| 8K | 32.2 | — |
+| 16K | 28.8 | — |
+| 32K | 24.1 | ~24 |
+| 47K | — | 22.6 |
+| 256K | **unreachable** | ~22 |
+
+44% faster shallow and roughly 2x on prompt, converging with Qwen3-Coder-Next
+by 32K — which is also where it stops. A 33% generation decay across just 32K
+is the steepest per-token in this file, and it is the 87,040 B/token doing it.
+
+So the two coders are complements, not substitutes: **Devstral for short work,
+Qwen3-Coder-Next for depth.**
+
+`-ub` confirms the CPU-offload rule again: **+10.9%** from 256 to 1024
+(1331.0 → 1475.8), against Qwen3.8's +11% and Qwen3.6's +188%. Two independent
+fully-resident models now agree.
+
+Not a thinking model — no `<think>` handling in its template, so unlike Qwen3.8
+and Nemotron it needs no `--reasoning-budget`. The GGUF embeds no sampling
+defaults.
 
 ---
 
@@ -868,6 +918,43 @@ wins on code.
 | Beyond 262,144 | `nemotron-1m` | the only option that is natively trained there |
 | Fast general | `gemma4` | 47 tok/s flat, Q4_K_M |
 
+### Two different failure classes
+
+A second task separates them further. Asked for the same chart **using
+Recharts**, with no CDN URLs supplied, every model produced a blank page — but
+for different reasons, and only one reason is the model's fault.
+
+| Model | Scripts resolving | What broke |
+|---|---|---|
+| Qwen3-Coder-Next | 2/4 | invented `babel@7.23.0`; that package's last version is **6.23.0**, deprecated years ago |
+| Devstral Small 2 | **3/4** | `Recharts.min.js` — no minified UMD exists in any version |
+
+Both also omitted `prop-types`, which Recharts' UMD requires as a global
+(`t.Recharts = e(t.React, t.PropTypes, t.ReactDOM)`).
+
+**The React and Recharts code itself was correct in both cases** — right
+`createRoot`, right `layout="vertical"` idiom for horizontal bars, right custom
+tooltip signature, correctly sorted. They failed only on dependency URLs.
+
+That is a **recall** failure, not a reasoning one, and it is the opposite of
+the SVG case: no amount of thinking recovers a package version you never saw,
+whereas pinning the URLs in the prompt fixes it completely. The geometry
+failures above are not fixable that way.
+
+Practical consequence: if you want a local model to use an unfamiliar library
+from a CDN, **give it the exact script tags**. Verified working set:
+
+```
+https://unpkg.com/react@18/umd/react.production.min.js
+https://unpkg.com/react-dom@18/umd/react-dom.production.min.js
+https://unpkg.com/prop-types@15.8.1/prop-types.min.js
+https://unpkg.com/recharts/umd/Recharts.js
+https://unpkg.com/@babel/standalone@7/babel.min.js
+```
+
+`prop-types` must precede Recharts, and note Recharts ships **no** `.min` UMD —
+adding one is the reasonable guess that both models made and that 404s.
+
 A related failure worth keeping in mind: the same chart, rendered perfectly,
 was titled "2024 Comparison" and ranked models two years stale — the web search
 had surfaced old pages and the model anchored on them. Correct code, confidently
@@ -1258,6 +1345,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL | 12.5GB | yes |
 | Nemotron-3-Nano-30B-A3B | 31.6B | ~3.5B | MoE Mamba2 hybrid, 52L | UD-Q4_K_XL | 22.8GB | yes |
+| Devstral Small 2 24B | 23.6B | 23.6B | Dense, full attn, 40L | Q4_K_M | 14.3GB | yes |
 | Qwen2.5-Coder-14B | 14B | 14B | Dense | Q4_K_M / Q8_0 | 8.4 / 14.6GB | deleted |
 | Qwen2.5-Coder-32B | 32B | 32B | Dense | Q4_K_M | ~19GB | deleted |
 | GPT-OSS-120B | 117B | ~5.1B | MoE | MXFP4 | 59.0GB | deleted |

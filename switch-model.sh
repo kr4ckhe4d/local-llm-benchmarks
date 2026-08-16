@@ -46,6 +46,7 @@ declare -A MODEL_FILE=(
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL.gguf"
   [nemotron]="Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf"
+  [devstral]="Devstral-Small-2-24B-Q4_K_M.gguf"
 )
 
 declare -A MODEL_LABEL=(
@@ -56,6 +57,7 @@ declare -A MODEL_LABEL=(
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
   [nemotron]="Nemotron-3-Nano-30B-A3B"
+  [devstral]="Devstral-Small-2-24B"
 )
 
 # Which llama.cpp build to serve each model with. Measured, not guessed.
@@ -67,6 +69,7 @@ declare -A MODEL_BACKEND=(
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL: ROCm
   [nemotron]="build"             # Q4_K_XL: ROCm
+  [devstral]="build"             # Q4_K_M: ROCm
 )
 
 # Per-context overrides, where the winner changes with depth.
@@ -181,6 +184,22 @@ declare -A CONFIG=(
   ["nemotron:256k"]="-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 1.0 --min-p 0.0 --reasoning-budget 1024"
   ["nemotron:512k"]="-ncmoe 28 -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 1.0 --min-p 0.0 --reasoning-budget 1024"
   ["nemotron:1m"]="-ncmoe 32 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 1.0 --min-p 0.0 --reasoning-budget 1024"
+
+  # Devstral Small 2 24B — DENSE 24B coding specialist, full attention on all
+  # 40 layers at 8 KV heads x 128. That is 87,040 B/token at q8_0: the most
+  # expensive KV in this file, 2.5x Qwen3.8 and 26x Nemotron. Native 393,216 is
+  # nowhere near reachable — 128K alone would want 10,880 MiB of KV on top of
+  # 13,670 MiB of dense weights.
+  #
+  # 32k needs q4_0 KV; q8_0 asks for 2,720 MiB and fails to allocate. Note 32k
+  # at q4_0 leaves MORE headroom (641 MiB) than 16k at q8_0 (504), so there is
+  # no reason to expose a smaller window.
+  #
+  # Fully GPU-resident, so no -ncmoe and -ub barely matters (+10.9% from 256 to
+  # 1024 — the same +11% Qwen3.8 shows). 512 is the sweet spot for headroom.
+  # Not a thinking model: no reasoning-budget needed. The GGUF embeds no
+  # sampling defaults; temp is low because it is a coder.
+  ["devstral:32k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 0.15 --min-p 0.0"
 )
 
 # Kept as a guard, not currently reachable: every preset above is within its
@@ -216,6 +235,9 @@ Models:
   nemotron       Nemotron-3-Nano  22.8GB  MoE 31.6B / 3.5B active, Mamba2 hybrid
                  30B-A3B                  6 of 52 layers keep KV -> NATIVE 1M
                                           47.5 tok/s shallow, 31.7 at 131k depth
+  devstral       Devstral Small 2 14.3GB  DENSE 24B coding specialist, Apache 2.0
+                 24B                      36 tok/s shallow — fastest coder here,
+                                          but 32k max: KV is 87,040 B/token
 
 Context: 32k 64k 128k 256k  (only sizes within each model's native trained
 range; muse-glimmer caps at 128k, gpt-oss-20b at 128k, the rest at 256k.
@@ -248,7 +270,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer qwen3.8 nemotron; do
+  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer qwen3.8 nemotron devstral; do
     printf '  %-13s ' "$model"
     for ctx in 32k 64k 128k 256k 512k 1m; do
       local k="${model}:${ctx}"
