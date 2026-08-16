@@ -338,6 +338,24 @@ Qwen3-Coder-Next.
 | 12 | 128K | 1603.6 | 42.6 |
 | 20 | 256K | 1276.0 | 33.9 |
 
+Depth sweep at `-ncmoe 8`, tg64 — **the flattest curve of any model here**:
+
+| Depth | Gen tok/s |
+|---|---|
+| 0 | 51.4 |
+| 8K | 49.0 |
+| 16K | 47.5 |
+| 32K | **47.0** |
+
+**8.5% decay across the whole range**, against Qwen3.8's 14% at q8_0 and 34%
+at q4_0, and Qwen3.6's 30% out to 131K. Gemma 4 is not a hybrid-attention
+model and pays for that in VRAM, but what it buys is generation speed that
+barely notices depth.
+
+That makes it the answer to "fastest model that is still a serious 25B+ at
+Q4_K_M": it never drops below 47 tok/s inside 32K, where Qwen3.8 at the same
+depth is at 27.0 and a full quant step lower at Q3_K_XL.
+
 ### Qwen3.8-27B — ROCm, `-fa 1`, pp4096/tg64
 
 Ubatch sweep at q8_0 KV, shallow:
@@ -364,6 +382,21 @@ Depth sweep, q4_0 KV, `-ub 256` (the 128K preset):
 | 0 | 1180.4 | 31.6 |
 | 32K | 551.2 | 20.8 |
 | 131K | 213.4 | **9.6** |
+
+**Those generation figures are the worst case, not the model's.** They were
+measured at q4_0 KV, which costs up to 23% at depth (see Tuning findings). The
+32K preset runs q8_0 and is materially faster:
+
+| Depth | Gen, q8_0 (32K preset) | Gen, q4_0 (128K preset) |
+|---|---|---|
+| 0 | 31.6 | 31.5 |
+| 8K | 30.6 | 27.8 |
+| 16K | 29.4 | 25.1 |
+| 32K | **27.0** | 20.8 |
+
+So Qwen3.8 holds above 30 tok/s to roughly **12K** of depth at q8_0, and is
+still at 27.0 at 32K. An earlier revision of this file put that crossover near
+5K, by reading the q4_0 curve and applying it to the q8_0 preset.
 
 **This is the worst generation decay in the file: 3.3x.** Compare Qwen3.6 over
 the same range, 31.8 → 22.2, only 1.43x. The cause is the same 4-KV-heads ×
@@ -441,6 +474,16 @@ Two probes, in this repo and copied to `~/llama.cpp/`:
 
 Both score 5/5 everywhere, including the 50% mid-context position. The model
 retrieved on meaning and rejected every near-miss.
+
+**Gemma 4-26B-A4B, thinking disabled via `--reasoning-budget 0`:** semantic
+recall 5/5 at 23,251 tokens, with cached follow-ups at **0.5-0.8s** against
+Qwen3.8's 2.5-3.2s at comparable depth. First run on this probe for anything
+other than Qwen3-Coder-Next.
+
+Note the mechanism: `--no-think` sends `enable_thinking: false`, which is a
+Qwen chat-template variable and does nothing on Gemma 4. `--reasoning-budget 0`
+is the model-agnostic way to force an immediate end of thinking, and is what
+these numbers used.
 
 **Qwen3.8-27B, spot-checked with `--no-think`:** needle 5/5 at 127,116 tokens
 on the 128K preset (cold prefill 339.2s, ~375 tok/s; cached follow-ups
@@ -711,6 +754,25 @@ cheap way to buy back compute buffer for context.
 
 Mixed precision costs ~23% prompt throughput for no memory benefit. q8_0/q8_0
 is the right default: same speed as f16, half the memory.
+
+**q4_0 KV is not free, and the cost scales with depth.** The table above says
+q8_0 is as fast as f16, which invites assuming q4_0 is as fast again. It is
+not. Qwen3.8-27B, `-ub 1024`, tg64, matched depth, nothing else varied:
+
+| Depth | q8_0 | q4_0 | q4_0 cost |
+|---|---|---|---|
+| 0 | 31.57 | 31.53 | 0% |
+| 8K | 30.64 | 27.80 | -9.3% |
+| 16K | 29.39 | 25.06 | -14.7% |
+| 32K | 27.04 | 20.78 | **-23.1%** |
+
+Zero at depth 0 — there is no cache to read, so the quant cannot matter — and
+23% by 32K. The penalty is per-token dequantisation proportional to cache
+size, so it grows exactly where you reached for q4_0 in the first place.
+
+**Treat q4_0 KV as the price of admission, never an optimisation.** Use it
+only where q8_0 does not fit at all (Qwen3.8 at 128K, Qwen3-Coder-Next at 1M).
+Where both fit, q8_0 wins on speed *and* on precision, and only costs VRAM.
 
 **Threads — leave at 16, never 32.** Qwen3.6, `-ncmoe 36`, pp512/tg128:
 
