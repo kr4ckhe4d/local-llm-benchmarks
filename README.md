@@ -93,6 +93,7 @@ with a **constant-size recurrent state** that does not grow with context.
 | Qwen3.6-35B-A3B | 40 | 10 | 2 | 62.81 MiB | 10,880 MiB |
 | Qwen3-Coder-Next | 48 | 12 | 2 | 75.38 MiB | 13,056 MiB |
 | Qwen3.8-27B | 64 | 16 | **4** | — | **34,816 MiB** |
+| **Nemotron-3-Nano-30B-A3B** | 52 | **6** | 2 | — | **3,264 MiB** |
 
 The first two use 2 KV heads × 256 key/value length — tiny per-layer KV on top
 of the 1-in-4 layer count.
@@ -129,6 +130,7 @@ From GGUF metadata:
 | Qwen3-Coder-Next | 262,144 | |
 | Muse Glimmer 30B | 131,072 | dense, but 2 KV heads + sliding window |
 | Qwen3.8-27B | 262,144 | **VRAM-capped at 131,072 here** — 256K does not fit |
+| Nemotron-3-Nano-30B-A3B | **1,048,576** | reached natively here — no YaRN |
 
 `switch-model.sh` exposes **only contexts within these ranges** (32k/128k/256k).
 Anything beyond needs YaRN RoPE scaling, which trades short-context quality for
@@ -314,6 +316,54 @@ Two GGUF quirks worth knowing:
 * Unsloth's `UD-Q3_K_XL` reports internally as `Q4_K - Small` at 3.93 BPW.
   The name is the recipe, not the block type; do not match on it.
 
+### Nemotron-3-Nano-30B-A3B — 22.8GB, MoE 31.6B/~3.5B active, Mamba2 hybrid
+
+Arch is `nemotron_h_moe`; the build already had it, so no rebuild. **This is
+the only model here whose 1M context is native.** 52 layers, of which just six
+keep KV — indices 5, 12, 19, 26, 33, 42 — at 2 heads x 128. The rest are
+Mamba-2 and MLP with constant-size recurrent state.
+
+| Context | Extra flags | VRAM used | Free |
+|---|---|---|---|
+| 32K | `-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,747 | 1,557 |
+| 128K | `-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 15,060 | 1,244 |
+| 256K | `-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 15,723 | 581 |
+| 512K | `-ncmoe 28 -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,753 | 1,551 |
+| **1M** | `-ncmoe 32 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0` | **14,104** | **2,200** |
+
+**None of these need YaRN.** Every previous 1M row in this file was a RoPE
+stretch beyond a 262,144-trained range, flagged as the least trustworthy
+configuration here. 1,048,576 is this model's trained context, so the
+long-context rows carry the same status as its short ones.
+
+Against the closest structural match already on the box, at identical `-ncmoe 24`:
+
+| | Qwen3.6-35B-A3B | Nemotron-3-Nano-30B-A3B |
+|---|---|---|
+| Prompt, shallow | 1616.2 | **1912.8** (+18%) |
+| Generation, shallow | 39.0 | **47.5** (+22%) |
+| Generation @131K | 22.2 | **31.7** (+43%) |
+| KV per token (q8_0) | 10,880 B | **3,264 B** |
+| Native context | 262,144 | **1,048,576** |
+| Host RAM | ~20 GB | ~22 GB |
+
+I could not find an axis on which Qwen3.6 wins.
+
+**What blocks 1M is the compute buffer, not the cache.** At `-ub 1024` it asks
+for a 4,038 MiB compute buffer and fails even with heavy expert offload; the KV
+itself is only 3,264 MiB. Dropping to `-ub 256` with q4_0 KV and `-ncmoe 32`
+lands it with 2,200 MiB spare. Worth knowing because the instinct on an
+allocation failure is to raise `-ncmoe`, which does nothing here.
+
+512K at `-ncmoe 24 -ub 512` also "loads" — at 19 MiB free, where the very first
+generation request failed. It is in the rejected pile, not the table; `-ncmoe
+28` is the working value.
+
+Same thinking trap as Qwen3.8: default reasoning returns **zero content** at
+`max_tokens 1200`. `--reasoning-budget 1024` restores it (850 and 4,459 chars at
+1200 and 2000 tokens). Its template uses `enable_thinking`, so `--no-think`
+works on the probes; there is no `reasoning_effort`.
+
 ---
 
 ## Throughput
@@ -490,6 +540,22 @@ alone.
 augmented chats fill 32K fast. Use `qwen3.8-64k` for those — it trades q8_0
 KV for q4_0, which is a cheap price given the decay you are already paying at
 that depth.
+
+### Nemotron-3-Nano-30B-A3B — ROCm, `-fa 1`, `-ncmoe 24 -ub 1024`, q8_0 KV
+
+| Depth | Prompt tok/s | Gen tok/s |
+|---|---|---|
+| 0 | 1912.8 | 47.5 |
+| 32K | 1697.3 | 41.7 |
+| 131K | 1225.6 | **31.7** |
+
+**It still generates 31.7 tok/s at 131K** — the only model here above 30 at that
+depth other than Gemma 4, and unlike Gemma 4 it can go to 1M. Decay from 0 to
+131K is 33%, similar in shape to Qwen3.6's but starting 22% higher and ending
+43% higher.
+
+Recall at depth, `--no-think`: **5/5 needle at 127,569 tokens**, cached
+follow-ups 1.1-1.2s against Qwen3.8's 2.6-3.3s at comparable depth.
 
 ### Generation decay with depth — Qwen3.6, `-ncmoe 40 -ub 1024`
 
@@ -1077,6 +1143,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | yes |
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL | 12.5GB | yes |
+| Nemotron-3-Nano-30B-A3B | 31.6B | ~3.5B | MoE Mamba2 hybrid, 52L | UD-Q4_K_XL | 22.8GB | yes |
 | Qwen2.5-Coder-14B | 14B | 14B | Dense | Q4_K_M / Q8_0 | 8.4 / 14.6GB | deleted |
 | Qwen2.5-Coder-32B | 32B | 32B | Dense | Q4_K_M | ~19GB | deleted |
 | GPT-OSS-120B | 117B | ~5.1B | MoE | MXFP4 | 59.0GB | deleted |

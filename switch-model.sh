@@ -45,6 +45,7 @@ declare -A MODEL_FILE=(
   [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL.gguf"
+  [nemotron]="Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf"
 )
 
 declare -A MODEL_LABEL=(
@@ -54,6 +55,7 @@ declare -A MODEL_LABEL=(
   [qwen3-coder]="Qwen3-Coder-Next"
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
+  [nemotron]="Nemotron-3-Nano-30B-A3B"
 )
 
 # Which llama.cpp build to serve each model with. Measured, not guessed.
@@ -64,6 +66,7 @@ declare -A MODEL_BACKEND=(
   [qwen3-coder]="build"          # Q4_K_M: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL: ROCm
+  [nemotron]="build"             # Q4_K_XL: ROCm
 )
 
 # Per-context overrides, where the winner changes with depth.
@@ -76,11 +79,14 @@ declare -A BACKEND_OVERRIDE=(
 )
 
 # Only contexts within each model's NATIVE trained range are exposed.
-# Native maxima (from GGUF metadata): gpt-oss 131072, everything else 262144.
-# Beyond-native configs were measured and do load — see the README — but are
-# deliberately not presets, because they need YaRN and degrade output quality.
+# Native maxima (from GGUF metadata): gpt-oss 131072, nemotron 1048576,
+# everything else 262144. Beyond-native configs were measured and do load — see
+# the README — but are deliberately not presets, because they need YaRN and
+# degrade output quality. The 512k and 1m labels exist only for nemotron, which
+# reaches them inside its trained range with no RoPE scaling at all.
 declare -A CTX_TOKENS=(
   [32k]=32768 [64k]=65536 [128k]=131072 [256k]=262144
+  [512k]=524288 [1m]=1048576
 )
 
 # key "<model>:<ctx>" -> extra llama-server flags beyond "-ngl 99 -c <tokens>".
@@ -156,6 +162,25 @@ declare -A CONFIG=(
   # buffer q8_0 needs.
   ["qwen3.8:64k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
   ["qwen3.8:128k"]="-ub 256 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+
+  # Nemotron-3-Nano-30B-A3B — MoE 31.6B / 3.5B active, Mamba2 hybrid, 52 layers
+  # of which only SIX keep KV (indices 5/12/19/26/33/42), 2 heads x 128. That is
+  # 3,264 B/token at q8_0 — 3.3x cheaper than Qwen3.6 and 10.7x cheaper than
+  # Qwen3.8 — and it is why this is the ONLY model here that reaches 1M inside
+  # its trained range. No YaRN, no --rope-scaling: 1048576 is native.
+  #
+  # 1M is blocked by the compute buffer, not the cache: at -ub 1024 it wants a
+  # 4,038 MiB compute buffer and fails even with heavy offload. -ub 256 plus
+  # q4_0 KV and -ncmoe 32 lands it at 14,104 MiB with 2,200 free.
+  #
+  # Same thinking trap as qwen3.8: default reasoning returns ZERO content at
+  # max_tokens 1200. --reasoning-budget is required, not cosmetic. Sampling
+  # values are the GGUF's own general.sampling.* (temp 1.0, top_p 1.0).
+  ["nemotron:32k"]="-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 1.0 --min-p 0.0 --reasoning-budget 1024"
+  ["nemotron:128k"]="-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 1.0 --min-p 0.0 --reasoning-budget 1024"
+  ["nemotron:256k"]="-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 1.0 --min-p 0.0 --reasoning-budget 1024"
+  ["nemotron:512k"]="-ncmoe 28 -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 1.0 --min-p 0.0 --reasoning-budget 1024"
+  ["nemotron:1m"]="-ncmoe 32 -ub 256 -b 1024 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 1.0 --min-p 0.0 --reasoning-budget 1024"
 )
 
 # Kept as a guard, not currently reachable: every preset above is within its
@@ -188,6 +213,9 @@ Models:
                                           agentic specialist, 52 tok/s with DFlash
   qwen3.8        Qwen3.8-27B      12.5GB  DENSE 27B, hybrid attn (64L), thinking
                                           32 tok/s shallow, but 9.6 at 131k depth
+  nemotron       Nemotron-3-Nano  22.8GB  MoE 31.6B / 3.5B active, Mamba2 hybrid
+                 30B-A3B                  6 of 52 layers keep KV -> NATIVE 1M
+                                          47.5 tok/s shallow, 31.7 at 131k depth
 
 Context: 32k 64k 128k 256k  (only sizes within each model's native trained
 range; muse-glimmer caps at 128k, gpt-oss-20b at 128k, the rest at 256k.
@@ -220,9 +248,9 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer qwen3.8; do
+  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer qwen3.8 nemotron; do
     printf '  %-13s ' "$model"
-    for ctx in 32k 64k 128k 256k; do
+    for ctx in 32k 64k 128k 256k 512k 1m; do
       local k="${model}:${ctx}"
       if [[ -n "${CONFIG[$k]+set}" ]]; then
         local b="${BACKEND_OVERRIDE[$k]:-${MODEL_BACKEND[$model]}}"

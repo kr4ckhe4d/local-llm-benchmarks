@@ -107,7 +107,12 @@ def main():
         r = post(a.host, "/v1/chat/completions", body)
         el = time.time() - t0
         ans = r["choices"][0]["message"]["content"] or ""
-        ok = key.lower() in re.sub(r"[,*`]", "", ans.lower())
+        # Collapse Unicode whitespace before matching. Models that emit typographic
+        # spaces score a false FAIL otherwise: Nemotron-3-Nano answered
+        # "March 14th" — a NARROW NO-BREAK SPACE — which is a correct recall
+        # that a plain substring test against "march 14" misses.
+        norm = re.sub(r"\s+", " ", re.sub(r"[,*`]", "", ans.lower()))
+        ok = key.lower() in norm
         hits += ok
         print(f"{frac*100:6.0f}%  {subject:<42} {'PASS' if ok else 'FAIL':<6}  {el:6.1f}")
         if not ok:
