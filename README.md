@@ -241,6 +241,13 @@ under a gigabyte.
 | 64K | DFlash, `-ub 256` | 15,374 | 930 | 50.5 | 67.7%, mean run 3.03 |
 | 128K | no DFlash | 14,462 | 1,842 | 31.9 | — |
 
+**Confirmed on the serving path**, not just in a bench: a `muse-glimmer-64k`
+turn in Open WebUI reported `draft_n 1263` against `draft_n_accepted 810` —
+**64.1% acceptance** at 12,573 depth, against the 67.7% measured for this
+preset. Generation was 47.6 tok/s there versus the documented 50.5. Both sit
+just under the bench figures, which is what a real workload at depth should
+look like.
+
 **DFlash is worth 1.64x.** It is a real 1.5GB drafter sidecar (5 blocks,
 `block_size 16`), not a generic draft model — llama.cpp has first-class support
 via `--spec-type draft-dflash` alongside `-md`. It costs ~0.9GB, which is why it
@@ -819,11 +826,28 @@ The confounds were eliminated one at a time:
 | Sampling temperature | still wrong at `temp 0.25`, not just 1.0 |
 | Unlucky sample | 4 regenerations, all four bars negative each time |
 
+**Muse Glimmer 30B needed seven attempts** at the same chart, and only
+succeeded after abandoning SVG for CSS `<div>` bars with percentage heights.
+
 **Qwen3-Coder-Next got it right on a harder version of the same task** — ten
 bars, a legend, rotated category labels and an axis title — three times over.
 That is the control that makes this a comparison rather than an anecdote: same
 box, same client, same quant family, and the *specialist* handled the strictly
-harder chart.
+harder chart while two generalists could not do the easy one.
+
+| Model | Billed as | Result |
+|---|---|---|
+| Nemotron-3-Nano-30B-A3B | general reasoning | 0/4, negative heights |
+| Muse Glimmer 30B | agentic specialist | 7 attempts, only via CSS bars |
+| **Qwen3-Coder-Next** | **coding specialist** | **3/3 on a harder chart** |
+
+**The failure is specific to SVG coordinate maths, not to charting.** Both
+generalists produced correct scaffolding, labels, axes and colours, and both
+fell over on geometry — mapping a value to a `y` origin and a positive height.
+Muse Glimmer's chart worked the moment the bars became styled `<div>`s with
+percentage heights, where the browser owns the layout. If you want a chart out
+of a non-coding model, ask for CSS bars rather than SVG rects; it routes around
+the part they get wrong.
 
 **One honest caveat.** The failure reproduced reliably in a long chat carrying
 web-search history, but did **not** reproduce in isolated single-turn API calls
@@ -831,7 +855,7 @@ web-search history, but did **not** reproduce in isolated single-turn API calls
 context-dependent rather than unconditional, and a fresh chat may behave better
 than continuing a long search-heavy thread.
 
-**Scope.** One task, one client, two models. This is not a coding benchmark and
+**Scope.** One task, one client, three models. This is not a coding benchmark and
 Nemotron is not a coding model — it is a general reasoning model that happens
 to be excellent at everything else measured in this file. Read it as: route
 code at the coder, and do not assume a model that wins on throughput and recall
