@@ -1083,3 +1083,57 @@ above, so the two are not directly comparable.
 Note on the old Qwen3.6 1M row: `-ncmoe 42` exceeds the model's 40 layers and
 silently clamps to 40, i.e. all experts on CPU. Values ≥ the layer count are
 the slowest possible setting.
+
+---
+
+## Open WebUI
+
+The client this box is driven from, reachable at `http://192.168.4.228:8080`.
+Reconstructed from the running container, not from upstream's example:
+
+```bash
+docker run -d --network=host \
+  -v open-webui:/app/backend/data \
+  -e OPENAI_API_BASE_URL=http://127.0.0.1:8090/v1 \
+  -e OPENAI_API_KEY=local \
+  -e ENABLE_OLLAMA_API=false \
+  --name open-webui \
+  --restart always \
+  ghcr.io/open-webui/open-webui:main
+```
+
+**`--network=host` is the part that matters.** It is what lets the container
+reach `llama-server` at `127.0.0.1:8090` — the same loopback the router binds.
+Under default bridge networking that address is the *container's* loopback and
+the connection simply fails; you would need `host.docker.internal` plus
+`--add-host`, or the LAN IP. Host networking is also why `PORT=8080` publishes
+straight onto the host with no `-p` flag.
+
+`OPENAI_API_KEY` is required to be non-empty but never checked — llama.cpp
+serves without auth, so `local` is a placeholder. `ENABLE_OLLAMA_API=false`
+stops the UI probing for an Ollama backend that is not there.
+
+All chats, settings and uploads live in the named volume `open-webui`, not in
+the container. Updating therefore does not lose anything:
+
+```bash
+docker pull ghcr.io/open-webui/open-webui:main
+docker stop open-webui && docker rm open-webui
+# then re-run the command above
+```
+
+### Settings that are not in this command
+
+Three things bit hard enough to be worth naming, none of which are container
+flags — they live in the UI and are covered in full above:
+
+* **`max_tokens`** (Controls → Advanced Params) is charged for reasoning as
+  well as content, so the default silently truncates thinking models
+  mid-sentence. See [the client's `max_tokens` is charged for reasoning
+  too](#the-clients-max_tokens-is-charged-for-reasoning-too).
+* **Code Interpreter** must be enabled in Admin Panel → Settings → Code
+  Execution *and* per-chat in the `+` menu. With only the first, the model
+  fabricates results with no warning.
+* **Function calling** should be set to Native to exercise llama.cpp's own
+  parser; the default prompt-based mode succeeds even when the API path is
+  broken, which is what made the 2026-04-24 tool-calling bug hard to see.
