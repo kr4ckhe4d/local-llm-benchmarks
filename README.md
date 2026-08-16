@@ -375,6 +375,33 @@ So the honest reading of the 128K preset: it fits, it recalls perfectly, and
 it is slow enough that you should reach for 32K or 64K unless you genuinely
 need the window.
 
+#### Real-world check: the same model under Open WebUI
+
+Every number above is `llama-bench`. One serving datapoint from the actual
+path — `qwen3.8-32k` via router mode, Open WebUI with web search enabled,
+five sources pulled into the prompt:
+
+| | Measured | `llama-bench` d0 | `llama-bench` d32K |
+|---|---|---|---|
+| Prompt | **798.4 tok/s** | 1306.9 | 551.2 |
+| Generation | **27.8 tok/s** | 31.6 | 20.8 |
+
+`prompt_n 15065`, `cache_n 11198`, `predicted_n 1071` — so this spans roughly
+11K to 26K of depth, and both figures land between the d0 and d32K rows
+exactly where the sweep predicts. The synthetic curve is not flattering
+itself; it transfers.
+
+Two incidental confirmations: `cache_n 11198` shows the prompt cache reusing
+the prefix across turns, and 1,071 completion tokens with a fully written
+answer is `--reasoning-budget 1024` doing its job — this is precisely the
+shape of request that returned zero content before the cap.
+
+**Caveat that bit immediately:** the turn totalled 28,701 tokens against a
+32,768 window, 88% full, from five search results plus history. Search-
+augmented chats fill 32K fast. Use `qwen3.8-64k` for those — it trades q8_0
+KV for q4_0, which is a cheap price given the decay you are already paying at
+that depth.
+
 ### Generation decay with depth — Qwen3.6, `-ncmoe 40 -ub 1024`
 
 | Depth | Gen tok/s |
