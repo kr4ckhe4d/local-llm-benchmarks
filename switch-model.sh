@@ -150,7 +150,11 @@ declare -A CONFIG=(
   # and on an ill-posed prompt thinking never terminates at all — 28,174 chars
   # with no </think> at max_tokens 8000. Capping the budget restores content.
   ["qwen3.8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.8:64k"]="-ub 1024 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  # 64k runs q8_0, not q4_0, despite the tighter fit (697 MiB free vs 1,503).
+  # q4_0 KV costs up to 23% of generation at depth — measured, see README — and
+  # that is the depth this preset exists for. -ub 512 buys back the compute
+  # buffer q8_0 needs.
+  ["qwen3.8:64k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
   ["qwen3.8:128k"]="-ub 256 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 )
 

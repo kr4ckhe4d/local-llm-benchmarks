@@ -240,8 +240,15 @@ that is dense *and* hybrid-attention, and the combination is unkind: no
 | Context | Extra flags | VRAM used | Free |
 |---|---|---|---|
 | 32K | `-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,610 | 1,694 |
-| 64K | `-ub 1024 -b 2048 -fa on -ctk q4_0 -ctv q4_0` | 14,801 | 1,503 |
+| 64K | `-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 15,543 | 761 |
 | 128K | `-ub 256 -b 2048 -fa on -ctk q4_0 -ctv q4_0` | 16,023 | **281** |
+
+**64K deliberately runs q8_0 at the tighter fit.** The obvious choice is q4_0
+`-ub 1024`, which loads at 14,801 with a comfortable 1,503 MiB free — and that
+is what this preset shipped as initially. It was wrong: q4_0 costs up to 23%
+of generation at exactly the depths this preset exists for. Trading 742 MiB of
+headroom for that back is the better deal. Verified under a 63,756-token
+prompt: no OOM, 5/5 needle recall, ~600 tok/s cold prefill.
 
 Rejected along the way, all measured:
 
@@ -250,7 +257,8 @@ Rejected along the way, all measured:
 | 128K, q8_0 KV | **fails to allocate** — wants 4,352 MiB of KV |
 | 128K, q4_0, `-ub 1024` | loads at 16,247 — **57 MiB free** |
 | 128K, q4_0, `-ub 512` | loads at 16,127 — 177 MiB free |
-| 64K, q8_0, `-ub 1024` | loads at 15,811 — 493 MiB free, too tight to keep |
+| 64K, q8_0, `-ub 1024` | loads at 15,811 — 493 MiB free, thinner than `-ub 512` for ~nothing |
+| 64K, q4_0, `-ub 1024` | loads at 14,801 — roomy, but 23% slower at depth |
 | 256K, any KV quant | 12,818 MiB weights + 4,608 MiB q4_0 KV > 16,304. Not attempted |
 
 **The 281 MiB margin at 128K is real, not luck.** The obvious worry is the
