@@ -612,6 +612,39 @@ Two smaller notes:
   answered 111 and finished. n=1, so not a quality verdict — but it is not
   evidence for leaving thinking on either.
 
+### The client's `max_tokens` is charged for reasoning too
+
+`--reasoning-budget` bounds the thinking. It does **not** stop that thinking
+from being billed against whatever `max_tokens` the client sends — and the
+answer is written *after* the reasoning, so a cap that is comfortable for a
+non-thinking model silently truncates a thinking one mid-sentence.
+
+Seen in Open WebUI on `qwen3.8-128k`: a news summary stopped in the middle of
+its final list item. Nothing in the server said so. `llama.cpp` logged a
+completely ordinary completion —
+
+```
+release: id 0 | task 576 | stop processing: n_tokens = 13672, truncated = 0
+```
+
+`truncated = 0`, 13,672 tokens against a 131,072 window (10% full), no
+`context full`, no `context shift`, and the reasoning budget never reached.
+Every server-side explanation was ruled out by that one line. The cause was
+Open WebUI's own `max_tokens`, in Controls → Advanced Params. Raising it fixed
+it immediately.
+
+**Rule of thumb: client `max_tokens` must exceed `reasoning-budget` plus the
+answer you actually want.** With `--reasoning-budget 1024` and a typical
+1,200-1,600 token answer, anything under ~2,500 will cut this model off. The
+presets cannot enforce this — it is a client setting.
+
+The tell is the token accounting. In the truncated response, Open WebUI
+reported `output_tokens: 1095` against `completion_tokens: 653`; the ~440
+token gap is reasoning, and content got only what was left. (Do not read that
+gap as exactly the reasoning count — it varies more than the budget allows,
+so Open WebUI appears to fold its follow-up-question and title generations
+into `output_tokens` as well.)
+
 ### The probes needed a flag for this
 
 `needle-test.py` sends `max_tokens: 60` and reads only `content`, so against
@@ -795,6 +828,28 @@ size, so it grows exactly where you reached for q4_0 in the first place.
 **Treat q4_0 KV as the price of admission, never an optimisation.** Use it
 only where q8_0 does not fit at all (Qwen3.8 at 128K, Qwen3-Coder-Next at 1M).
 Where both fit, q8_0 wins on speed *and* on precision, and only costs VRAM.
+
+**On quality, one negative result.** q4_0 is widely assumed to degrade output,
+and a truncated response on the q4_0 preset made that the obvious suspect.
+Tested directly: same model, same prompt, same ~13,250-token depth, four
+samples per quant, asking for five titled sections of three bullets each plus
+a literal end marker.
+
+| KV | Completions | Marker reached | Sections |
+|---|---|---|---|
+| q4_0 | 1570, 1576, 2500, 2500 | 4/4 | 5/5 each |
+| q8_0 | 1573, 1608, 1441, 1590 | 4/4 | 5/5 each |
+
+**No early stopping and no structural loss from q4_0.** If anything it ran
+long — two of four runs kept generating past the marker until they hit the
+2,500 cap. The real cause of the truncation was the client's `max_tokens`
+(above), nothing to do with the KV quant.
+
+Scope: n=4, one task, 13K depth. This says q4_0 does not break long-form
+structure at shallow-to-moderate depth. It says **nothing** about factual
+accuracy or reasoning, and nothing about 100K+ depth where quantisation error
+has far more attention steps to compound through. The measured speed penalty
+remains the solid reason to prefer q8_0 wherever it fits.
 
 **Threads — leave at 16, never 32.** Qwen3.6, `-ncmoe 36`, pp512/tg128:
 
