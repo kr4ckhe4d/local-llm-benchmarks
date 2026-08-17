@@ -13,8 +13,8 @@ is why each spec keeps showing up in the results.
 | **Storage** | Crucial BX500 1 TB — **SATA** SSD (~540 MB/s) | Not NVMe. This is why cold loads cost what they do: ~93s for the 49 GB Qwen3-Coder-Next, ~30s for a 12.5 GB model. Idle-sleep reloads pay it again |
 | **OS** | CachyOS, kernel 7.1.5 | |
 | **ROCm** | 7.2.53211 (`build/`, `GGML_HIP=ON`, `AMDGPU_TARGETS=gfx1201`) | Wins K-quants by 1.7-2.1x prompt |
-| **Vulkan** | RADV, Mesa 26.1.6 (`build-vulkan/`) | Wins MXFP4 generation at shallow depth only |
-| **llama.cpp** | `b10364` (`153d324bc`, 2026-08-11) | Tool calling was broken on `e583f3b4f` and fixed here — see the tool-calling section |
+| ~~Vulkan~~ | RADV, Mesa 26.1.6 — **retired 2026-08-17** | Its one win was shallow MXFP4 generation; see below |
+| **llama.cpp** | `b10463` (`7c35571e5`, 2026-08-17) | Tool calling was broken on `e583f3b4f` and fixed here — see the tool-calling section |
 
 The GPU is `card1` on this box, so VRAM is read from
 `/sys/class/drm/card1/device/mem_info_vram_used` throughout.
@@ -55,14 +55,14 @@ when host bandwidth looks like the bottleneck, and on this board it is not
 a lever. D.O.C.P is enabled at the G.Skill kit's DDR4-3200 16-18-18-38
 profile, which is the correct setting for the slower of two mismatched kits.
 
-**Backend depends on the quant format — there is no single best build.**
-`~/llama.cpp/switch-model.sh` picks the right one per model automatically.
-Both builds exist: `build/` is `GGML_HIP=ON` (`AMDGPU_TARGETS=gfx1201`),
-`build-vulkan/` is RADV.
+**One backend now: `build/`, `GGML_HIP=ON` (`AMDGPU_TARGETS=gfx1201`).**
+The Vulkan build was retired on 2026-08-17. The measurements below are why it
+existed and why it stopped being worth keeping — they are kept because they are
+the evidence, not because the routing still applies.
 
 ---
 
-## Headline: pick the backend by quant format
+## Headline: ROCm for everything — and why Vulkan was retired
 
 Measured head-to-head, `llama-bench`, **`-fa 1`** throughout (`llama-bench`
 defaults flash attention *off*, but `llama-server` resolves `auto → enabled`,
@@ -73,7 +73,7 @@ file got that wrong):
 |---|---|---|---|---|
 | Qwen3.6-35B-A3B (`-ncmoe 40 -ub 512`) | Q4_K_M | **706.0** / — | 333.4 / 29.3 | ROCm |
 | Gemma 4-26B-A4B (`-ncmoe 8`) | Q4_K_M | **1949.9** / **50.3** | 1064.7 / 48.0 | ROCm |
-| GPT-OSS-20B, shallow | MXFP4 | **5529.9** / 148.5 | 4952.0 / **180.8** | Vulkan |
+| GPT-OSS-20B, shallow | MXFP4 | **5529.9** / 148.5 | 4952.0 / **180.8** | *was Vulkan* |
 | GPT-OSS-20B, @131k depth | MXFP4 | **1035.2** / **70.5** | 1063.7 / 22.3 | **ROCm** |
 
 **K-quants (Q4_K_M) → ROCm**, unambiguously: 1.8-2.1x prompt, and it wins
@@ -89,7 +89,25 @@ At depth the picture changes completely: **Vulkan's generation collapses to
 VRAM pressure — 11.3GB model + 3GB f16 KV + compute against a 16,304 MiB card.
 Quantising KV to q8_0 rescues Vulkan (99.9 tok/s) but halves its prompt speed
 to 532. ROCm with f16 KV is the best 128k configuration overall, so
-`switch-model.sh` routes `gpt-oss-20b:128k` to ROCm while leaving 32k on Vulkan.
+`switch-model.sh` used to route `gpt-oss-20b:128k` to ROCm while leaving 32k on
+Vulkan.
+
+### Why it was retired (2026-08-17)
+
+Vulkan's only remaining advantage was shallow MXFP4 generation — 180.8 vs 148.5
+tok/s — and that applied to exactly one preset: `gpt-oss-20b` pinned at 32k.
+Router mode always spawned children from the ROCm binary, so in day-to-day use
+that advantage was never actually being collected. Against it:
+
+* ROCm wins prompt outright at every depth (5529.9 vs 4952.0 shallow).
+* ROCm wins 128k generation by **3.2x** (70.5 vs 22.3).
+* Keeping two builds means two rebuilds per upgrade, and the Vulkan tree had
+  already drifted two commits behind the ROCm one before anyone noticed.
+
+So `gpt-oss-20b` moved to ROCm and `build-vulkan/` was dropped, trading 18% of
+shallow generation on one preset for a single backend with no version skew.
+`BACKEND_OVERRIDE` remains in `switch-model.sh` as an empty hook in case a
+future model reverses the argument.
 
 Combining the ROCm switch with `-ncmoe`/`-ub` tuning gives **4.8x prompt /
 +33% generation** over the old Qwen3.6 config (333.4/29.3 → 1616.2/39.0) — but
@@ -1131,6 +1149,32 @@ prose parsed fine; a bare tool call at the start of a response did not.
 **Fixed by 2026-08-11 (`153d324bc`).** Same model, same prompt, same harness
 now returns the correct token.
 
+### It recurs per model — GPT-OSS-20B in Cline, 2026-08-17
+
+The `peg-native` parser derives a grammar from each model's chat template, so
+it breaks **per model** and gets fixed per model. Driving `gpt-oss-20b`
+agentically through Cline fails with:
+
+```
+The model produced output that does not match the expected peg-native format
+```
+
+Independently corroborated by other users, so it is not a local
+misconfiguration. Two things narrow it usefully:
+
+* **A single-turn tool call through the API works fine** — correct
+  `tool_calls`, HTTP 200. So neither the model nor the parser is broken in
+  general; it is specific to how Cline drives it (large system prompt, many
+  tools, multi-turn history, GPT-OSS's analysis channel preceding the call).
+* **Updating does not fix it.** `7c35571e5` is 99 commits past the previous
+  build and contains two adjacent per-model tool-call fixes — `chat : fix LFM2
+  tool call arg name prefix ambiguity` and `chat : fix muse-glimmer detection
+  of tool calls after EOM` — but nothing for GPT-OSS. Its turn has not come.
+
+Record it as a **harness limitation, not a model limitation**. "GPT-OSS cannot
+do the task" is the wrong note; "GPT-OSS cannot currently be driven agentically
+through llama.cpp's peg-native parser" is the right one.
+
 Two lessons that generalise:
 
 * A tool-calling failure is not evidence the model is bad at tool use. Check
@@ -1323,7 +1367,7 @@ build leaves you with no server at all.
 ### Serving
 
 Persistent server (OpenAI-compatible API, reachable on the LAN). **Pick the
-build by quant format** — `build/` for Q4_K_M, `build-vulkan/` for MXFP4. This
+build** — `build/` for everything since Vulkan was retired. This
 is the raw form; `switch-model.sh` wraps it, and `switch-model.sh router` serves
 all presets at once (see [How to switch models](#how-to-switch-models)):
 
@@ -1402,7 +1446,8 @@ retyping flags.
 It costs exactly one thing. The router spawns children from `/proc/self/exe`, so
 every model runs on **the binary the router was launched with**. There is no
 per-model backend in this mode. Since the router starts from `build/` (ROCm),
-gpt-oss-20b at 32k gives up Vulkan's 181 vs 148 tok/s — pin it explicitly with
+gpt-oss-20b at 32k used to give up Vulkan's 181 vs 148 tok/s — no longer true
+since Vulkan was retired, so router and pinned mode are now equivalent. Formerly:
 `switch-model.sh gpt-oss-20b 32k` when you want that back. Every other model
 prefers ROCm anyway, so nothing else loses.
 

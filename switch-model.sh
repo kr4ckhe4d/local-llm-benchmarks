@@ -6,11 +6,11 @@
 set -euo pipefail
 
 LLAMA_DIR="$HOME/llama.cpp"
-# Backend is PER-MODEL — there is no single best build on this GPU:
-#   K-quants (Q4_K_M):  ROCm wins prompt processing by 1.7-2.1x, generation ties.
-#   MXFP4 (gpt-oss):    Vulkan wins BOTH (pp 3760 vs 2692, tg 177 vs 139).
-# The -ncmoe values below are backend-specific — Gemma 4's Vulkan values do not
-# load on ROCm. Do not change a model's backend without re-verifying its configs.
+# Single backend: build/ (ROCm). Vulkan was retired — its only win was shallow
+# MXFP4 generation for gpt-oss-20b (181 vs 148 tok/s), which applied solely to
+# the pinned 32k case. Router mode always ran ROCm, ROCm wins prompt outright,
+# and it wins 128k by 3.2x. The -ncmoe values below are ROCm-specific; Gemma 4's
+# old Vulkan values do not load here.
 MODEL_DIR="$LLAMA_DIR/models"
 LOG="/tmp/llama-server.log"
 PORT=8090
@@ -23,9 +23,9 @@ STATE="$HOME/.cache/switch-model.last"
 # Router mode: one process fronts every preset in models-preset.ini and loads
 # them on demand, so Open WebUI's dropdown switches models with no shell at all.
 # The router spawns children from /proc/self/exe, so every model runs on the
-# binary the ROUTER was launched with — there is no per-model backend here, and
-# that is the one thing this mode costs (gpt-oss-20b at 32k gives up Vulkan's
-# 181 vs 148 tok/s). Everything else prefers ROCm anyway.
+# binary the ROUTER was launched with. That used to cost gpt-oss-20b its Vulkan
+# generation advantage at 32k; now that Vulkan is retired there is no per-model
+# backend at all, so router and pinned mode are equivalent on that axis.
 PRESET="$LLAMA_DIR/models-preset.ini"
 ROUTER_BACKEND="build"   # ROCm
 MODELS_MAX=1             # 16GB card — a second resident model will not allocate
@@ -60,7 +60,7 @@ declare -A MODEL_LABEL=(
 
 # Which llama.cpp build to serve each model with. Measured, not guessed.
 declare -A MODEL_BACKEND=(
-  [gpt-oss-20b]="build-vulkan"   # MXFP4: Vulkan wins generation, 181 vs 148 tok/s
+  [gpt-oss-20b]="build"          # was build-vulkan; see README — Vulkan retired
   [qwen3.6]="build"              # Q4_K_M: ROCm 2.1x pp
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [qwen3-coder]="build"          # Q4_K_M: ROCm
@@ -69,14 +69,12 @@ declare -A MODEL_BACKEND=(
   [nemotron]="build"             # Q4_K_XL: ROCm
 )
 
-# Per-context overrides, where the winner changes with depth.
-# gpt-oss at 128k: Vulkan's generation collapses to 22 tok/s at ~131k depth
-# (VRAM pressure — 11.3GB model + 3GB f16 KV + compute vs 16.3GB). ROCm holds
-# 70 tok/s there at the same prompt speed, so 128k goes to ROCm even though
-# 32k stays on Vulkan.
-declare -A BACKEND_OVERRIDE=(
-  ["gpt-oss-20b:128k"]="build"
-)
+# Kept as a hook, now empty. Every model runs on build/ (ROCm) — the Vulkan
+# build was retired once gpt-oss-20b moved across, since nothing else used it.
+# Its one advantage was shallow generation on MXFP4 (181 vs 148 tok/s), which
+# only applied to the pinned 32k case; router mode always ran ROCm anyway, and
+# ROCm wins prompt outright and wins 128k by 3.2x (70.5 vs 22.3).
+declare -A BACKEND_OVERRIDE=()
 
 # Only contexts within each model's NATIVE trained range are exposed.
 # Native maxima (from GGUF metadata): gpt-oss 131072, nemotron 1048576,
@@ -262,7 +260,7 @@ list_combos() {
     echo
   done
   echo
-  echo "  rocm = build/   vulkan = build-vulkan/"
+  echo "  rocm = build/  (single backend — Vulkan retired)"
 }
 
 vram_used() {
