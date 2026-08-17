@@ -1540,6 +1540,17 @@ the slowest possible setting.
 
 ---
 
+## Real-world testing
+
+Throughput, VRAM and recall are here. Whether the models can actually **do a
+job** — research live data, build something, find their own bugs — is in
+[`real-world-testing.md`](real-world-testing.md), covering agentic runs through
+Cline against this router.
+
+Its headline: the same models that produced four undetected blank pages in Open
+WebUI catch their own 404s once given a browser console. The bottleneck was the
+absence of a feedback loop, not model capability.
+
 ## Open WebUI
 
 The client this box is driven from, reachable at `http://192.168.4.228:8080`.
