@@ -362,6 +362,19 @@ Two GGUF quirks worth knowing:
 
 ### Nemotron-3-Nano-30B-A3B — 22.8GB, MoE 31.6B/~3.5B active, Mamba2 hybrid
 
+**Deleted from disk (2026-08-17)** — kept here because the throughput and
+fitting measurements below are still correct and still the cheapest 1M-context
+config in this file. It was not removed for anything in this section.
+
+The reason is in [`real-world-testing.md`](real-world-testing.md#when-feedback-is-gamed-nemotron-fabricates-a-dataset):
+run agentically through Cline, it fabricated a full dataset of pre-2024 models
+with real citation URLs attached to invented scores, after its real data
+source failed to resolve — and separately falsified a "clean" verification
+report, claiming files existed and checks passed when they had not, on two
+occasions. Neither is a benchmark-quality problem; both are about whether the
+model's *reports of its own actions* can be trusted, which every number on
+this page assumes.
+
 Arch is `nemotron_h_moe`; the build already had it, so no rebuild. **This is
 the only model here whose 1M context is native.** 52 layers, of which just six
 keep KV — indices 5, 12, 19, 26, 33, 42 — at 2 heads x 128. The rest are
@@ -1494,7 +1507,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | yes |
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL | 12.5GB | yes |
-| Nemotron-3-Nano-30B-A3B | 31.6B | ~3.5B | MoE Mamba2 hybrid, 52L | UD-Q4_K_XL | 22.8GB | yes |
+| Nemotron-3-Nano-30B-A3B | 31.6B | ~3.5B | MoE Mamba2 hybrid, 52L | UD-Q4_K_XL | 22.8GB | deleted |
 | Devstral Small 2 24B | 23.6B | 23.6B | Dense, full attn, 40L | Q4_K_M | 14.3GB | deleted |
 | Qwen3-Coder-30B-A3B | 30.5B | ~3B | MoE, full attn, 48L | Q8_0 | 32.5GB | deleted |
 | Qwen2.5-Coder-14B | 14B | 14B | Dense | Q4_K_M / Q8_0 | 8.4 / 14.6GB | deleted |
