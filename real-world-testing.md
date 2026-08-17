@@ -109,7 +109,7 @@ success. The full prompt lives in `.clinerules`; its structure is four phases:
 | Qwen3-Coder-Next 80B | `qwen3-coder-80B-A3B-128k` | no — needed the URL | completed autonomously in ~40 min; 10 models; correct open-weight filtering |
 | Muse Glimmer 30B | `muse-glimmer-30B-64k` | **yes** | wrote a correct aggregation script; caught its own `@emotion` 404s; rendered first try |
 | GPT-OSS-20B | `gpt-oss-20b-A3.6B-32k` | no — needed the URL | **failed** — `peg-native` parser error, see below |
-| Qwen3.8-27B | `qwen3.8-27B-128k` | n/a — chose SWE-bench | scraped the leaderboard out of the DOM via the browser MCP (in progress) |
+| Qwen3.8-27B | `qwen3.8-27B-128k` | n/a — chose SWE-bench | ~70 min; scraped the leaderboard out of the DOM via the browser MCP; richest output, one bar-width bug |
 
 ### The scores corroborate across models
 
@@ -127,6 +127,52 @@ question's `pass@1`. Getting a model's score means grouping by model and
 averaging. Muse Glimmer wrote that aggregation explicitly and landed on the same
 numbers as the others, which is about as good a correctness check as is
 available without a reference implementation.
+
+### How each model approached it
+
+The outputs converged; the **strategies did not**. Given the same four-phase
+prompt, the five models solved data acquisition in five different ways, and that
+is the most interesting part of the exercise.
+
+**Gemma 4** went straight at the problem. It located
+`livecodebench.github.io/performances_generation.json` unaided, verified the
+current date with a `get_current_timestamp` call rather than assuming it, and —
+the standout move — read MUI's browser documentation and loaded `@emotion/react`
+and `@emotion/styled` **before being asked**, correctly identifying them as
+required globals. Every one of its six script URLs resolved first time.
+
+**Qwen3-Coder-Next** hit the LiveCodeBench leaderboard UI, found it behind
+authentication, and **stopped to ask** which benchmark to use — offering three
+options rather than inventing scores. Given the JSON URL it curled it, then
+immediately wrote a Python one-liner to extract just the model names instead of
+pulling 500 lines of JSON into context. It then ran ~40 minutes to completion
+with no further input. Its one domain error was computing VRAM as
+`params × 0.5` with no allowance for KV cache or compute buffer.
+
+**Muse Glimmer** was the most methodical. It found the source unaided, then
+recognised something the others glossed over: *"We need to aggregate pass@1 per
+model. Could compute via script."* The file is **per-question results, not a
+leaderboard** — each entry is one question's score. It wrote `compute_scores.py`
+to group by model, average, and sort. It also chained `curl -w '%{http_code}'`
+across every CDN URL in one command, which is what surfaced its `@emotion` 404s.
+
+**Qwen3.8** ignored LiveCodeBench entirely and went to SWE-bench, then used the
+**browser MCP as a research tool** rather than a verification one — navigating to
+swebench.com, inspecting network requests for a data endpoint, concluding the
+leaderboard was embedded in a 4.1MB HTML document with no separate fetch, and
+scraping it out of the DOM with `evaluate_script`. No other model considered
+scraping. It paid for the detour in time (~70 min) and got the freshest data of
+the five as a result.
+
+**GPT-OSS** guessed at repository paths — `ai-forever/live-codeben...`,
+`ollama/o4-mini` — that do not exist, then asked for the correct source rather
+than fabricating scores. It never reached the build phase.
+
+Two things worth drawing out. **Only Muse Glimmer explicitly reasoned about the
+shape of the data** before consuming it, and that is the difference between
+computing a score and copying one. And **only Qwen3.8 treated the browser as an
+instrument for acquisition**, which is what got it current models where everyone
+else inherited a stale published file.
 
 ---
 
@@ -173,6 +219,47 @@ equivalent trap for Recharts, which ships no `.min` UMD build at all.)
 
 ---
 
+## What the console cannot catch
+
+Qwen3.8 took a different route: rather than looking for a data file, it used the
+browser MCP as a **research** tool — navigated to swebench.com, checked network
+requests for an endpoint, concluded the leaderboard was embedded in a 4.1MB HTML
+document with no separate fetch, and extracted it from the DOM with
+`evaluate_script`. No other model considered scraping.
+
+That produced the richest output of the five and, notably, **fresher data**:
+SWE-bench Verified lists 2026 models (MiniMax-M2.5, GLM-5, Kimi K2.5) where
+LiveCodeBench's published results file is still on 2025-era entries.
+
+It also produced the one bug that matters for this file. Every bar rendered as
+an identical ~10px sliver regardless of score — 75.8 and 61.0 looked the same.
+The value never reached the fill width.
+
+**Phase 4 passed anyway, and correctly.** A wrong bar width is valid CSS. It
+throws no error, requests nothing, and produces no console output. The
+verification loop turns *silent blank page* into a detectable failure; it does
+nothing for *silent wrong values*.
+
+**But the failure is trivially fixable once observed.** Told once that the bars
+looked broken, Qwen3.8 corrected them in a single prompt, and the widths now
+track the scores properly. That is worth stating precisely, because the
+tempting conclusion — that geometry errors are a reasoning failure models cannot
+recover from — is wrong. The one-shot runs in the README regenerated *blind*,
+so each attempt was an independent coin flip on the same mistake. Given one
+observation, the fix was immediate.
+
+So the geometry class is not unfixable. It simply has no sensor. Extending
+verification to cover it is the obvious next step:
+
+> After the console check, read the computed width of each bar's fill element
+> and confirm it is proportional to its value. A bar with a wrong width renders
+> without error — the console cannot detect it.
+
+Same trick that fixed the URLs: turn a property you are currently eyeballing
+into an assertion the model has to check.
+
+---
+
 ## Rules that exist because something broke
 
 These accumulated across both the one-shot runs in the README and the Cline runs
@@ -216,7 +303,8 @@ belongs in `.clinerules`, not the chat.
 
 ## Limits of this file
 
-One task, one client, five models, one run each. Nemotron-3-Nano and
+One task, one client, five models, one run each — Gemma 4, Qwen3-Coder-Next,
+Muse Glimmer and Qwen3.8 completed; GPT-OSS could not be driven at all. Nemotron-3-Nano and
 Devstral have not been run through Cline at all — their entries in the README
 come from one-shot testing and are not comparable to anything here. It shows that a feedback loop
 changes outcomes dramatically and that two distinct failure classes exist with
