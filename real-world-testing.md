@@ -92,7 +92,11 @@ SLEEP_IDLE=-1 ~/llama.cpp/switch-model.sh router
 Research the top 10 open-weight coding LLMs from a published benchmark, then
 build a React + MUI dashboard that renders them — with a verification phase that
 requires fetching every CDN URL and reading the browser console before declaring
-success. The full prompt lives in `.clinerules`; its structure is four phases:
+success.
+
+**The full prompt is in [`clinerules`](clinerules)** in this repo; copy it to a
+project directory as `.clinerules` and Cline injects it on every request, where
+compaction cannot reach it. Its structure is four phases:
 
 1. **Research** — live search, one benchmark, primary sources only, no invented values
 2. **Dependencies** — fetch every script URL and confirm HTTP 200 before writing it

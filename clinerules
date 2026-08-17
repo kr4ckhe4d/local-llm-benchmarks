@@ -1,0 +1,142 @@
+TASK: Research-Driven Data Visualization Engine
+
+Role: Senior Data Researcher and Lead Frontend Engineer. Research live data,
+build a dashboard, then verify it runs clean in a real browser.
+
+════════════════════════════════════════════════════════
+HARD CONSTRAINTS
+
+* You CANNOT see images. Never call take_screenshot. Use only
+  list_console_messages and list_network_requests from the chrome-devtools
+  MCP server.
+* For any file over 200 lines, write it with a terminal heredoc
+  (cat <<'EOF' > file), not the editor tool — the editor call will fail on
+  large inputs.
+* Never report the result of a check you did not run. If you did not run a
+  tool, say so explicitly rather than describing what it would have returned.
+* Do not tell me the task is complete until PHASE 4 passes.
+
+════════════════════════════════════════════════════════
+PHASE 1 — RESEARCH
+
+Objective: the top 10 open-weight coding LLMs as of today.
+
+1. Live search required. Your training data is older than today and will
+   name models that have been superseded.
+2. Establish today's actual date by tool call. Do not assume it, and do not
+   use a date you cannot source.
+3. Use LiveCodeBench (Generation) as the primary axis. Fetch the published
+   results directly from:
+      https://livecodebench.github.io/performances_generation.json
+   Do not use the interactive leaderboard — it requires authentication. The
+   JSON does not. That file is PER-QUESTION results, not a leaderboard: each
+   entry is one question's pass@1. Compute each model's score by grouping on
+   model and averaging. Write a script; do not estimate.
+4. Do NOT use a composite, aggregate, or "index" score. A number averaged
+   across many benchmarks is a mix of scoring scales even when presented as a
+   single figure, and a general-intelligence composite does not measure
+   coding.
+5. Source each score from the benchmark's own published results or the model
+   card. Do not cite aggregator sites, blog roundups, or SEO listicles. Cite
+   a source URL for every single score.
+6. Open weights only. The weights must be publicly downloadable. Exclude
+   API-only tiers (e.g. "Max" or "Plus" tiers) and anything you cannot
+   confirm is downloadable.
+7. If a model has no published score on the chosen benchmark, exclude it.
+   NEVER invent, estimate, normalise, hand-curate, or use "(est.)". Fewer
+   real rows beats more fabricated ones. If you cannot fetch the data, stop
+   and say so — do not substitute values from memory.
+8. For each model record: total parameters, active parameters if MoE,
+   approximate VRAM at 4-bit, and whether it fits in 16GB.
+
+VRAM RULE — weights are not the whole cost.
+   * Dense models: add KV cache and compute buffer, and reserve ~1GB. A model
+     whose 4-bit weights alone reach 16GB does NOT fit. Treat ~13GB of
+     weights as the practical ceiling.
+   * MoE models: experts can be offloaded to system RAM, so total size
+     matters far less than active parameters. Judge against available system
+     RAM rather than VRAM.
+
+════════════════════════════════════════════════════════
+PHASE 2 — DEPENDENCIES
+
+Objective: ensure the file actually runs in a vanilla browser.
+
+1. Use React and MUI (Material UI), UMD builds from unpkg.
+2. Before writing any <script src>, FETCH each URL and confirm it returns
+   HTTP 200. Do not assume a status you have not observed. If you cannot
+   fetch a URL, say so explicitly rather than guessing.
+3. Do not guess filenames or casing, and do not assume a library ships a
+   .min build. If unsure of a file's exact name, fetch the package listing
+   and read it.
+4. Identify and load peer dependencies as globals, in the correct order.
+   MUI v5 requires @emotion/react and @emotion/styled before it loads.
+5. Use Babel standalone for JSX. No build step, no bundler.
+
+════════════════════════════════════════════════════════
+PHASE 3 — BUILD
+
+Output as separate files, each under 200 lines:
+   index.html      shell and script tags only
+   data.js         the dataset
+   components.jsx  chart components
+   app.jsx         dashboard layout and render
+
+Load the .jsx files with <script type="text/babel" src="...">.
+
+AFTER WRITING, run `ls -la` in the project directory and confirm that every
+<script src> which is NOT a URL corresponds to a file that actually exists.
+A referenced-but-unwritten local file 404s at load time and leaves the page
+blank.
+
+Content:
+* Horizontal bar chart of the benchmark score, 0-100, sorted best first.
+* Two donut charts: "Parameter Scale Distribution" and "Hardware
+  Accessibility (fits 16GB VRAM)". These must use DIFFERENT datasets.
+* A data table: model, score, benchmark, params, active params, VRAM,
+  16GB fit, source link.
+* MUI components: Paper, Table, LinearProgress, Chip, Tooltip.
+* Title, plus a caption naming the exact benchmark and the date retrieved.
+* Tooltips showing score, benchmark, parameters and VRAM.
+
+If any SVG arc mathematics is uncertain, use MUI components instead of
+hand-written SVG paths — a malformed SVG renders blank with no error.
+
+════════════════════════════════════════════════════════
+PHASE 4 — VERIFY (do not skip)
+
+1. Serve the directory: python3 -m http.server 8000
+   External JSX will NOT load from file:// — Babel fetches it by XHR and the
+   browser blocks that as cross-origin.
+2. Using the chrome-devtools MCP server, navigate to http://localhost:8000
+   and call list_console_messages.
+3. Report every message verbatim with its source.
+4. Fix every error, then reload and re-check. Repeat until clean.
+5. Also call list_network_requests and confirm no request returned a non-200
+   — a 404'd script produces a blank page with no thrown error, and this is
+   the only way to see a missing local file.
+6. Assert the chart encodes its data. Read the computed width of each bar's
+   fill element and confirm it is proportional to its value. A bar with a
+   wrong width renders without error and the console cannot detect it.
+
+"Clean" means zero errors and zero warnings EXCEPT this one, which is
+expected and must NOT be chased:
+   [warn] You are using the in-browser Babel transformer...
+
+════════════════════════════════════════════════════════
+FINAL CHECK
+
+Paste RAW TOOL OUTPUT, not summaries. A statement that the console was clean
+is not evidence; the console output is. If you did not run a tool, say so.
+
+1. The verbatim output of list_console_messages.
+2. The verbatim output of list_network_requests, or the HTTP status you
+   observed for every <script> URL by fetching it.
+3. The `ls -la` output showing every referenced local file exists.
+4. The computed bar widths and the values they should be proportional to.
+5. Peer dependencies loaded, and why each was required.
+6. The exact benchmark used, and confirmation it is a single benchmark and
+   not a composite. Confirm every score has a source URL and that nothing was
+   invented, estimated or hand-curated.
+7. The exact date used and how you obtained it.
+8. Confirmation that every model listed has publicly downloadable weights.
