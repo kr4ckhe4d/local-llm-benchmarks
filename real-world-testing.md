@@ -11,24 +11,26 @@ against `switch-model.sh router` on `llama.cpp b10463` (`7c35571e5`).
 
 ## Headline: feedback beats capability
 
-The same models, on the same hardware, with the same prompt:
+The README's output-quality section records the same models producing charts
+that rendered blank — invalid SVG, 404'd script tags — with **no model aware
+anything was wrong**. Those runs were one-shot, through a chat UI, with no way
+to observe the result.
 
-| Harness | Outcome |
-|---|---|
-| Open WebUI | 4 models asked for a chart, **4 blank pages**, none of them aware |
-| Cline + chrome-devtools MCP | models catch their own 404s *before* writing the file |
+Given a shell, a Python interpreter and a browser console, the same models
+behave differently. **Muse Glimmer is the clean demonstration.** Its dependency
+check returned:
 
-Nothing about the models changed. What changed is that they could **check their
-work** — `curl` a URL and see `404`, run a script and read its output, read the
-browser console.
+```
+200 200 404 404
+```
 
-Muse Glimmer is the clean demonstration. It guessed the same wrong `@emotion`
-UMD paths that Devstral and Qwen3-Coder shipped blind, hit `404 404` on its own
-verification step, and corrected before writing. Same wrong guess, opposite
-outcome, and the only difference was being made to observe the status code.
+Two `@emotion` URLs wrong — the same class of guess that shipped silently in
+the one-shot runs. It caught them on its own verification step, reasoned toward
+the correct `/dist/…umd.min.js` path, and corrected **before writing the file**.
 
-**The bottleneck was never model capability, it was the absence of a feedback
-loop.** That is a statement about harness design, not about the models.
+Nothing about the model changed. What changed is that it could **check its
+work**. That is a statement about harness design, not about model capability,
+and it is the main thing this file records.
 
 ---
 
@@ -128,33 +130,24 @@ available without a reference implementation.
 
 ---
 
-## Two failure classes, and only one is fixable by prompting
+## Dependency URLs: the failure the verify phase fixes
 
-**Geometry — a reasoning failure.** Asked for an SVG bar chart, Nemotron
-computed `height="-45"`, negating the value instead of offsetting `y`. A
-negative `height` on `<rect>` is invalid, so the element silently is not drawn:
-axis, ticks and labels render, the bars are absent, nothing errors. It held
-across 4 regenerations, both `temp 1.0` and `0.25`, and reasoning budgets of
-1024 and 4096. Muse Glimmer needed seven attempts at the same chart and only
-succeeded after abandoning SVG for CSS bars.
+Every model here wrote correct React and MUI code and got the **script tags**
+wrong. The library APIs were not the problem; the URLs were.
 
-**No amount of information fixes this.** What fixes it is avoiding the maths:
-ask for MUI components or CSS bars rather than hand-written SVG paths, and let
-the browser own layout.
+Under Cline with the verification phase:
 
-**Dependency URLs — a recall failure.** Every model wrote correct React and
-library code and failed only on the script tags:
+| Model | Result |
+|---|---|
+| Gemma 4 | **6/6 resolved**, including both `@emotion` peer deps, identified unprompted |
+| Muse Glimmer | guessed `/umd/…production.min.js` for `@emotion`, hit `404 404`, corrected to `/dist/…umd.min.js` before writing |
 
-| Model | Scripts resolving | What broke |
-|---|---|---|
-| Qwen3-Coder-Next | 2/4 | invented `babel@7.23.0`; that package's last version is **6.23.0** |
-| Devstral Small 2 | 3/4 | `Recharts.min.js` — no minified UMD exists in any version |
-| Qwen3-Coder-30B Q8_0 | 0/1 | omitted React, ReactDOM and Babel entirely |
-| Gemma 4 *(with verify phase)* | **6/6** | — |
+Compare the README's one-shot runs, where the same class of wrong guess was
+written straight into the file and the page rendered blank with no error.
 
-**This one is fixable**, and you do not have to supply the URLs. Requiring an
-*observed* HTTP status per URL turns a silent 404 into something the model has
-to notice and correct. The rule that does the work:
+**This failure is fixable**, and you do not have to supply the URLs. Requiring
+an *observed* HTTP status per URL turns a silent 404 into something the model
+has to notice and correct. The rule that does the work:
 
 > Before writing any `<script src>`, FETCH each URL and confirm it returns
 > HTTP 200. Do not assume a status you have not observed. Do not assume a
@@ -172,14 +165,18 @@ https://unpkg.com/@emotion/styled@11/dist/emotion-styled.umd.min.js
 https://unpkg.com/@mui/material@5/umd/material-ui.production.min.js
 ```
 
-Two non-guessable facts in there: **Recharts ships no `.min` UMD build**, and
-**MUI v5 needs both `@emotion` packages loaded as globals first**. Emotion's UMD
-lives at `/dist/…umd.min.js`, not `/umd/…production.min.js` — the wrong guess
-two models made independently.
+The non-guessable fact in there: **MUI v5 needs both `@emotion` packages loaded
+as globals first**, and emotion's UMD lives at `/dist/…umd.min.js`, not the
+`/umd/…production.min.js` shape most libraries use. Gemma identified this
+unprompted; Muse guessed wrong and caught it. (The README records the
+equivalent trap for Recharts, which ships no `.min` UMD build at all.)
 
 ---
 
 ## Rules that exist because something broke
+
+These accumulated across both the one-shot runs in the README and the Cline runs
+here; the rule is what matters, not which harness exposed it.
 
 | Rule | The failure it prevents |
 |---|---|
@@ -219,7 +216,9 @@ belongs in `.clinerules`, not the chat.
 
 ## Limits of this file
 
-One task, one client, six models, one run each. It shows that a feedback loop
+One task, one client, five models, one run each. Nemotron-3-Nano and
+Devstral have not been run through Cline at all — their entries in the README
+come from one-shot testing and are not comparable to anything here. It shows that a feedback loop
 changes outcomes dramatically and that two distinct failure classes exist with
 different fixes. It is **not** a coding benchmark: no controlled scoring, no
 repeats, and the task rewards research and dependency handling more than
