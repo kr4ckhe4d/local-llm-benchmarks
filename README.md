@@ -37,6 +37,24 @@ in the record. (`dmidecode` also reports B1 as single-rank while A1, the same
 part number, reports dual — possibly an SPD reporting quirk, untested either
 way.)
 
+**A BIOS update changes none of this — measured.** The board went from BIOS
+2407 (July 2021) to 3636 (January 2026), roughly four and a half years of
+AGESA updates. Memory still trains at 3200 on all four DIMMs, and Qwen3.6
+re-run under identical conditions moved within noise:
+
+| Config | BIOS 2407 | BIOS 3636 |
+|---|---|---|
+| `-ncmoe 40` prompt / gen | 1198.0 / 31.8 | 1206.1 / 31.0 |
+| `-ncmoe 24` prompt / gen | 1616.2 / 39.0 | 1653.9 / 38.6 |
+
+Prompt up 1-2%, generation down 1-2%, both directions — run-to-run variance,
+not a change. So 3200 is not a firmware limitation; it is what four
+mostly dual-rank DIMMs across two kits will do on this memory controller.
+Worth recording because "maybe a BIOS update" is the obvious next thought
+when host bandwidth looks like the bottleneck, and on this board it is not
+a lever. D.O.C.P is enabled at the G.Skill kit's DDR4-3200 16-18-18-38
+profile, which is the correct setting for the slower of two mismatched kits.
+
 **Backend depends on the quant format — there is no single best build.**
 `~/llama.cpp/switch-model.sh` picks the right one per model automatically.
 Both builds exist: `build/` is `GGML_HIP=ON` (`AMDGPU_TARGETS=gfx1201`),
@@ -1007,6 +1025,40 @@ https://unpkg.com/@babel/standalone@7/babel.min.js
 
 `prop-types` must precede Recharts, and note Recharts ships **no** `.min` UMD —
 adding one is the reasonable guess that both models made and that 404s.
+
+#### Making the model verify its own dependencies fixes it
+
+Both failure classes above are addressable from the prompt, but differently.
+Geometry errors are not fixable by giving information; **dependency errors
+are**, and the model can be made to find them itself rather than being told.
+
+Adding a verification phase — *fetch each script URL and confirm HTTP 200
+before writing it; do not guess filenames or assume a `.min` build exists;
+read the library's own browser/UMD docs for peer dependencies that must be
+globals first* — produced the first unambiguous success:
+
+| Attempt | Library | Scripts resolving | Peer deps found |
+|---|---|---|---|
+| Qwen3-Coder-Next | Recharts | 2/4 | ✗ |
+| Devstral Small 2 | Recharts | 3/4 | ✗ |
+| Qwen3-Coder-30B Q8_0 | Recharts | 0/1 | ✗ |
+| **Gemma 4 + verify phase** | **MUI** | **6/6** | **✓** |
+
+Gemma 4 loaded React, ReactDOM, Babel, `@mui/material`, **and both
+`@emotion/react` and `@emotion/styled`** — MUI v5's styling engine, which is
+its equivalent of the `prop-types` trap nobody found on Recharts. It reported
+an HTTP status for each; all six were independently re-checked here and all
+six genuinely return 200. It also took the date from a `get_current_timestamp`
+tool call rather than guessing, fixing the wrong-date error seen earlier.
+
+**Two variables changed at once** — the library and the prompt — so this does
+not isolate which mattered. But volunteering "@emotion is required by MUI v5"
+is not something library popularity alone explains; that reads like the
+instruction to go read the browser-usage docs doing the work.
+
+Practical rule: **make the model verify, do not make it guess.** Requiring an
+observed HTTP status per URL turns a silent 404 into something it has to
+notice and fix before writing the file.
 
 A related failure worth keeping in mind: the same chart, rendered perfectly,
 was titled "2024 Comparison" and ranked models two years stale — the web search
