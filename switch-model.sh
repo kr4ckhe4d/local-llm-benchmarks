@@ -45,6 +45,8 @@ declare -A MODEL_FILE=(
   [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL.gguf"
+  [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
+  [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored-Q8_0.gguf"
 )
 
 declare -A MODEL_LABEL=(
@@ -54,6 +56,8 @@ declare -A MODEL_LABEL=(
   [qwen3-coder]="Qwen3-Coder-Next"
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
+  [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored"
+  [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored"
 )
 
 # Which llama.cpp build to serve each model with. Measured, not guessed.
@@ -64,6 +68,8 @@ declare -A MODEL_BACKEND=(
   [qwen3-coder]="build"          # Q4_K_M: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL: ROCm
+  [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
+  [qwen3.5-9b-uncensored]="build" # Q8_0: ROCm
 )
 
 # Kept as a hook, now empty. Every model runs on build/ (ROCm) — the Vulkan
@@ -158,6 +164,35 @@ declare -A CONFIG=(
   ["qwen3.8:64k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
   ["qwen3.8:128k"]="-ub 256 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
+  # Qwen3.5-27B-Uncensored (HauhauCS, Aggressive) — DENSE 27B, arch qwen35, the
+  # same architecture as qwen3.8 above one base version back. Same rules: no
+  # -ncmoe, native 262144 unreachable.
+  #
+  # It measures 266 MiB heavier than qwen3.8 at 64k, and that difference is
+  # decisive: q8_0 at 64k leaves 55 MiB, which is smaller than the range the
+  # desktop's own VRAM moved during a single measuring session (395-701 MiB).
+  # So 64k here takes q4_0 and eats the ~23% generation penalty that qwen3.8's
+  # 64k preset specifically exists to avoid. At 32k the gap is only 67 MiB and
+  # q8_0 is comfortable at 1,127 MiB free — 32k is the preset to reach for.
+  #
+  # No 128k. It loads (32 MiB free) but that is below the baseline drift above,
+  # so it is not a preset you could select safely by accident.
+  ["qwen3.5-uncensored:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-uncensored:64k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+
+  # Qwen3.5-9B-Uncensored (HauhauCS, Aggressive) — DENSE 9B, arch qwen35, same
+  # family as qwen3.5-uncensored above but 32 layers not 64: half the
+  # layers-with-KV (8 vs 16), same 4 KV heads, so half the per-token KV cost.
+  # That is why this is the first DENSE model on this card to reach native
+  # 262144 at full q8_0 precision with real headroom (1,304 MiB free at 256k) —
+  # every other native-256k model here is MoE, and every other dense
+  # hybrid-attention model here (qwen3.8, qwen3.5-uncensored) is VRAM-capped
+  # well short of native. -ub 1024 and q8_0 KV hold at every context; there was
+  # never a tradeoff to make.
+  ["qwen3.5-9b-uncensored:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-9b-uncensored:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-9b-uncensored:256k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+
 
 )
 
@@ -191,12 +226,21 @@ Models:
                                           agentic specialist, 52 tok/s with DFlash
   qwen3.8        Qwen3.8-27B      12.5GB  DENSE 27B, hybrid attn (64L), thinking
                                           32 tok/s shallow, but 9.6 at 131k depth
+  qwen3.5-uncensored
+                 Qwen3.5-27B-Unc. 12.4GB  DENSE 27B, same arch as qwen3.8 one base
+                                          back. 32k/64k only. ~30 tok/s shallow
+  qwen3.5-9b-uncensored
+                 Qwen3.5-9B-Unc.  8.9GB   DENSE 9B, same family, half the layers.
+                                          Reaches native 256k. ~56 tok/s shallow
 
 Context: 32k 64k 128k 256k  (only sizes within each model's native trained
-range; muse-glimmer caps at 128k, gpt-oss-20b at 128k, the rest at 256k.
-qwen3.8 is native 256k but VRAM-capped at 128k here — dense weights plus
-4-KV-head attention leave no room. 512k/1m are not offered by any model
-currently on disk. Run '$(basename "$0") list'.)
+range, further capped by what actually fits in 16GB VRAM. muse-glimmer caps
+at 128k, gpt-oss-20b at 128k. qwen3.8 and qwen3.5-uncensored (27B) are native
+256k but VRAM-capped at 128k/64k here — dense weights plus 4-KV-head attention
+leave no room; qwen3.5-9b-uncensored is the same architecture family with half
+the layers, which halves the per-token KV cost and reaches its full native
+256k with headroom to spare. 512k/1m are not offered by any model currently on
+disk. Run '$(basename "$0") list'.)
 
 Notes:
   * 'router' vs '<model> <context>': the router serves every preset in
@@ -224,7 +268,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer qwen3.8; do
+  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored; do
     printf '  %-13s ' "$model"
     for ctx in 32k 64k 128k 256k 512k 1m; do
       local k="${model}:${ctx}"

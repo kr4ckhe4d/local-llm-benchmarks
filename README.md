@@ -360,6 +360,113 @@ Two GGUF quirks worth knowing:
 * Unsloth's `UD-Q3_K_XL` reports internally as `Q4_K - Small` at 3.93 BPW.
   The name is the recipe, not the block type; do not match on it.
 
+### Qwen3.5-27B-Uncensored (HauhauCS, Aggressive) — 12.4GB, **dense** 27B, 64 layers
+
+`HauhauCS/Qwen3.5-27B-Uncensored-HauhauCS-Aggressive`, Q3_K_M, added
+2026-08-18. Arch is `qwen35` and it reports 26.90B params over 64 layers with
+the same 3:1 hybrid-attention ratio as Qwen3.8-27B — so it is that model's
+architectural twin one base version back, and the two are directly comparable
+on this card. SHA256 verified against the HF-reported LFS oid.
+
+Q3_K_M was chosen the same way Qwen3.8 landed on Q3_K_XL: Q4_K_M is 16.54GB
+and cannot fit at any context, IQ4_XS is 14.69GB and would leave ~300 MiB, and
+Q3_K_M at 13.29GB is within 150 MiB of the file already proven to fit.
+
+**VRAM figures here are baseline-subtracted, and that is a change.** See the
+note below on why the raw column in the older sections is not reproducible.
+
+| Context | Extra flags | Model MiB | Free at base 701 |
+|---|---|---|---|
+| 32K | `-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,476 | 1,127 |
+| 64K | `-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0` | 14,657 | 946 |
+| *128K* | `-ub 256 -b 2048 -fa on -ctk q4_0 -ctv q4_0` | 15,571 | **32** |
+
+Rejected, measured:
+
+| Attempt | Result |
+|---|---|
+| 64K, q8_0, `-ub 512` | model 15,608 — **55 MiB free** when measured, negative at the session's worst baseline |
+
+**64K cannot run q8_0 here, and that is the one place this model diverges from
+Qwen3.8.** Qwen3.8 deliberately takes q8_0 at 64K and accepts 761 MiB free,
+because q4_0 costs up to 23% of generation at depth. This model is 266 MiB
+heavier at the same context and that trade is no longer available — q8_0 at
+64K leaves 55 MiB, which is inside the noise of desktop VRAM drift. So the 64K
+preset takes q4_0 and the documented generation penalty with it. At 32K the
+gap is only 67 MiB and the q8_0 config is comfortable.
+
+**128K is listed but should not be a preset.** 32 MiB of headroom is smaller
+than the baseline drift measured *during this session* (see below), so it is
+in the same category as the Muse Glimmer + DFlash case: it loads, it answers,
+and any other GPU consumer breaks it.
+
+#### The raw VRAM column in the older sections is not reproducible — the baseline moved
+
+`fit.sh` was lost and has been rewritten (it is now committed rather than
+living in a scratchpad). Calibrating it against the known Qwen3.8-27B 32K row
+before trusting it produced a 440 MiB disagreement — 15,050 measured against
+14,610 published. The cause is not the script:
+
+| | Published | Re-measured |
+|---|---|---|
+| Raw peak | 14,610 | 15,050 |
+| Desktop baseline | ~201 (implied) | 641 |
+| **Model-attributable** | **14,410** | **14,409** |
+
+The model-attributable figure reproduces to **1 MiB**. What moved is the
+desktop's own VRAM, which every "VRAM used / Free" number in the older
+sections silently includes. That baseline was observed at **395, 641 and 701
+MiB at different points in this one session** — a 306 MiB spread, which is
+larger than the stated headroom of several published configs and larger than
+the entire 128K margin above.
+
+This does not invalidate the older rows; each was true against whatever the
+desktop held that day. But it means the `Free` column there is a measurement
+of the machine's state, not of the model, and configs with sub-300 MiB margins
+are less reproducible than they read. New rows report model-attributable VRAM
+and state the reference baseline.
+
+### Qwen3.5-9B-Uncensored (HauhauCS, Aggressive) — 8.9GB, **dense** 9B, 32 layers
+
+`HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive`, Q8_0, added 2026-08-18.
+SHA256 verified against the HF-reported LFS oid. Same `qwen35` family as
+Qwen3.8-27B and the 27B-Uncensored above, but at 8.95B params over 32 layers —
+**half the layer count, and the same 3:1 hybrid-attention ratio** gives 8
+layers with KV instead of 16. Head count and head dim are unchanged (4 KV
+heads × 256), so the per-token KV cost is exactly half its bigger sibling's:
+**17,408 B/token at q8_0** against the 27B's 34,816.
+
+Q8_0 (9.53GB) was chosen deliberately over a smaller quant. Unlike the 27B,
+VRAM was never the constraint here — weights this light leave room to ask
+what the model can reach, not what it can be shrunk to fit.
+
+**This is the first dense model on this card to reach its full native context
+at full KV precision.** Every other native-262144 model that gets there
+(Qwen3.6, Qwen3-Coder-Next, Gemma 4) is MoE and pays for it in disk size
+(16.9-49.3GB); every dense hybrid-attention model (Qwen3.8, the 27B-Uncensored
+above) is VRAM-capped well short of native. This 9B is dense **and** reaches
+262,144 — the halved KV cost is why.
+
+| Context | Extra flags | Model MiB | Free at base 476-536 |
+|---|---|---|---|
+| 32K | `-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 9,384 | 6,444 |
+| 128K | `-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 11,587 | 4,181 |
+| 256K *(native)* | `-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,524 | 1,304 |
+
+No `-ub` reduction was needed at any context — even at 262,144 the compute
+buffer fits comfortably under `-ub 1024`, unlike the 27B twin, which had to
+drop to `-ub 256` just to reach 128K. **q8_0 KV holds at every context here**;
+there was never a q4_0 tradeoff to make.
+
+Verified under real load, not just the allocation probe: 5/5 needle recall at
+216,208 tokens and 5/5 semantic recall (against near-miss distractors) at
+225,148 tokens, both against the 256K preset, both with no OOM. See Context
+quality below for the full numbers.
+
+Thinking model, same profile as its family: `enable_thinking`, no
+`reasoning_effort`, so `--reasoning-budget` is required for the same reason
+documented under Qwen3.8.
+
 ### Nemotron-3-Nano-30B-A3B — 22.8GB, MoE 31.6B/~3.5B active, Mamba2 hybrid
 
 **Deleted from disk (2026-08-17)** — kept here because the throughput and
@@ -653,6 +760,69 @@ augmented chats fill 32K fast. Use `qwen3.8-64k` for those — it trades q8_0
 KV for q4_0, which is a cheap price given the decay you are already paying at
 that depth.
 
+### Qwen3.5-27B-Uncensored — ROCm, `-fa 1`, pp4096/tg64
+
+Ubatch sweep at q8_0 KV, shallow — run against Qwen3.8-27B, its architectural
+twin, at identical settings:
+
+| `-ub` | Prompt | Gen | Qwen3.8 prompt | Qwen3.8 gen |
+|---|---|---|---|---|
+| 256 | 1031.5 | 29.7 | 1180.7 | 31.9 |
+| 512 | 1131.8 | 29.7 | 1279.7 | 31.9 |
+| 1024 | 1153.6 | 29.5 | 1306.9 | 31.9 |
+
+**~12% slower prompt, ~7% slower generation than Qwen3.8 across the board.**
+It also reproduces Qwen3.8's `-ub` finding — +12% across the whole range,
+versus +188% on Qwen3.6 — which is the expected signature of a dense,
+fully-GPU-resident model with no host traffic to amortise.
+
+Depth sweep, q8_0 KV, `-ub 1024` (the 32K preset):
+
+| Depth | Prompt | Gen | Qwen3.8 gen, q8_0 |
+|---|---|---|---|
+| 0 | 1179.4 | 29.8 | 31.6 |
+| 8K | 922.7 | 28.1 | 30.6 |
+| 16K | 757.1 | 26.7 | 29.4 |
+| 32K | 552.8 | **24.5** | 27.0 |
+
+Decay across the range is **1.21x**, against Qwen3.8's 1.17x — the same shape,
+slightly worse, and both far better than the 3.3x that Qwen3.8 shows out to
+131K on the q4_0 curve. Prompt throughput at depth is effectively identical to
+Qwen3.8 (552.8 vs 551.2 at 32K); the deficit is concentrated in generation.
+
+### Qwen3.5-9B-Uncensored — ROCm, `-fa 1`, pp4096/tg64
+
+Ubatch sweep at q8_0 KV, shallow:
+
+| `-ub` | Prompt tok/s | Gen tok/s |
+|---|---|---|
+| 256 | 3884.6 | 56.2 |
+| 512 | 4270.3 | 56.3 |
+| 1024 | 4423.4 | 56.2 |
+
+Generation is flat across `-ub` — same dense-model signature as its 27B
+sibling — but **1.9x its generation speed** (56.2 vs 29.5 at `-ub 1024`)
+against 3x fewer parameters (8.95B vs 26.90B). Not a clean params-scaling
+result: the 27B runs Q3_K (12.37GiB resident) against this model's Q8_0
+(8.86GiB), and quant format changes both bytes-per-token bandwidth and
+per-token dequant compute, so this compares two different points on the
+size/speed curve, not "the same model, smaller."
+
+Depth sweep, q8_0 KV, `-ub 1024`, out to the **native ceiling**:
+
+| Depth | Prompt tok/s | Gen tok/s |
+|---|---|---|
+| 0 | 4353.5 | 56.6 |
+| 32K | 1742.2 | 49.1 |
+| 131K | 630.4 | 35.7 |
+| 262,080 | 343.6 | **25.8** |
+
+**Decay across the full native range is 2.2x** (56.6 → 25.8). Compare the
+27B-Uncensored's 1.21x decay to just 32K, or Qwen3.8's 3.3x to 131K on the
+q4_0 curve — this model decays over **double the depth range** of either and
+still lands ahead of Qwen3.8's worst-case 9.6 tok/s at 131K. The halved
+per-token KV cost is doing real work here, not just a fit-headroom number.
+
 ### Nemotron-3-Nano-30B-A3B — ROCm, `-fa 1`, `-ncmoe 24 -ub 1024`, q8_0 KV
 
 | Depth | Prompt tok/s | Gen tok/s |
@@ -751,11 +921,43 @@ on the 128K preset (cold prefill 339.2s, ~375 tok/s; cached follow-ups
 sweep — enough to say that recall is not the reason to avoid its long-context
 mode. Generation speed at that depth is (9.6 tok/s).
 
+**Qwen3.5-27B-Uncensored, `--no-think`, 32K preset (q8_0 KV):** needle 5/5 at
+31,596 tokens and semantic 5/5 at 28,149 tokens. Cached follow-ups 2.4-3.7s,
+matching its Qwen3.8 twin's 2.5-3.2s. Only the 32K preset was probed, since
+that is the only context this model has real headroom at.
+
+This is the most direct evidence available against the model card's "zero
+capability loss" claim, and it is consistent with it — an uncensored fine-tune
+that had damaged retrieval would be expected to drop near-miss distractors
+first, and it drops none. It is not proof: the clean control is stock
+Qwen3.5-27B, which is not on disk, so this compares against a *newer* base
+(Qwen3.8) and cannot separate the fine-tune from the version gap. The ~7%
+generation deficit against Qwen3.8 is a version-and-quant difference, not
+measured evidence of uncensoring cost.
+
+**Qwen3.5-9B-Uncensored, `--no-think`, 256K preset (q8_0 KV, native max):**
+needle 5/5 at 216,208 tokens and semantic 5/5 at 225,148 tokens — deep into
+the native window, not a shallow spot-check, and the first time either recall
+test has run against this card's true context ceiling on a dense model rather
+than a VRAM-capped one. No OOM under either real haystack. Same reasoning
+applies to its "zero capability loss" claim as the 27B above: consistent with
+it, not proof of it, same missing stock-model control.
+
+**The card's headline claim — "0/465 refusals" — is untested here and was not
+attempted.** Every axis in this file is throughput, fit, recall, tool calling
+or code quality; none of them require eliciting the content that claim is
+about. Treat the refusal number as the vendor's, unverified.
+
 Both scripts take `--depth N` against any running server:
 
 ```bash
 ~/llama.cpp/semantic-recall-test.py --depth 200000
 ```
+
+**`semantic-recall-test.py` overshoots `--depth`.** It plants a distractor for
+every target on top of the haystack, so the built prompt runs ~17% over the
+requested figure — `--depth 30000` produced a 35,180-token request and a
+flat HTTP 400 against a 32,768 window. Ask for roughly 80% of your context.
 
 **Limits of this result:** single-hop (each task maps to exactly one helper),
 clean signal (planted docstrings are accurate, unlike real code), and n=5 per
@@ -1132,6 +1334,8 @@ Expected: seed 42 → `PROBE-770487`, seed 7 → `PROBE-439563`, seed 1234 →
 | Qwen3-Coder-Next @128K | ✓ `PROBE-770487` | ✓ sum `1355528` | three calls — also delegated the addition to `add_numbers` |
 | Muse Glimmer 30B @32K | ✓ | untested | via Open WebUI's own `write_note` tool |
 | Qwen3.8-27B @32K | ✓ `PROBE-770487` | ✓ sum `1355528` | three calls — also delegated the addition to `add_numbers`; passes with thinking on *and* off |
+| Qwen3.5-27B-Uncensored @32K | ✓ `PROBE-770487` | ✓ sum `1355528` | three calls — also delegated the addition to `add_numbers`, same as its Qwen3.8 twin |
+| Qwen3.5-9B-Uncensored @256K | ✓ `PROBE-770487` | ✓ sum `1,355,528` | three calls, same delegation pattern; wrote the sum comma-formatted, which is numerically identical but broke a naive exact-match probe — worth knowing if you script against this model |
 
 Both models that were tested on the parallel case passed, but they solved it
 differently: GPT-OSS made the two `get_probe_token` calls and added the results
