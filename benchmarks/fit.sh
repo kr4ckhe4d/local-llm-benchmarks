@@ -19,6 +19,10 @@ BIN="$LLAMA_DIR/build/bin/llama-server"          # ROCm; the only build now
 MODEL_DIR="$LLAMA_DIR/models"
 VRAM_USED=/sys/class/drm/card1/device/mem_info_vram_used
 VRAM_TOTAL=/sys/class/drm/card1/device/mem_info_vram_total
+GTT_USED=/sys/class/drm/card1/device/mem_info_gtt_used
+# How far GTT may drift before a row is treated as spilled. Desktop GTT moved
+# <10 MiB across a whole session of measurements; a real spill moved it 150.
+GTT_TOLERANCE="${GTT_TOLERANCE:-48}"
 PORT="${PORT:-8099}"                             # not 8090 — don't fight the router
 LOG="$(mktemp /tmp/fit-XXXXXX.log)"
 TIMEOUT="${TIMEOUT:-300}"
@@ -31,6 +35,7 @@ MODEL="${MODEL:?set MODEL=<file.gguf> (relative to $MODEL_DIR)}"
 mib() { echo $(( $(cat "$1") / 1024 / 1024 )); }
 TOTAL=$(mib $VRAM_TOTAL)
 BASE=$(mib $VRAM_USED)
+GTT_BASE=$(mib $GTT_USED)
 
 cleanup() { [ -n "${PID:-}" ] && kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; }
 trap cleanup EXIT
@@ -53,6 +58,7 @@ done
 grep -q "listening on" "$LOG" || { echo "TIMEOUT after ${TIMEOUT}s  ctx=$CTX  $*"; exit 1; }
 
 LOADED=$(mib $VRAM_USED)
+GTT_LOADED=$(mib $GTT_USED)
 
 # Generation probe — forces the compute buffers to allocate for real.
 PROBE=$(curl -sS --max-time 120 "http://127.0.0.1:$PORT/v1/chat/completions" \
@@ -67,9 +73,32 @@ if ! grep -q '"content"' <<<"$PROBE"; then
 fi
 
 PEAK=$(mib $VRAM_USED)
+GTT_PEAK=$(mib $GTT_USED)
+GTT_DELTA=$(( GTT_PEAK - GTT_BASE ))
+# printf %+d so a negative drift reads "gtt-24", not "gtt+-24"
+[ "$GTT_LOADED" -gt "$GTT_PEAK" ] && GTT_DELTA=$(( GTT_LOADED - GTT_BASE ))
+
+# --- spill guard, added 2026-08-21 -------------------------------------------
+# A config that oversubscribes VRAM does not always fail. The ROCm allocator can
+# migrate buffers to host memory (GTT), after which the probe still returns and
+# VRAM reads *lower* than it did at load. Because PEAK is sampled after the
+# probe, the naive 'model=PEAK-BASE' then describes the post-migration state and
+# reports a comfortable fit that does not exist.
+#
+# Measured case: Qwen3.8-27B v3 at 160K reported model=13313 / free=2707 while
+# actually loading at 16,275 MiB (29 free) with GTT up 275 -> 425 MiB.
+# Reproduced twice. Two independent signatures catch it:
+#   1. PEAK < LOADED  -- VRAM fell after load, i.e. something moved out
+#   2. GTT rose beyond tolerance -- we can see where it moved to
+if [ "$PEAK" -lt "$LOADED" ] || [ "$GTT_DELTA" -gt "$GTT_TOLERANCE" ]; then
+  echo "SPILL ctx=$CTX  loaded=${LOADED}  peak=${PEAK}  free_at_load=$(( TOTAL - LOADED ))  gtt$(printf %+d "$GTT_DELTA")  (total=${TOTAL}, base=${BASE})  flags: $*"
+  echo "      -> host-memory spill, NOT a fit. Judge by free_at_load=$(( TOTAL - LOADED )), not by peak."
+  exit 1
+fi
+
 # 'model' is peak minus the desktop's own VRAM. Report it as the primary figure:
 # raw peak includes whatever the compositor happens to be holding, which drifts
 # between sessions. Calibrating against README's Qwen3.8-27B 32K row showed the
 # raw numbers differ by 440 MiB purely from baseline drift, while the
 # baseline-subtracted figure reproduced to within 1 MiB.
-echo "ctx=$CTX  model=$(( PEAK - BASE ))  peak=${PEAK}  free=$(( TOTAL - PEAK ))  (total=${TOTAL}, base=${BASE}, loaded=${LOADED})  flags: $*"
+echo "ctx=$CTX  model=$(( PEAK - BASE ))  peak=${PEAK}  free=$(( TOTAL - PEAK ))  (total=${TOTAL}, base=${BASE}, loaded=${LOADED}, gtt$(printf %+d "$GTT_DELTA"))  flags: $*"
