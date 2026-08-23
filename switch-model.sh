@@ -293,6 +293,11 @@ Models:
   gpt-oss-20b    GPT-OSS-20B      11.3GB  MoE 21B / 3.6B active, native 128K
                                           fastest by far (~177 tok/s, all in VRAM)
   qwen3.6        Qwen3.6-35B-A3B  20.6GB  MoE 35B / 3B active, hybrid attn (40L)
+  laguna         Laguna XS.2      18.9GB  MoE 33B / 3B active, hybrid attn (40L)
+                                          fastest coder here (47 tok/s) but the
+                                          least accurate — 27/50 code-quality
+  laguna-q8      Laguna XS.2 Q8_0 33.2GB  same model, near-lossless. Same coding
+                                          score, +25pts library knowledge, 30 tok/s
   gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L)
   qwen3-coder    Qwen3-Coder-Next 49.3GB  MoE 80B / 3B active, hybrid attn (48L)
                                           coding specialist, ~25 tok/s
@@ -346,7 +351,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 gemma4 qwen3-coder muse-glimmer qwen3.8 qwen3.8-xxs qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
+  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 qwen3-coder muse-glimmer qwen3.8 qwen3.8-xxs qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"
