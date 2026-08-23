@@ -844,6 +844,89 @@ Not a thinking model — no `<think>` handling in its template, so unlike Qwen3.
 and Nemotron it needs no `--reasoning-budget`. The GGUF embeds no sampling
 defaults.
 
+### Laguna XS.2 (Poolside) — 18.9GB, MoE 33B/~3B active, agentic coding, `laguna` arch
+
+Poolside's own local-scale model, released 2026-07-21. **Every Laguna is MoE** —
+there is no dense variant — and three sizes exist:
+
+| Variant | Total / active | Layers | Attention | Verdict here |
+|---|---|---|---|---|
+| **Laguna XS.2** (XS-2.1) | 33B / 3B | 40 | hybrid, 10 full + 30 SWA(512) | tested, below |
+| Laguna S 2.1 | 118B / 8B | — | hybrid | see below |
+| Laguna M.1 | 225B / 23B | 70 | **global on all layers**, 64 Q / 8 KV | out of reach |
+
+Q4_K_M is the only quant Poolside ships for XS besides BF16 (66.9GB) — no
+Q5/Q6/Q8 official tier, unlike every other model in this file.
+
+**Why S was not tested, 2026-08-23.** Poolside's own Q4_K_M is 68GB against
+62GB of system RAM, so the official quant is out. But bartowski publishes the
+full ladder, and the 3-bit tier *would* fit: `Q3_K_S` 51.6GB or `IQ3_XXS`
+49.5GB, both single-file, against ~57GB available RAM plus 15.8GB VRAM. The
+blocker is not fit, it is speed — S activates **8B** per token against XS's 3B,
+and with 118B of routed experts essentially all CPU-resident, generation lands
+around 5-9 tok/s versus XS's 47. That is a considered-single-answer model, not
+an agentic-loop one, and XS's suite results below did not justify the 50GB
+download. M.1 is doubly out: 225B, and global attention on all 70 layers means
+KV cost scales the way Gemma 4's does rather than the way XS's hybrid does.
+
+`laguna` architecture support landed in upstream llama.cpp on 2026-07-22
+(#25165) and this box's exact checkout (`b10463`, `7c35571e5`) already has it
+compiled into `libllama.so` — no rebuild was needed.
+
+Hybrid attention, 40 layers: 10 full-attention (period 4, dense-first) + 30
+sliding-window (512 tokens), **8 KV heads x 128 dim** — 4x Qwen3.6's 2 KV
+heads, so KV costs more per token despite the same layer-count fraction.
+Context is 262,144 (matches GGUF `laguna.context_length`), but that number is
+already a YaRN 32x stretch from an 8,192 base — same caveat as GPT-OSS-20B's
+131,072, not a directly-trained ceiling.
+
+| Context | Extra flags | VRAM used | Free |
+|---|---|---|---|
+| 32K | `-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,418 | 1,886 |
+| 128K | `-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 15,058 | 1,246 |
+| 256K | `-ncmoe 26 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 15,814 | 490 |
+
+256K's 490 MiB free is thinner than most rows in this file but passed `fit.sh`
+clean (`peak >= loaded`, GTT flat) — a real fit, just not a roomy one.
+
+**Thinking defaults off in the template** (`enable_thinking | default(false)`)
+but the server does not honour that default on its own: a plain request burned
+its entire 800-token budget on reasoning and returned zero content, the same
+trap documented for Qwen3.8 and Muse Glimmer above. Fix is
+`"chat_template_kwargs": {"enable_thinking": false}` — every probe script in
+`benchmarks/` already sends it, so the suite runs against Laguna unmodified.
+
+**The GGUF does embed sampling defaults**, unlike Muse Glimmer above:
+`general.sampling.temp = 1.0`, `top_p = 1.0`, `min_p = 0.0`. Every probe here
+sends `temperature: 0.0` in the request body, which overrides both those and
+the server's `--temp`, so the scores below are greedy and directly comparable
+to every other row — but a client that sends no temperature will inherit 1.0.
+Other metadata worth knowing: `general.size_label` is `256x2.2B`, and
+`general.name` is a bare git hash rather than a model name, which is why
+`llama-bench` labels it from the architecture as `laguna 30B.A3B`.
+
+**Native tool calling verified, single and parallel.** Single
+`get_probe_token(seed=42)` → `PROBE-770487`; parallel → three calls
+(`PROBE-439563`, `PROBE-915965`, then `add_numbers` → `1355528`), all
+arguments correct. This is the strongest axis measured on the model.
+
+**Coding quality is the weakest in this file.** The full suite ran on
+2026-08-23 — raw output in `benchmarks/laguna-XS-2.1-Q4_K_M/`:
+
+| Probe | Laguna XS 2.1 | Field |
+|---|---|---|
+| `code-quality` | **27/50 (54%)**, 1/7 clean | 30-38/50 (60-76%) |
+| `cdn-freshness` | **18/36 (50%)**, 3/9 clean | 30-39 URLs (83-93%) |
+| tool calling | single + parallel ✓ | ✓ for all tested |
+| throughput (server, 700 tok) | **47.0 tok/s** | 24.7-30.6 tok/s |
+
+It is comfortably the fastest generator here and comfortably the least
+accurate, and it lost 6 code-quality checks to output that did not parse.
+An earlier note in this section credited it with "correct, complete code"
+on the strength of a single bracket-balance prompt — that prompt was too
+easy to support the claim, which is why the differential suite exists. Treat
+Laguna as a speed pick, not a quality one.
+
 ---
 
 ## Throughput
@@ -865,6 +948,19 @@ defaults.
 Monotonic — every expert layer moved onto the GPU helps. `-ncmoe 12` fails to
 allocate even at minimal context, so 16 is the floor. The usable value is
 whatever the target context leaves room for (see the config table).
+
+### Laguna XS.2 — `-ub 1024`, q8_0 KV, pp4096/tg64
+
+| `-ncmoe` | Prompt tok/s | Gen tok/s |
+|---|---|---|
+| 16 | 2074.9 | 46.7 |
+| 20 | 1846.1 | 43.7 |
+| 26 | 1618.4 | 39.3 |
+
+Faster than Qwen3.6-35B-A3B at every matched `-ncmoe` (2074.9 vs 1974.8 at 16,
+1618.4 vs 1616.2 at 24/26) despite an almost identical 18.9GB/20.6GB file
+size — Laguna's 512-wide expert FFN is lighter per active parameter than
+Qwen3.6's.
 
 ### Qwen3-Coder-Next — pp2048/tg64
 
@@ -1455,12 +1551,22 @@ model's, not the harness's.
 | Qwen3-Coder-Next `UD-Q4_K_M` | ~4.5 | 34/50 (68%) | 2/7 |
 | Qwen3.8-27B `UD-Q3_K_XL` **v2** | 3.932 | 33/50 (66%) | 2/7 |
 | Qwen3.8-27B `UD-IQ4_XS` v3 | 4.131 | 30/50 (60%) | 2/7 |
+| Laguna XS 2.1 `Q4_K_M` | ~4.5 | 27/50 (54%) | 1/7 |
 
 **BPW does not order this table.** The highest-bit quant scores lowest and the
 lowest-bit quant scores highest. IQ4_XS lost 9 checks in one go by emitting
 Python that does not parse (`urljoin`, `SyntaxError`), which is a generation
 failure rather than a knowledge one — but that is exactly the kind of failure
 that matters in an agentic loop, so it is scored, not excused.
+
+**Laguna XS 2.1 is the only model below the band, and it fails the same way.**
+27/50 is 3 checks under the previous floor, and 6 of those losses come from one
+task (`add_months`) whose output **did not parse** — `SyntaxError: did you
+forget parentheses around the comprehension target?`. Excluding that task it is
+27/44 (61%), which puts it level with IQ4_XS rather than clear of it. That is
+the second time an emit-invalid-Python failure has decided a row in this table,
+and it is notable that it happened to the model marketed specifically for
+agentic coding. Only `csv_rows` came back fully clean.
 
 **v3 beats v2 at the same quant tier, 35 vs 33.** That is the only
 same-tier-same-model comparison available here and it points the way Unsloth
@@ -1662,10 +1768,11 @@ Three prompts (Recharts, MUI, Chart.js + D3), 3 runs each, `temperature 0.0`:
 |---|---|---|---|
 | Qwen3.8-27B `UD-IQ3_XXS` v3 | 2026-08-05 | **36/39 (92%)** | 6/9 |
 | Qwen3-Coder-Next `UD-Q4_K_M` | 2026-01-30 | **39/42 (93%)** | 6/9 |
+| Laguna XS 2.1 `Q4_K_M` | 2026-07-21 | 18/36 (50%) | 3/9 |
 
-**A tie, and that is the finding.** Six months of release-date gap produced no
-measurable difference on this axis. Each model fails deterministically on one
-library and gets the other's right:
+**A tie between the first two, and that was the original finding.** Six months
+of release-date gap produced no measurable difference on this axis. Each model
+fails deterministically on one library and gets the other's right:
 
 * Qwen3.8 always emits `unpkg.com/@mui/material@5/dist/material-ui.production.min.js` — dead.
 * Qwen3-Coder-Next always emits `unpkg.com/recharts@2.10.0/umd/recharts.min.js` — dead, and it is the exact "Recharts ships no `.min` UMD build" trap already documented in the session notes.
@@ -1674,6 +1781,17 @@ So "the coder model's knowledge is outdated" is **not reproduced** by this
 probe. Either the perception comes from a different axis — library *API*
 surface rather than *distribution* paths — or it is real and this probe is the
 wrong instrument. Worth knowing before choosing a model on freshness grounds.
+
+**Laguna XS 2.1 does separate, 2026-08-23 — so the probe was not saturated.**
+At 18/36 it resolves barely half, against 92-93% for the other two, and the
+gap is not one bad library: it fails `@emotion/react`, `@emotion/styled`,
+`@mui/material`, `@mui/icons-material`, `prop-types` and `recharts` — six
+distinct wrong paths, identically across all three runs. The "everything ties
+at ~92%" reading held only while every model tested was a Qwen; a model from a
+different lab immediately produced a 42-point spread. That makes this probe
+useful for *cross-lab* comparison even though it cannot separate quant tiers or
+Qwen generations. Laguna is the newest model in the table by release date and
+the worst on it, so recency does not predict this score either.
 
 Release dates for everything on disk, since it bounds the cutoff even if it
 does not equal it:

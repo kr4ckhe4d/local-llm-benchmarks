@@ -41,6 +41,7 @@ SLEEP_IDLE="${SLEEP_IDLE:-900}"
 declare -A MODEL_FILE=(
   [gpt-oss-20b]="gpt-oss-20b-mxfp4.gguf"
   [qwen3.6]="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+  [laguna]="Laguna-XS-2.1-Q4_K_M.gguf"
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
@@ -54,6 +55,7 @@ declare -A MODEL_FILE=(
 declare -A MODEL_LABEL=(
   [gpt-oss-20b]="GPT-OSS-20B"
   [qwen3.6]="Qwen3.6-35B-A3B"
+  [laguna]="Laguna XS.2"
   [gemma4]="Gemma 4-26B-A4B"
   [qwen3-coder]="Qwen3-Coder-Next"
   [muse-glimmer]="Muse Glimmer 30B"
@@ -68,6 +70,7 @@ declare -A MODEL_LABEL=(
 declare -A MODEL_BACKEND=(
   [gpt-oss-20b]="build"          # was build-vulkan; see README — Vulkan retired
   [qwen3.6]="build"              # Q4_K_M: ROCm 2.1x pp
+  [laguna]="build"               # Q4_K_M: `laguna` arch, ROCm
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [qwen3-coder]="build"          # Q4_K_M: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
@@ -118,6 +121,14 @@ declare -A CONFIG=(
   ["qwen3.6:32k"]="-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
   ["qwen3.6:128k"]="-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
   ["qwen3.6:256k"]="-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
+
+  # Laguna XS.2 (Poolside) — hybrid attention, 40 layers, 10 full (period 4) +
+  # 30 SWA(512), 8 KV heads x 128 (4x Qwen3.6's). Thinking defaults off in the
+  # template but the server does not honour that on its own — must pass
+  # enable_thinking:false or it burns the whole token budget on reasoning.
+  ["laguna:32k"]="-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna:128k"]="-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna:256k"]="-ncmoe 26 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
 
   # Gemma 4 — RE-TUNED for ROCm. The old Vulkan values (5/8/16) do not load.
   # Not a hybrid-attention model. Native 262144.
