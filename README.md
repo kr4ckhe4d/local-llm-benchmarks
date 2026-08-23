@@ -2550,6 +2550,29 @@ Its headline: the same models that produced four undetected blank pages in Open
 WebUI catch their own 404s once given a browser console. The bottleneck was the
 absence of a feedback loop, not model capability.
 
+## Claude Code against this router
+
+Open WebUI is not the only client. Claude Code runs against these presets too —
+over the LAN, with tool calling, `WebFetch` and Chrome DevTools — and
+[`claude-harness.md`](claude-harness.md) documents what it takes.
+
+The part that needed no work: llama.cpp serves the **Anthropic** Messages API
+natively (`/v1/messages`), so no translation proxy is involved. The part that
+did: four separate things must be right, and each fails with an error that does
+not name its cause — a **41,796-token** system prompt that no 32k preset can
+answer, three claude.ai Notion tool schemas that crash llama.cpp's JSON-schema
+to GBNF converter and take *all* tool calling with them, four model slots where
+setting only `ANTHROPIC_MODEL` leaves three pointing at real Anthropic names,
+and a single screenshot that 500s a text-only backend into a retry loop.
+
+`claude-local.sh` is the client-side launcher that encodes all four:
+
+```bash
+claude-local list                        # what the router is serving
+claude-local qwen3-coder-80B-A3B-128k    # switch model
+claude-local --chrome                    # add Chrome DevTools, text-only tools
+```
+
 ## Open WebUI
 
 The client this box is driven from, reachable at `http://192.168.4.228:8080`.
