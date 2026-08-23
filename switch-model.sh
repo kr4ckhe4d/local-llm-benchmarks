@@ -42,6 +42,7 @@ declare -A MODEL_FILE=(
   [gpt-oss-20b]="gpt-oss-20b-mxfp4.gguf"
   [qwen3.6]="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
   [laguna]="Laguna-XS-2.1-Q4_K_M.gguf"
+  [laguna-q8]="Laguna-XS-2.1-Q8_0.gguf"
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
@@ -56,6 +57,7 @@ declare -A MODEL_LABEL=(
   [gpt-oss-20b]="GPT-OSS-20B"
   [qwen3.6]="Qwen3.6-35B-A3B"
   [laguna]="Laguna XS.2"
+  [laguna-q8]="Laguna XS.2 Q8_0"
   [gemma4]="Gemma 4-26B-A4B"
   [qwen3-coder]="Qwen3-Coder-Next"
   [muse-glimmer]="Muse Glimmer 30B"
@@ -71,6 +73,7 @@ declare -A MODEL_BACKEND=(
   [gpt-oss-20b]="build"          # was build-vulkan; see README — Vulkan retired
   [qwen3.6]="build"              # Q4_K_M: ROCm 2.1x pp
   [laguna]="build"               # Q4_K_M: `laguna` arch, ROCm
+  [laguna-q8]="build"            # Q8_0: near-lossless, 65-85% experts on CPU
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [qwen3-coder]="build"          # Q4_K_M: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
@@ -129,6 +132,14 @@ declare -A CONFIG=(
   ["laguna:32k"]="-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
   ["laguna:128k"]="-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
   ["laguna:256k"]="-ncmoe 26 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+
+  # Laguna XS.2 at Q8_0 -- 33GB, near-lossless. Identical code-quality to
+  # Q4_K_M (27/50 both) but +25 points on cdn-freshness. 30.2 tok/s vs 47.
+  # Higher -ncmoe than Q4_K_M because the file is 1.8x larger; the payoff is
+  # a roomier long-context fit (1,348 MiB free at 256K vs Q4_K_M's 490).
+  ["laguna-q8:32k"]="-ncmoe 26 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna-q8:128k"]="-ncmoe 30 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna-q8:256k"]="-ncmoe 34 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
 
   # Gemma 4 — RE-TUNED for ROCm. The old Vulkan values (5/8/16) do not load.
   # Not a hybrid-attention model. Native 262144.

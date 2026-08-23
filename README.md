@@ -910,22 +910,51 @@ Other metadata worth knowing: `general.size_label` is `256x2.2B`, and
 (`PROBE-439563`, `PROBE-915965`, then `add_numbers` → `1355528`), all
 arguments correct. This is the strongest axis measured on the model.
 
-**Coding quality is the weakest in this file.** The full suite ran on
-2026-08-23 — raw output in `benchmarks/laguna-XS-2.1-Q4_K_M/`:
+**Coding quality is the weakest in this file, and that is the model, not the
+quant.** The full suite ran on 2026-08-23 at both `Q4_K_M` (Poolside's own)
+and `Q8_0` (bartowski, imatrix) — raw output in
+`benchmarks/laguna-XS-2.1-Q4_K_M/` and `benchmarks/laguna-XS-2.1-Q8_0/`:
 
-| Probe | Laguna XS 2.1 | Field |
-|---|---|---|
-| `code-quality` | **27/50 (54%)**, 1/7 clean | 30-38/50 (60-76%) |
-| `cdn-freshness` | **18/36 (50%)**, 3/9 clean | 30-39 URLs (83-93%) |
-| tool calling | single + parallel ✓ | ✓ for all tested |
-| throughput (server, 700 tok) | **47.0 tok/s** | 24.7-30.6 tok/s |
+| Probe | Q4_K_M | Q8_0 | Field |
+|---|---|---|---|
+| `code-quality` | 27/50 (54%) | **27/50 (54%)** | 30-38/50 (60-76%) |
+| `cdn-freshness` | 18/36 (50%) | **27/36 (75%)** | 30-39 URLs (83-93%) |
+| tool calling | single + parallel ✓ | single + parallel ✓ | ✓ for all tested |
+| throughput (700 tok) | **47.0 tok/s** | 30.2 tok/s | 24.7-30.6 tok/s |
 
-It is comfortably the fastest generator here and comfortably the least
-accurate, and it lost 6 code-quality checks to output that did not parse.
-An earlier note in this section credited it with "correct, complete code"
-on the strength of a single bracket-balance prompt — that prompt was too
-easy to support the claim, which is why the differential suite exists. Treat
-Laguna as a speed pick, not a quality one.
+**Q8_0 was run specifically to test whether Poolside's Q4_K_M was holding the
+model back. It was not — for coding.** The 54% is identical at a quant that
+is effectively lossless, so Laguna genuinely sits below every other model here
+on differential stdlib reimplementation. The aggregate hides large per-task
+churn and the `SyntaxError` seen at Q4_K_M does *not* recur at Q8_0; see the
+code-quality section for the full breakdown.
+
+**Library knowledge is a different story — that one was the quant.**
+`cdn-freshness` gained 25 points at Q8_0, dropping three of six hallucinated
+CDN paths. Version-string recall degrades under quantisation well before
+coding ability does.
+
+An earlier note in this section credited Laguna with "correct, complete code"
+on the strength of a single bracket-balance prompt — that prompt was too easy
+to support the claim, which is why the differential suite exists.
+
+**Choosing between them.** Q4_K_M is the speed pick at 47 tok/s and 19GB.
+Q8_0 costs 33GB on disk and drops to 30.2 tok/s — still top of the field —
+and buys materially better library knowledge for no change in coding quality.
+Because Q8_0 pushes more experts to CPU, it is also the *roomier* fit at long
+context: 1,348 MiB free at 256K against Q4_K_M's 490.
+
+| Q8_0 context | Extra flags | VRAM used | Free |
+|---|---|---|---|
+| 32K | `-ncmoe 26 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 15,556 | 748 |
+| 128K | `-ncmoe 30 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,732 | 1,572 |
+| 256K | `-ncmoe 34 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0` | 14,956 | 1,348 |
+
+The GGUF is **93.8% expert tensors** (0.777 GiB per layer at Q8_0), which is
+why a 33GB model runs at all on a 16GB card — `-ncmoe` moves the bulk into
+system RAM and VRAM stays roughly flat. That ratio also makes the fit
+predictable: `0.064*T + (40-N)*0.936*T/40 + KV` sized every row above to
+within 1% before it was measured.
 
 ---
 
@@ -1552,6 +1581,7 @@ model's, not the harness's.
 | Qwen3.8-27B `UD-Q3_K_XL` **v2** | 3.932 | 33/50 (66%) | 2/7 |
 | Qwen3.8-27B `UD-IQ4_XS` v3 | 4.131 | 30/50 (60%) | 2/7 |
 | Laguna XS 2.1 `Q4_K_M` | ~4.5 | 27/50 (54%) | 1/7 |
+| Laguna XS 2.1 `Q8_0` | ~8.5 | 27/50 (54%) | 2/7 |
 
 **BPW does not order this table.** The highest-bit quant scores lowest and the
 lowest-bit quant scores highest. IQ4_XS lost 9 checks in one go by emitting
@@ -1559,14 +1589,41 @@ Python that does not parse (`urljoin`, `SyntaxError`), which is a generation
 failure rather than a knowledge one — but that is exactly the kind of failure
 that matters in an agentic loop, so it is scored, not excused.
 
-**Laguna XS 2.1 is the only model below the band, and it fails the same way.**
-27/50 is 3 checks under the previous floor, and 6 of those losses come from one
-task (`add_months`) whose output **did not parse** — `SyntaxError: did you
-forget parentheses around the comprehension target?`. Excluding that task it is
-27/44 (61%), which puts it level with IQ4_XS rather than clear of it. That is
-the second time an emit-invalid-Python failure has decided a row in this table,
-and it is notable that it happened to the model marketed specifically for
-agentic coding. Only `csv_rows` came back fully clean.
+**Laguna XS 2.1 is the only model below the band.** 27/50 is 3 checks under the
+previous floor. At `Q4_K_M`, 6 of those losses come from one task
+(`add_months`) whose output **did not parse** — `SyntaxError: did you forget
+parentheses around the comprehension target?`.
+
+**Re-run at `Q8_0` it scores 27/50 again — and that is not the stability it
+looks like.** The totals match; the distribution does not. Twenty of the fifty
+checks changed hands, ten each way, netting exactly zero:
+
+| Task | Q4_K_M | Q8_0 | |
+|---|---|---|---|
+| `glob_match` | 4/8 | 4/8 | |
+| `shlex_split` | 4/7 | 2/7 | −2 |
+| `urljoin` | 3/9 | 6/9 | +3 |
+| `textwrap` | 4/6 | 3/6 | −1 |
+| `csv_rows` | **7/7** | **0/7** | −7 |
+| `add_months` | **0/6** | **6/6** | +6 |
+| `parse_qsl` | 5/7 | 6/7 | +1 |
+| **total** | **27/50** | **27/50** | **0** |
+
+Two things follow. First, **the `SyntaxError` was a quantisation artifact, not
+a property of the model** — at full precision `add_months` is one of only two
+clean tasks. The earlier framing here, that an invalid-Python emit had decided
+a row for the second time, was true of the Q4_K_M run but should not be read
+as a Laguna trait. Second, and cutting the other way, `csv_rows` went from
+7/7 to 0/7 at the *higher* quant, with all seven checks failing on code that
+ran but returned the wrong thing — so near-lossless weights broke a task the
+lossy ones aced.
+
+**The honest reading is that 54% is the model.** Q8_0 is close enough to
+ground truth that an aggregate this stable rules out quantisation as the
+explanation for Laguna's floor. But per-task the instrument is noisy enough
+that no single task's score should be quoted on its own, which sharpens the
+"contribute noise rather than signal" caveat below into something measured
+rather than suspected.
 
 **v3 beats v2 at the same quant tier, 35 vs 33.** That is the only
 same-tier-same-model comparison available here and it points the way Unsloth
@@ -1768,6 +1825,7 @@ Three prompts (Recharts, MUI, Chart.js + D3), 3 runs each, `temperature 0.0`:
 |---|---|---|---|
 | Qwen3.8-27B `UD-IQ3_XXS` v3 | 2026-08-05 | **36/39 (92%)** | 6/9 |
 | Qwen3-Coder-Next `UD-Q4_K_M` | 2026-01-30 | **39/42 (93%)** | 6/9 |
+| Laguna XS 2.1 `Q8_0` | 2026-07-21 | 27/36 (75%) | 3/9 |
 | Laguna XS 2.1 `Q4_K_M` | 2026-07-21 | 18/36 (50%) | 3/9 |
 
 **A tie between the first two, and that was the original finding.** Six months
@@ -1783,15 +1841,31 @@ surface rather than *distribution* paths — or it is real and this probe is the
 wrong instrument. Worth knowing before choosing a model on freshness grounds.
 
 **Laguna XS 2.1 does separate, 2026-08-23 — so the probe was not saturated.**
-At 18/36 it resolves barely half, against 92-93% for the other two, and the
-gap is not one bad library: it fails `@emotion/react`, `@emotion/styled`,
-`@mui/material`, `@mui/icons-material`, `prop-types` and `recharts` — six
-distinct wrong paths, identically across all three runs. The "everything ties
-at ~92%" reading held only while every model tested was a Qwen; a model from a
-different lab immediately produced a 42-point spread. That makes this probe
-useful for *cross-lab* comparison even though it cannot separate quant tiers or
-Qwen generations. Laguna is the newest model in the table by release date and
-the worst on it, so recency does not predict this score either.
+The "everything ties at ~92%" reading held only while every model tested was a
+Qwen. Laguna is the newest model in the table by release date and the worst on
+it, so recency does not predict this score either.
+
+**But most of that gap was the quant, not the lab — and this is the one probe
+here that is sensitive to quant tier.** Re-running Laguna at `Q8_0`, which is
+effectively lossless, moved it from 18/36 to **27/36**, recovering 9 URLs:
+
+| | Q4_K_M | Q8_0 |
+|---|---|---|
+| URLs resolve | 18/36 (50%) | **27/36 (75%)** |
+| distinct dead paths | 6 | 3 |
+
+Q4_K_M invents `@emotion/react`, `@emotion/styled` and `prop-types` script
+tags that Q8_0 simply does not emit. What survives at Q8_0 is the *same* two
+traps every model on this box hits — the Recharts UMD path and the MUI UMD
+paths — so at full precision Laguna fails like its peers rather than uniquely.
+
+This matters beyond Laguna. `code-quality-test.py` scored **27/50 at both
+quant tiers**, while this probe moved 25 points on the same two files. Recall
+of specific version strings and CDN paths degrades under quantisation well
+before procedural coding ability does, which is consistent with the KLD
+result — and it means a knowledge probe is the cheaper instrument for
+detecting quant damage than a coding probe. Treat the cross-lab spread in the
+table above as an upper bound: some of every gap there is quantisation.
 
 Release dates for everything on disk, since it bounds the cutoff even if it
 does not equal it:
