@@ -45,11 +45,23 @@ models() {
     | python3 -c 'import sys,json;[print(m["id"]) for m in json.load(sys.stdin)["data"]]' 2>/dev/null
 }
 
-# Context is encoded in the preset name: ...-32k, -128k, -200k, -256k.
+# Context is encoded in the preset name: ...-32k, -128k, -200k, -256k. Take the
+# last such group rather than anchoring at end-of-string, so suffixed presets
+# like qwen3.8-27B-16k-mtp report 16k instead of falling through to zero.
 ctx_of() {
-  n=$(printf '%s' "$1" | grep -oE '[0-9]+k$' | tr -d 'k')
+  n=$(printf '%s' "$1" | grep -oE '[0-9]+k' | tail -1 | tr -d 'k')
   [ -n "$n" ] && echo $(( n * 1024 )) || echo 0
 }
+
+# Presets Claude Code can actually use. Anything under MIN_CTX cannot answer a
+# single request -- the system prompt alone overflows it -- so listing them as
+# choices is just offering a guaranteed error. --any-ctx brings them back.
+usable() {
+  models | while read -r m; do
+    [ "$(ctx_of "$m")" -ge "$MIN_CTX" ] && echo "$m"
+  done
+}
+listable() { [ "$ANY_CTX" -eq 1 ] && models || usable; }
 
 usage() {
   cat <<EOF
@@ -77,29 +89,24 @@ Notes
 EOF
 }
 
-MODEL=""; USE_CHROME=0; ANY_CTX=0
+MODEL=""; USE_CHROME=0; ANY_CTX=0; DO_LIST=0
 PASS=()          # everything destined for claude, kept as distinct words
 SAW_FLAG=0       # after the first claude flag, stop treating bare words as a model
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help)  usage; exit 0 ;;
-    list)       reachable || die "router unreachable at $ROUTER"
-                echo "Models on $ROUTER:"
-                models | while read -r m; do
-                  c=$(ctx_of "$m")
-                  if [ "$c" -ge "$MIN_CTX" ]; then printf '  %-34s %6s tok\n' "$m" "$c"
-                  else                             printf '  %-34s %6s tok  (too small for Claude Code)\n' "$m" "$c"; fi
-                done
-                exit 0 ;;
+    list)       DO_LIST=1; shift ;;
     --chrome)   USE_CHROME=1; shift ;;
     --any-ctx)  ANY_CTX=1; shift ;;
     --)         shift; while [ $# -gt 0 ]; do PASS+=("$1"); shift; done ;;
     -*)         SAW_FLAG=1; PASS+=("$1"); shift ;;
-    *)          # A bare word is the model only if it looks like a preset AND we
-                # have not yet seen a claude flag -- otherwise it is that flag's
-                # value (e.g. the prompt after -p) and must be passed through
-                # as a single word.
-                if [ -z "$MODEL" ] && [ "$SAW_FLAG" -eq 0 ] && printf '%s' "$1" | grep -qE '[0-9]+k$'; then
+    *)          # The first bare word before any claude flag is the model. Do
+                # not pattern-match the name -- presets like qwen3.8-27B-16k-mtp
+                # do not end in <n>k and were silently falling through to the
+                # default. It is validated against the router's list below.
+                # After a flag, a bare word is that flag's value (the prompt
+                # after -p) and must pass through as one word.
+                if [ -z "$MODEL" ] && [ "$SAW_FLAG" -eq 0 ]; then
                   MODEL="$1"
                 else
                   PASS+=("$1")
@@ -108,13 +115,25 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ "$DO_LIST" -eq 1 ]; then
+  reachable || die "router unreachable at $ROUTER"
+  echo "Models on $ROUTER:"
+  listable | while read -r m; do printf '  %-34s %6s tok\n' "$m" "$(ctx_of "$m")"; done
+  if [ "$ANY_CTX" -eq 0 ]; then
+    hidden=$(( $(models | wc -l) - $(usable | wc -l) ))
+    [ "$hidden" -gt 0 ] && printf '\n  %s preset(s) under %s tokens hidden -- too small for Claude Code (--any-ctx to show)\n' \
+      "$hidden" "$MIN_CTX"
+  fi
+  exit 0
+fi
+
 [ -n "$MODEL" ] || MODEL="$DEFAULT_MODEL"
 command -v claude >/dev/null 2>&1 || die "claude not on PATH (try: export PATH=\"\$HOME/.local/bin:\$PATH\")"
 reachable || die "router unreachable at $ROUTER -- is switch-model.sh router running on the GPU box?"
 
 models | grep -qx "$MODEL" || {
   printf 'error: "%s" is not served by the router.\n\n' "$MODEL" >&2
-  printf 'Available:\n' >&2; models | sed 's/^/  /' >&2
+  printf 'Available:\n' >&2; listable | sed 's/^/  /' >&2
   exit 1
 }
 
