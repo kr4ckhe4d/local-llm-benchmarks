@@ -1,0 +1,67 @@
+# Claude Code harness speed -- what the client actually waits on
+# router : http://127.0.0.1:8090
+# prompt : Write a Python function merge_sort(lst) with type hints and a short docstring. Output only code, no explanation.
+# host   : Linux 7.1.5-1-cachyos, llama.cpp version: 0.1.0-dev (build 10463, commit 7c35571e5)
+# date   : 2026-08-23T23:56:57+08:00
+#
+# COLD_s  first turn: router loads the model from disk, then prefills.
+# WARM_s  second identical turn, model resident -- the per-turn wait.
+# TTFT_s  time to first token. Prefill of the system prompt lives here.
+# GEN_s   WARM_s - TTFT_s: time actually spent emitting the answer.
+# IN_tok  prompt tokens re-processed EVERY turn (system + 30 tool schemas).
+#
+# No tok/s column on purpose. GEN_s is under a second for most rows, so
+# output_tokens/GEN_s divides by timing noise and produced figures 5-10x
+# the rates llama-bench measures. The raw envelopes are in raw/.
+
+MODEL                            COLD_s   WARM_s   TTFT_s    GEN_s   IN_tok  OUT_tok
+------------------------------ -------- -------- -------- -------- -------- --------
+gemma4-26B-A4B-128k                43.7     32.7     28.6      4.1    24410      256
+glm-4.7-flash-30B-A3B-128k        167.6     54.6     39.2     15.5     2655      336
+laguna-33B-A3B-128k               101.7     21.9     21.5      0.4    25996      171
+laguna-33B-A3B-q8-128k            176.9     37.5     36.9      0.6    25997      190
+muse-glimmer-30B-128k             118.0     61.7     58.0      3.7    48378      212
+qwen3-coder-80B-A3B-128k          251.8     56.8     56.3      0.5    27216      145
+qwen3.6-35B-A3B-128k              145.6     22.8     13.1      9.7     1246      507
+
+# Read the WARM column: it is the per-turn wait in a live session.
+# TTFT is dominated by prefilling the system prompt, not by the model.
+
+## In-session follow-up turns (the number you actually feel)
+
+WARM_s above is a *fresh session*: two separate `claude -p` invocations. Claude
+Code varies cwd/date/session-id inside the prompt, so the prefixes differ and
+the cache misses. A real conversation shares a long stable prefix. Measured
+with `--continue` in one session:
+
+  model                        turn 1     turn 2 (--continue)
+  laguna-33B-A3B-128k            25.5s          3.1s
+  qwen3.6-35B-A3B-128k           58.6s         31.9s
+
+Laguna drops 8x. Qwen3.6 only halves -- it is a thinking model
+(reasoning-budget 1024) and spends turn 2 generating, not prefilling: it
+emitted 507 output tokens against Laguna's 171 in the table above. So the gap
+is generation, not prompt handling. Treat that as the likely cause rather than
+a measured one; it was not isolated.
+
+## Retracted: "hybrid attention prevents prefix caching"
+
+An earlier reading of this data claimed sliding-window models get no prefix
+reuse, on the grounds that GLM reported cache_read>0 while Laguna reported 0.
+That was wrong, and the controlled test that killed it is worth keeping.
+
+Two byte-identical requests straight to /v1/messages, no client in between:
+
+  model                        1st       2nd (identical)
+  laguna-33B-A3B-128k          65.3s     0.1s   cache_read=48255
+  qwen3.6-35B-A3B-128k         37.2s     0.3s   cache_read=48134
+  glm-4.7-flash-30B-A3B-128k  214.6s     0.4s   cache_read=48129
+
+Prefix caching works on every model tested, including Laguna's hybrid
+SWA -- a 650x speedup. The per-model cache_read differences seen through
+Claude Code came from its multiple internal API calls per invocation, not from
+attention architecture. `usage` in the Claude Code result envelope aggregates
+those calls, so it was never a valid basis for a per-request claim.
+
+The lesson generalises: do not infer server behaviour from a client's usage
+accounting. Measure the server directly.

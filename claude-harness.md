@@ -1,12 +1,12 @@
 # Running Claude Code against the local router
 
 Claude Code is the most demanding client anything on this box has served. It
-sends a ~42k-token system prompt, 128 tool schemas, and expects the Anthropic
-Messages API rather than the OpenAI one. All of that works — but four separate
-things have to be right, and each one fails with an error that does not name
-its cause.
+sends a 24k-42k-token system prompt, 128 tool schemas, and expects the
+Anthropic Messages API rather than the OpenAI one. All of that works — but four
+separate things have to be right, each one fails with an error that does not
+name its cause, and only 7 of the 11 usable presets can serve it at all.
 
-Everything here was verified on 2026-08-23 against llama.cpp `b10463`
+Everything here was verified 2026-08-23/24 against llama.cpp `b10463`
 (`7c35571e5`), from Claude Code 2.1.231 (Linux, local) and 2.1.241 (macOS,
 over the LAN).
 
@@ -47,8 +47,12 @@ API Error: 400 request (41796 tokens) exceeds the available context size (32768 
 ```
 
 **Claude Code's system prompt measured 41,796 tokens** before a single word of
-conversation. Every 32k preset in `models-preset.ini` is therefore unusable
-with it — not slow, not degraded, unable to answer one request.
+conversation, with the claude.ai connectors attached. With MCP disabled — which
+gotcha 2 makes mandatory — it is **24,000–27,000 tokens**, varying by tokenizer:
+24,410 for Gemma 4, 25,996 for Laguna, 27,216 for Qwen3-Coder, and **48,378 for
+Muse Glimmer**, whose tokenizer turns the identical text into nearly twice as
+many tokens. Either way, every 32k preset is unusable — not slow, not degraded,
+unable to answer one request.
 
 128k is the smallest practical bucket. `claude-local.sh` refuses anything under
 64k with a message that says so, rather than letting the router produce the
@@ -61,9 +65,11 @@ which will silently mis-drive auto-compaction. Set it explicitly:
 CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072
 ```
 
-**Cost note.** ~42k tokens of prefill at Laguna's ~1,850 tok/s is roughly 23
-seconds before the first token of the first turn. llama.cpp reuses the cached
-prefix, so this is a per-session and post-compaction cost, not per-turn.
+**Cost note.** Prefilling that prompt is 21.5s of Laguna's 21.9s first turn —
+96% of the wait, before a single token appears. It is not paid again on the
+next turn: llama.cpp caches the prefix, and a `--continue` follow-up lands in
+**3.1s**. The full cost returns after compaction, a model switch, or starting a
+new session. Numbers and method in `benchmarks/claude-harness-speed.txt`.
 
 ---
 
@@ -245,22 +251,111 @@ slot, which is pinned to the same local model.
 
 ---
 
+## Which models actually work: 7 of 11
+
+Not every preset can drive Claude Code, and the two failure modes are both
+server-side. Tested 2026-08-24 across every 128k preset:
+
+| Model | | Why |
+|---|---|---|
+| `gemma4-26B-A4B-128k` | ✅ | |
+| `glm-4.7-flash-30B-A3B-128k` | ✅ | |
+| `laguna-33B-A3B-128k` | ✅ | |
+| `laguna-33B-A3B-q8-128k` | ✅ | |
+| `muse-glimmer-30B-128k` | ✅ | |
+| `qwen3-coder-80B-A3B-128k` | ✅ | |
+| `qwen3.6-35B-A3B-128k` | ✅ | |
+| `gpt-oss-20b-A3.6B-128k` | ❌ | grammar: template rejects the tool schemas |
+| `qwen3.5-9B-uncensored-128k` | ❌ | chat template: system-after-user |
+| `qwen3.8-27B-128k` | ❌ | chat template: system-after-user |
+| `qwen3.8-27B-xxs-128k` | ❌ | chat template: system-after-user |
+
+**The dense-Qwen family is out, and it takes the best coder with it.**
+Claude Code sends a `system`-role message *after* the user message:
+
+```
+messages[0]  role=user     blocks=['text','text']
+messages[1]  role=system   blocks=['text']
+```
+
+Qwen3.8's Jinja template raises `System message must be at the beginning` on
+that shape. Reproduced minimally — `user` then `system` fails, `user` alone
+passes, and a top-level `system` field in any form passes. Nothing to fix
+client-side; it is the template. That rules out `qwen3.8-27B`, which scores
+best on `code-quality` in this repo.
+
+`gpt-oss-20b` fails differently and earlier: it loads fine, then rejects the
+30 built-in schemas at grammar compilation. Same error string as the Notion
+problem, different cause — llama.cpp derives the tool grammar from the chat
+template, so **grammar compatibility is per model, not just per schema**.
+
+> A probe that sends tools plus a plain user message is **not** sufficient to
+> establish compatibility — it passed all three Qwen models that then failed in
+> real use. The system-after-user shape has to be in the probe.
+
+## Speed: prefill is the whole story
+
+`benchmarks/claude-speed.sh`, raw envelopes in `benchmarks/raw/`. This is not
+`llama-bench` — it measures what the client waits on, including the ~26k-token
+prompt.
+
+| Model | Cold s | Warm s | TTFT s | Gen s |
+|---|---|---|---|---|
+| `laguna-33B-A3B-128k` | 101.7 | **21.9** | 21.5 | 0.4 |
+| `qwen3.6-35B-A3B-128k` | 145.6 | **22.8** | 13.1 | 9.7 |
+| `gemma4-26B-A4B-128k` | **43.7** | 32.7 | 28.6 | 4.1 |
+| `laguna-33B-A3B-q8-128k` | 176.9 | 37.5 | 36.9 | 0.6 |
+| `glm-4.7-flash-30B-A3B-128k` | 167.6 | 54.6 | 39.2 | 15.5 |
+| `qwen3-coder-80B-A3B-128k` | 251.8 | 56.8 | 56.3 | 0.5 |
+| `muse-glimmer-30B-128k` | 118.0 | 61.7 | 58.0 | 3.7 |
+
+**TTFT is 96-99% of a fresh-session turn.** Generation is a rounding error, so
+the Throughput table in README.md predicts almost nothing about how Claude Code
+feels. Gemma 4 has the cheapest cold start by a factor of four.
+
+**In a continued session it is far better**, because the prefix caches:
+
+| Model | turn 1 | turn 2 (`--continue`) |
+|---|---|---|
+| `laguna-33B-A3B-128k` | 25.5s | **3.1s** |
+| `qwen3.6-35B-A3B-128k` | 58.6s | **31.9s** |
+
+Prefix caching works on every model tested — verified directly, 65.3s → 0.1s
+on a byte-identical repeat. The `Warm s` column above misses it only because
+each measurement is a *separate* `claude -p` session and Claude Code varies
+cwd/date/session-id inside the prompt.
+
 ## Choosing a model
 
 Claude Code is an agentic loop: it rewards instruction-following and reliable
 tool calls more than raw speed.
 
-**Laguna is a poor default despite being the fastest.** It scored 27/50 on
-`code-quality` and last on `cdn-freshness` (see README), and it shows here —
-asked to reply with an exact token it instead declined and explained what it
-was designed for. Correct tool calls, unreliable instruction-following.
+This is a sharper trade-off than it first looks, because the quality leader is
+disqualified by its chat template and the speed leader is the weakest model.
 
-Better picks already on disk:
+| | code-quality | turn 2 | note |
+|---|---|---|---|
+| `qwen3.8-27B-128k` | **35/50** | — | **cannot run**, template |
+| `qwen3-coder-80B-A3B-128k` | 34/50 | untested | slowest cold start, 251.8s |
+| `qwen3.6-35B-A3B-128k` | untested | 31.9s | thinking model |
+| `laguna-33B-A3B-q8-128k` | 27/50 | untested | +25pts library knowledge |
+| `laguna-33B-A3B-128k` | 27/50 | **3.1s** | fastest by far |
 
-* `qwen3.8-27B-128k` — `Q3_K_XL` v3, **35/50**, the strongest coder on disk
-  that fits a 128k preset
-* `qwen3-coder-80B-A3B-128k` — 34/50, the coding specialist
-* `glm-4.7-flash-30B-A3B-128k` — MoE, ~43 tok/s at 32k, not yet suite-tested
+**Laguna is a poor default on quality despite being the fastest.** It scored
+27/50 on `code-quality` and last on `cdn-freshness` (see README), and it shows
+here — asked to reply with an exact token it declined and explained what it was
+designed for instead. Correct tool calls, unreliable instruction-following.
+
+But 3.1s per follow-up turn against 31.9s is a tenfold difference in felt
+latency, and that is hard to argue with for interactive work. **Use
+`qwen3-coder-80B-A3B-128k` when the answer matters more than the wait, and
+`laguna-33B-A3B-q8-128k` for everything else** — same coding score as the Q4
+but materially better library knowledge, which is the failure mode most likely
+to waste your time.
+
+Qwen3.6's 31.9s second turn is probably its reasoning budget rather than slow
+prompt handling: it emitted 507 output tokens against Laguna's 171. That was
+not isolated, so treat it as a likely cause, not a measured one.
 
 `laguna-33B-A3B-q8-128k` over the Q4_K_M if Laguna is wanted anyway: identical
 coding score, +25 points of library knowledge, still 30 tok/s.
