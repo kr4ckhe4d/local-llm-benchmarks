@@ -2573,6 +2573,26 @@ claude-local qwen3-coder-80B-A3B-128k    # switch model
 claude-local --chrome                    # add Chrome DevTools, text-only tools
 ```
 
+## aider against this router
+
+A third harness, and the opposite trade-off from Claude Code's:
+[`aider-harness.md`](aider-harness.md) covers it. aider parses plain-text
+diffs and plain-text shell-command suggestions instead of native tool-calling,
+so it sidesteps every model this router disqualifies elsewhere —
+**11 of 11 presets work**, including `qwen3.8-27B` (blocked under Claude Code
+by a chat-template message-ordering conflict) and `gpt-oss-20b` (blocked
+under both Cline and Claude Code by parser/grammar failures).
+
+That compatibility comes at a cost only visible once a real multi-step task
+runs through it end to end. `--yes-always` deliberately does not approve
+shell command execution — a model that writes a research script and correctly
+says "I can't run this" is not confused, it is describing a genuine
+confirmation gate the flag does not cover. A non-Playwright `/web` scrape can
+balloon to millions of tokens with no compaction to recover. A model's default
+`edit_format` can misread its own correctly-formatted shell command as a
+malformed file edit. All four are fixed in [`aider-driver/`](aider-driver),
+the reproducible driver behind the write-up.
+
 ## Open WebUI
 
 The client this box is driven from, reachable at `http://192.168.4.228:8080`.
