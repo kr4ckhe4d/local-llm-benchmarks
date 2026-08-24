@@ -2647,3 +2647,50 @@ flags — they live in the UI and are covered in full above:
 * **Function calling** should be set to Native to exercise llama.cpp's own
   parser; the default prompt-based mode succeeds even when the API path is
   broken, which is what made the 2026-04-24 tool-calling bug hard to see.
+
+### HTTPS: Chrome specifically needs it, other browsers don't
+
+Chrome gates several web APIs (service workers — Open WebUI is a PWA —
+clipboard write, etc.) behind a "secure context" check, which requires
+`https://` or `localhost` specifically. Plain `http://192.168.4.228:8080`
+loads the page fine but fails that check, silently, in Chrome only — Firefox
+and Safari are more lenient about non-HTTPS origins and do not show the
+problem. A self-signed certificate genuinely fixes it: Chrome's
+secure-context check only cares that the TLS handshake succeeded, not
+whether the certificate is trusted, so clicking through the "not secure"
+warning once is sufficient.
+
+A Caddy reverse proxy in front of the existing container, not a change to
+it:
+
+```bash
+mkdir -p ~/caddy
+cat > ~/caddy/Caddyfile <<'EOF'
+https://192.168.4.228:8443 {
+    tls internal
+    reverse_proxy localhost:8080
+}
+EOF
+
+docker run -d --name open-webui-tls --restart unless-stopped --network=host \
+  -v ~/caddy/Caddyfile:/etc/caddy/Caddyfile \
+  -v caddy-data:/data \
+  caddy:2-alpine
+```
+
+`tls internal` is Caddy's own local CA — it self-signs a leaf certificate
+with no external dependency (no Let's Encrypt, no manual `openssl`). The leaf
+cert is short-lived (~12h) by design and renews automatically in the
+background as long as the container keeps running, which `--restart
+unless-stopped` covers. `--network=host` for the same reason as the main
+container: it needs to reach `open-webui` at `localhost:8080` without
+Docker's bridge-network address translation getting in the way.
+
+Open **`https://192.168.4.228:8443`** in Chrome, accept the certificate
+warning once (`Advanced → Proceed`), and PWA-gated features that silently
+failed over plain HTTP work from then on. To remove the warning entirely
+rather than click through it, install Caddy's root CA
+(`docker exec open-webui-tls cat /data/caddy/pki/authorities/local/root.crt`)
+into the OS or browser trust store on each device that connects — optional,
+and only worth doing if the warning itself is the annoyance rather than the
+blocked APIs.
