@@ -313,6 +313,35 @@ frontend regression neither of the earlier two harnesses produced.
 
 ---
 
+## Using it: two different answers depending on who's watching
+
+The four fixes above split cleanly by whether a human is present to answer
+aider's own prompts.
+
+**Interactive** — a human at the terminal, approving things as they come up
+— only needs two of the four, and both have real CLI flags:
+
+```bash
+aider-local.sh                           # default model, interactive
+aider-local.sh qwen3.8-27B-128k          # pick a model
+```
+
+which is `aider --model openai/<preset> --no-detect-urls --edit-format diff`
+against the router underneath. `--no-detect-urls` is gotcha 1's CLI-level
+fix. `--edit-format diff` is gotcha 4's. Gotcha 2 (`--yes-always` not
+covering shell commands) is not a bug in this mode at all — aider just asks
+"Run shell command?" and a human answers it, same as any other confirmation.
+Gotcha 3 (one line per shell command, no heredocs) has no flag; it's a
+standing thing to know, documented in `aider-local.sh --help`.
+
+**Unattended** — `--yes-always`, nobody watching, the same situation
+`aider-driver/driver.py` was built for — needs gotcha 2's fix too, and that
+one has no CLI flag; it requires monkeypatching `InputOutput.confirm_ask`
+before invoking aider, which means the Python scripting API, not the CLI.
+`aider-local.sh --yes-always ...` will silently hit gotcha 2 for any task
+that needs real shell output. Use `aider-driver/driver.py` as the template
+for that case instead — copy its four patches near the top of the file.
+
 ## `aider-driver/`
 
 The scripted driver behind attempt 2 above — six turns, all five fixes,

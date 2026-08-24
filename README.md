@@ -2590,8 +2590,11 @@ says "I can't run this" is not confused, it is describing a genuine
 confirmation gate the flag does not cover. A non-Playwright `/web` scrape can
 balloon to millions of tokens with no compaction to recover. A model's default
 `edit_format` can misread its own correctly-formatted shell command as a
-malformed file edit. All four are fixed in [`aider-driver/`](aider-driver),
-the reproducible driver behind the write-up.
+malformed file edit. Two of the four have real CLI flags and are handled by
+[`aider-local.sh`](aider-local.sh) for everyday interactive use; the other
+two only matter unattended (`--yes-always`, nobody approving prompts), and
+[`aider-driver/`](aider-driver) — the reproducible driver behind the
+write-up — is the template for that case.
 
 ## Open WebUI
 
