@@ -2676,7 +2676,15 @@ docker run -d --name open-webui-tls --restart unless-stopped --network=host \
   -v ~/caddy/Caddyfile:/etc/caddy/Caddyfile \
   -v caddy-data:/data \
   caddy:2-alpine
+
+sudo ufw allow 8443/tcp   # new port -- 8090's rule does not cover it
 ```
+
+**Skipping the `ufw` line fails from any other device with `ERR_ADDRESS_UNREACHABLE`**,
+not a certificate warning — the container is genuinely fine (`curl -k
+https://192.168.4.228:8443/` from the box itself returns 200) but the LAN
+never reaches it. `8090`'s existing rule does not carry over; each port needs
+its own `ufw allow`.
 
 `tls internal` is Caddy's own local CA — it self-signs a leaf certificate
 with no external dependency (no Let's Encrypt, no manual `openssl`). The leaf
