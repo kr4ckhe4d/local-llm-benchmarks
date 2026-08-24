@@ -9,6 +9,7 @@
 # this script.
 #
 #   aider-local.sh list                      what the router is serving
+#   aider-local.sh --init                    drop CONVENTIONS.md + .aider.conf.yml into cwd
 #   aider-local.sh                           default model, interactive
 #   aider-local.sh qwen3.8-27B-128k          pick a model
 #   aider-local.sh qwen3.8-27B-128k --yes-always -m "fix the bug"
@@ -35,6 +36,9 @@ usage() {
 Run aider against the local llama.cpp router.
 
   aider-local.sh list                  models the router is serving
+  aider-local.sh --init                drop CONVENTIONS.md + .aider.conf.yml
+                                        into the current directory (once per
+                                        project; never overwrites)
   aider-local.sh [model] [aider args...]
 
 Environment
@@ -71,13 +75,107 @@ Always true, not fixable at all:
 EOF
 }
 
-MODEL=""; DO_LIST=0
+# Embedded rather than read from a sibling file: this script gets copied or
+# symlinked to ~/.local/bin in normal use (see claude-local.sh's deployment),
+# at which point a companion file left behind in the original repo would no
+# longer travel with it. Keep this block in sync with CONVENTIONS.md.template
+# in the repo, which exists for browsing/reference, not as a runtime dependency.
+write_conventions_template() {
+  cat <<'CONV'
+# Conventions
+
+Read-only file, auto-attached every session via `.aider.conf.yml`'s `read:`
+key. The model sees this on every turn without it being retyped or spent out
+of the context budget on repetition -- put anything here that should never
+need re-explaining.
+
+Two sections below: the first is about this **harness** (aider) and applies
+to any project using it; the second is a **project** template to fill in.
+Keep the harness section as-is unless something about your setup changes;
+replace the project section entirely for each new codebase.
+
+---
+
+## Harness mechanics (aider) -- do not remove
+
+A shell command only runs if you emit it as a fenced ```bash code block AND
+include it in this same reply. Writing a script to a file is not the same as
+running it -- if a task needs real output, the command to produce it belongs
+in this message, not a promise to run it "next."
+
+Each line inside a ```bash block runs as its own separate command. There is
+no heredoc support and no shared state between lines -- a multi-line Python
+block written directly inside a ```bash fence will be torn apart and each
+line executed alone, and will fail. For anything beyond one command: write it
+to a file first with a normal file edit, then run it with ONE single-line
+shell command, e.g. `python3 script.py`.
+
+Do not use the `/web` command. If it is broken in this environment, it can
+consume the entire context budget on one call with no way to recover mid
+session. Use `curl` for anything that needs fetching.
+
+If a task requires seeing real output before the next step can be decided
+(a computed value, a fetched file's structure, a test result), treat that as
+a turn boundary -- finish this reply once the command is run, and take the
+next step in a following message once you can see the result. Do not narrate
+what a later step will probably show.
+
+---
+
+## Project: <name>
+
+Replace this section per project. Suggested shape, delete what doesn't apply:
+
+### Stack
+- Language / framework / package manager:
+- Test command:
+- Lint / format command:
+
+### Rules
+- <e.g. "All new modules need a docstring">
+- <e.g. "Never touch files under generated/">
+- <e.g. "Prefer composition over inheritance in this codebase specifically">
+
+### Verification discipline (recommended default -- keep unless you have a reason not to)
+- Never report a check you did not run. If you did not execute something,
+  say so explicitly rather than describing what it would show.
+- Never invent, estimate, or normalise a number, status, or result that
+  should come from a real source (a command, a file, a fetched URL). If you
+  cannot obtain it, say so and stop rather than substitute a plausible value.
+- When asked to verify something (tests pass, a service responds, a value is
+  correct), paste the actual command output, not a summary of it.
+CONV
+}
+
+init() {
+  if [ -f CONVENTIONS.md ]; then
+    echo "CONVENTIONS.md already exists here -- left untouched."
+  else
+    write_conventions_template > CONVENTIONS.md
+    echo "wrote CONVENTIONS.md -- fill in the 'Project: <name>' section for this repo."
+  fi
+
+  if [ -f .aider.conf.yml ]; then
+    if grep -q '^read:' .aider.conf.yml 2>/dev/null; then
+      echo ".aider.conf.yml already has a 'read:' key -- left untouched."
+    else
+      printf 'read: CONVENTIONS.md\n' >> .aider.conf.yml
+      echo "appended 'read: CONVENTIONS.md' to existing .aider.conf.yml."
+    fi
+  else
+    printf 'read: CONVENTIONS.md\n' > .aider.conf.yml
+    echo "wrote .aider.conf.yml"
+  fi
+}
+
+MODEL=""; DO_LIST=0; DO_INIT=0
 PASS=()
 SAW_FLAG=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help)  usage; exit 0 ;;
     list)       DO_LIST=1; shift ;;
+    --init)     DO_INIT=1; shift ;;
     --)         shift; while [ $# -gt 0 ]; do PASS+=("$1"); shift; done ;;
     -*)         SAW_FLAG=1; PASS+=("$1"); shift ;;
     *)          if [ -z "$MODEL" ] && [ "$SAW_FLAG" -eq 0 ]; then
@@ -88,6 +186,11 @@ while [ $# -gt 0 ]; do
                 shift ;;
   esac
 done
+
+if [ "$DO_INIT" -eq 1 ]; then
+  init
+  exit 0
+fi
 
 if [ "$DO_LIST" -eq 1 ]; then
   reachable || die "router unreachable at $ROUTER"
