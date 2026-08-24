@@ -17,7 +17,7 @@
 # Written for macOS too, so bash 3.2: no associative arrays, no ${x,,}.
 set -uo pipefail
 
-ROUTER="${ROUTER:-http://127.0.0.1:8090}"
+ROUTER="${ROUTER:-http://192.168.4.228:8090}"
 DEFAULT_MODEL="${AIDER_LOCAL_MODEL:-qwen3.8-27B-128k}"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
