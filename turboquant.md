@@ -11,10 +11,18 @@ needle, 803 MiB free. The same model at 131,072 with `q4_0` **cannot even
 allocate its compute buffers**. So the tier upgrade is caused by TurboQuant, not
 by the ubatch change; the control was run.
 
+The same lever pays off differently on an MoE: Gemma 4 reaches `-ncmoe 2` with
+`turbo2`, which `q8_0` cannot allocate at all, worth +8% prompt / +12%
+generation over the best `q8_0` configuration. Note that most of Gemma's
+available headroom — `-ncmoe 8 → 4`, +14% / +12% — needs no fork at all and is
+free in the current setup today.
+
 Speed is a much weaker story than an earlier draft of this file claimed — see
 [Correction](#correction-the-21-generation-claim-was-baseline-shopping). Treat
 TurboQuant as a **VRAM tool, not a speed tool**: roughly `q8_0` quality-of-life
-at a third of the size.
+at a third of the size. Every gain it appears to produce should be checked
+against a stock-KV control at the same settings; twice in this file that control
+reassigned the credit.
 
 ---
 
@@ -174,9 +182,42 @@ Quoting "+21% generation" without naming the `q4_0` baseline overstates it, and
 an earlier revision of this file did exactly that. The Gemma 4 numbers are the
 correction that caught it — a negative result doing useful work.
 
-Gemma 4 has its own untested angle: it runs `-ncmoe 8`, so its win would come
-from turbo's VRAM savings letting expert layers move back onto the GPU, not
-from the KV path. Not measured.
+### Gemma 4: the MoE payoff, and how much of it is actually TurboQuant's
+
+For a partially-offloaded MoE the win should not come from the KV path at all —
+it should come from turbo's VRAM savings letting expert layers move off DDR4 and
+back onto the card. Measured, `-fa 1 -ub 512 -p 2048 -n 64 -d 32768 -r 2`:
+
+| KV | `-ncmoe` | Prompt | Generation |
+|---|---|---|---|
+| `q8_0` | 8 (current preset) | 1131.6 ± 6.2 | 45.06 ± 0.77 |
+| `q8_0` | **4** | 1293.0 ± 3.0 | **50.29** ± 2.45 |
+| `q8_0` | 2 | **fails to create context** | — |
+| `q8_0` | 0 | **fails to create context** | — |
+| `turbo2` | 8 | 1151.2 ± 7.1 | 43.74 ± 0.96 |
+| `turbo2` | 4 | 1298.0 ± 3.2 | 48.95 ± 1.81 |
+| **`turbo2`** | **2** | **1399.2** ± 5.0 | **56.12** ± 2.32 |
+
+**Most of the available gain is not TurboQuant's.** `-ncmoe 8 → 4` is worth
++14% prompt and +12% generation and works fine on plain `q8_0` — no fork, no
+new KV format. `switch-model.sh` ships `gemma4:32k` at `-ncmoe 8`, which is
+simply over-conservative at this context; that is free performance sitting in
+the current setup and it should be re-tuned regardless of anything in this file.
+
+At `-ncmoe 4` the two KV formats tie on prompt and `q8_0` is *ahead* on
+generation (50.29 vs 48.95), so turbo earns nothing there.
+
+**What turbo does buy is the next step down.** `q8_0` cannot allocate at
+`-ncmoe 2`; `turbo2` can, and that step is worth a further +8% prompt and +12%
+generation. Against the shipping preset the total is +23.6% / +24.5%, but only
+the last third of it is attributable to TurboQuant.
+
+This is the same lever as the Qwen3.8 quant tier, cashed out differently: on a
+dense model the freed VRAM buys **better weights**, on an MoE it buys **fewer
+CPU-resident experts**. In both cases the honest test is the control — run the
+same configuration on a stock KV type and see whether it was reachable anyway.
+Here it was, for most of the range, and an earlier draft of this file credited
+turbo with the whole thing.
 
 ### Capacity — llama-server, measured VRAM
 
@@ -232,6 +273,9 @@ at `--depth 114000` (~121,836 actual tokens).
 | `IQ4_XS-v3` | `turbo2` | 512 | 700 MiB free | ✗ **crash @30%** | — |
 | **`IQ4_XS-v3`** | **`turbo2`** | **256** | **803 MiB free** | **✓** | **5/5** |
 
+The winning row was re-run for semantic recall and scored **5/5 at 117,170
+tokens**, so it passes both retrieval instruments, not just needle.
+
 The control is the important row. `IQ4_XS` + `q4_0` + `-ub 256` fails at load
 with `graph_reserve: failed to allocate compute buffers`, so `-ub 256` alone
 does **not** produce this result — the KV savings are doing the work.
@@ -241,12 +285,25 @@ baseline's 328s. The smaller ubatch paid for itself.
 
 **A fit at load is not a fit.** Three configs here allocated cleanly and then
 died mid-prefill with
-`HSA_STATUS_ERROR_OUT_OF_RESOURCES ... Available Free mem : 0 MB`. Free VRAM at
-load predicted *how far* the prefill got (304 MiB → 17%, 700 MiB → 30%) but not
-whether it finished. The working config peaked at 15,940 MiB — **439 MiB of
-compute-buffer growth after load.** Anything with less than roughly 500 MiB free
-at load should be assumed to die under a long prompt until proven otherwise.
-This is README.md's `-ngl 44` lesson, restated for context length.
+`HSA_STATUS_ERROR_OUT_OF_RESOURCES ... Available Free mem : 0 MB`.
+
+**`-ub` is the predictor, not free VRAM at load.** That is worth stating
+carefully, because the obvious reading of the table is wrong. Free VRAM at load
+tracked *how far* the prefill got within a fixed ubatch (304 MiB → 17%,
+700 MiB → 30%), which invites a rule like "keep 500 MiB free." That rule is
+false: the winning `-ub 256` config was later re-run when the desktop happened
+to be holding more VRAM, loaded with only **267 MiB free**, peaked at 174 MiB
+free, and completed a full 117,170-token prefill without trouble — while
+`-ub 512` died starting from 700 MiB.
+
+The reason is that the prefill compute buffer scales with ubatch, so `-ub 256`
+roughly halves the growth that has to fit in whatever is left. **Reach for
+`-ub 256` before concluding a context does not fit**; README.md already uses
+this lever for the 1M Qwen3-Coder-Next config and for `glm4.7-flash`. It costs
+little — 319s vs 328s for the same 122k prefill here.
+
+This is README.md's `-ngl 44` lesson restated for context length: peak VRAM at
+load says nothing about what a long prompt will demand.
 
 **The awkward part: this rests on `turbo2`,** the most aggressive format and the
 one with the least quality evidence. `turbo3` — the format validated below with
@@ -368,14 +425,16 @@ comparison.
 
 ## What has NOT been established
 
-**`turbo2` quality — one data point, and it is load-bearing.** `turbo2` has
-passed 5/5 needle at 121,836 tokens on `IQ4_XS`, which is the only reason the
-quant-tier result stands. But it has had **no semantic-recall run and no KLD**,
-where `turbo3` got both. That is backwards: the format the recommendation
-depends on is the less-validated one. Open issue #305 also reports that *any*
-quantized K cache badly degrades attention-sink models such as gpt-oss, and
-`turbo2` is the most aggressive K quantizer here. **Run semantic recall on the
-`IQ4_XS` + `turbo2` + `-ub 256` config before treating it as a preset.**
+**`turbo2` KLD.** `turbo2` on the quant-tier config now passes both retrieval
+instruments — 5/5 needle at 121,836 and 5/5 semantic at 117,170 — so the
+recommendation is no longer resting on a single test. What it still lacks is
+KL-divergence against an f16-KV base at long context, which is the only
+instrument here that does not saturate. Both retrieval tests are pass/fail and
+both arms score 5/5, so they establish *no regression* and cannot rank.
+
+Open issue #305 also reports that *any* quantized K cache badly degrades
+attention-sink models such as gpt-oss, and `turbo2` is the most aggressive K
+quantizer available. Nothing in this file tests that class of model.
 
 **Ranking `turbo3` against `q4_0`.** The recall tests saturate at 5/5 for both,
 so they establish no-regression and stop there. Separating them needs KLD
@@ -390,7 +449,7 @@ in the same sitting.
 |---|---|---|
 | `Qwen3.8-27B-UD-Q3_K_XL-v3` | primary | depth perf, capacity, needle + semantic |
 | `Qwen3.8-27B-UD-IQ4_XS-v3` | the quant-tier result | 5/5 needle @121,836 with `turbo2`+`ub 256` |
-| `gemma-4-26B-A4B-it-UD-Q4_K_M` | second architecture | no speed gain vs `q8_0`; caught the baseline error |
+| `gemma-4-26B-A4B-it-UD-Q4_K_M` | second architecture (MoE) | no speed gain at fixed `-ncmoe`; enables `-ncmoe 2`, which `q8_0` cannot reach. Caught the baseline error |
 | `Qwen3.5-9B-Uncensored-Q8_0` | kernel sanity | ran clean, shallow only, a wash by design |
 | `dflash-kquant` | attempted | **no data** — fails on baseline `f16` too (draft/MTP model) |
 
