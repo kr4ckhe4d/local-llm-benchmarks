@@ -2562,6 +2562,32 @@ the slowest possible setting.
 
 ---
 
+## TurboQuant: 2-4 bit KV cache (experimental, not a preset)
+
+Reaching 128k on this card currently costs a **quantization tier**: `IQ4_XS` is
+the 32k preset, while 64k and 128k drop to `Q3_K_XL` because the smaller trunk
+is what buys the context. TurboQuant's Walsh-Hadamard-rotated KV types remove
+that trade — measured here, `Qwen3.8-27B-UD-IQ4_XS-v3` runs at **131,072** with
+`turbo2` and `-ub 256`, surviving a real 121,836-token prefill at **5/5 needle**
+with 803 MiB free. The control matters: the same model at 131,072 with `q4_0`
+**cannot even allocate its compute buffers**, so the KV format is what buys the
+tier, not the ubatch change.
+
+Read it as a **VRAM tool, not a speed tool** — roughly `q8_0` speed at a third
+of `q8_0`'s size. (`turbo3` looks 21% faster than `q4_0` at depth, but Gemma 4
+benched against `q8_0` shows −2.5%; the gain is `q4_0`'s penalty being
+recovered, not turbo being fast.)
+
+It is **not merged into llama.cpp** and runs only from a fork, so nothing here
+is wired into `switch-model.sh`. [`turboquant.md`](turboquant.md) has the
+numbers, the build, the RDNA4 confirmation, and the gotchas — including one
+environment variable that silently overrides `-ctk`, three harness faults that
+make **any** `needle-test.py` run against a Qwen3.8 preset score 1/5 for reasons
+unrelated to the KV cache, and a retracted 262,144 claim that allocated cleanly
+and would have died on the first real prompt.
+
+---
+
 ## Real-world testing
 
 Throughput, VRAM and recall are here. Whether the models can actually **do a
