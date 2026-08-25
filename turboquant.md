@@ -592,6 +592,17 @@ passed a 122k needle and then died at 147k. By that standard the one surviving
 recommendation-grade config (`IQ4_XS`+`turbo2`+`-ub 256`) is validated only to
 122k and should be assumed to fail deeper.
 
+### The 165-commit lag breaks a working model
+
+`GLM-4.7-Flash-UD-Q4_K_XL` (arch `deepseek2`) **core dumps** on the fork at
+trivial settings — `-p 512 -n 32` is enough. The identical command on `build/`
+(b10463, `7c35571e5`) runs fine: 1027.0 pp512 / 30.53 tg32.
+
+So the version skew is not an abstract maintenance concern, it is a model that
+works today and would stop working if the router were pointed at the fork. Any
+future evaluation of this fork should run the whole preset lineup, not just the
+model under test.
+
 ## Other open caveats
 
 * **#294** — turbo K-cache flash attention spills 295-720 VGPRs at head size
