@@ -2564,27 +2564,37 @@ the slowest possible setting.
 
 ## TurboQuant: 2-4 bit KV cache (experimental, not a preset)
 
-Reaching 128k on this card currently costs a **quantization tier**: `IQ4_XS` is
-the 32k preset, while 64k and 128k drop to `Q3_K_XL` because the smaller trunk
-is what buys the context. TurboQuant's Walsh-Hadamard-rotated KV types remove
-that trade — measured here, `Qwen3.8-27B-UD-IQ4_XS-v3` runs at **131,072** with
-`turbo2` and `-ub 256`, surviving a real 121,836-token prefill at **5/5 needle**
-with 803 MiB free. The control matters: the same model at 131,072 with `q4_0`
-**cannot even allocate its compute buffers**, so the KV format is what buys the
-tier, not the ubatch change.
+**Tested and rejected — keep `Q3_K_XL` + `q4_0` at 128k.** TurboQuant's
+Walsh-Hadamard-rotated KV types compress the cache far past `q4_0` and really do
+change what fits: `Qwen3.8-27B-UD-IQ4_XS-v3` runs at **131,072** with `turbo2`
+and `-ub 256`, where the same model with `q4_0` cannot even allocate its compute
+buffers. It passes 5/5 needle and 5/5 semantic at ~121k.
 
-Read it as a **VRAM tool, not a speed tool** — roughly `q8_0` speed at a third
-of `q8_0`'s size. (`turbo3` looks 21% faster than `q4_0` at depth, but Gemma 4
-benched against `q8_0` shows −2.5%; the gain is `q4_0`'s penalty being
-recovered, not turbo being fast.)
+It is still the wrong trade, and only KL-divergence shows why:
 
-It is **not merged into llama.cpp** and runs only from a fork, so nothing here
-is wired into `switch-model.sh`. [`turboquant.md`](turboquant.md) has the
-numbers, the build, the RDNA4 confirmation, and the gotchas — including one
-environment variable that silently overrides `-ctk`, three harness faults that
-make **any** `needle-test.py` run against a Qwen3.8 preset score 1/5 for reasons
-unrelated to the KV cache, and a retracted 262,144 claim that allocated cleanly
-and would have died on the first real prompt.
+| KV cache | Mean KLD vs f16 |
+|---|---|
+| `q8_0` | 0.000744 |
+| `q4_0` | 0.003901 |
+| `turbo3` | 0.009823 |
+| `turbo2` | **0.030743** |
+
+`turbo2`'s **cache** costs more distribution quality (0.0307 / 92.34% top-1)
+than this model's entire **weight** quantization does (`Q3_K_XL-v3`: 0.0263 /
+92.94%). Even granting `IQ4_XS` a perfect weight cost, the combination loses to
+what is already running. Both retrieval tests scored 5/5 on the rejected config
+and were blind to a 7.9x divergence gap — **needle and semantic recall are
+regression alarms, not quality instruments.**
+
+It is also **not merged into llama.cpp** and runs only from a fork, so nothing
+is wired into `switch-model.sh`. [`turboquant.md`](turboquant.md) has the full
+record — the build, the RDNA4 confirmation, an environment variable that
+silently overrides `-ctk`, three harness faults that make **any**
+`needle-test.py` run against a Qwen3.8 preset score 1/5 for reasons unrelated to
+the KV cache, a retracted 262,144 claim that allocated cleanly and would have
+died on the first real prompt, and one genuinely free finding: **`gemma4:32k`
+ships `-ncmoe 8` but runs +14% prompt / +12% generation at `-ncmoe 4` on stock
+`q8_0`**, no fork required.
 
 ---
 

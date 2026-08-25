@@ -4,25 +4,30 @@ Measured 2026-08-25 on the RX 9070 XT (gfx1201, RDNA4, 16,304 MiB) described in
 [README.md](README.md). Everything here is from this box; nothing is quoted
 from the project's own claims without being re-measured.
 
-**Verdict up front: TurboQuant buys this card one quantization tier at 128k, and
-that is the whole reason to care.** `Qwen3.8-27B-UD-IQ4_XS-v3` runs at 131,072
-with `turbo2` and `-ub 256` — verified under a real 121,836-token prefill, 5/5
-needle, 803 MiB free. The same model at 131,072 with `q4_0` **cannot even
-allocate its compute buffers**. So the tier upgrade is caused by TurboQuant, not
-by the ubatch change; the control was run.
+**Verdict up front: do not adopt it. Measured by KL-divergence, `turbo2` costs
+more distribution quality than the entire weight quantization of `Q3_K_XL`, and
+`turbo3` is 2.5x worse than plain `q4_0`.** Keep `Q3_K_XL` + `q4_0` at 128k.
 
-The same lever pays off differently on an MoE: Gemma 4 reaches `-ncmoe 2` with
-`turbo2`, which `q8_0` cannot allocate at all, worth +8% prompt / +12%
-generation over the best `q8_0` configuration. Note that most of Gemma's
-available headroom — `-ncmoe 8 → 4`, +14% / +12% — needs no fork at all and is
-free in the current setup today.
+The capacity results are real and reproducible — `IQ4_XS` genuinely fits at
+131,072 with `turbo2` where `q4_0` cannot allocate at all, and it passes 5/5
+needle *and* 5/5 semantic at ~121k. It is still the wrong trade, because those
+retrieval tests saturate and cannot see what KLD sees. **This file spent most of
+its length recommending a configuration that the last measurement overturned.**
+The history is kept deliberately: every intermediate claim looked well-supported
+at the time.
 
-Speed is a much weaker story than an earlier draft of this file claimed — see
-[Correction](#correction-the-21-generation-claim-was-baseline-shopping). Treat
-TurboQuant as a **VRAM tool, not a speed tool**: roughly `q8_0` quality-of-life
-at a third of the size. Every gain it appears to produce should be checked
-against a stock-KV control at the same settings; twice in this file that control
-reassigned the credit.
+| | Mean KLD vs f16 KV |
+|---|---|
+| `q8_0` | 0.000744 |
+| `q4_0` | 0.003901 |
+| `turbo3` | 0.009823 |
+| `turbo2` | **0.030743** |
+| *(reference: `Q3_K_XL-v3` **weights** vs BF16, from README.md)* | *0.0263* |
+
+Treat TurboQuant as a **VRAM tool with a real and previously unmeasured quality
+price** — not the free win the compression ratios suggest. If VRAM is the only
+binding constraint and quality genuinely does not matter, it works. On this box,
+at 128k, it does not pay.
 
 ---
 
@@ -256,11 +261,19 @@ someone prefills it.
 +21% generation, and 1,354 MiB free against 631 — more than double the headroom,
 which is exactly the margin that gets eaten when a browser or Resolve is open.
 
-### The result that matters: a quantization tier at 128k
+### The capacity result — real, reproducible, and NOT worth adopting
+
+> **Superseded by the [KL-divergence measurement](#kl-divergence-the-measurement-that-reversed-the-recommendation).**
+> Everything in this section is accurate: the fit is real, the control is
+> sound, and the retrieval scores are genuine. It is kept because the *fit*
+> findings stand on their own and the `-ub` lesson is worth having. But the
+> conclusion it originally carried — adopt this config — was wrong, and KLD is
+> why. Read it as "what TurboQuant can make fit", not "what to run".
 
 Without TurboQuant this card must **drop a quant tier to reach 128k**. `IQ4_XS`
 is the 32k preset; `Q3_K_XL` is what 64k and 128k run, because the smaller
-trunk is what buys the context. TurboQuant removes that trade.
+trunk is what buys the context. TurboQuant removes that constraint — at a
+quality price that was not measured until later.
 
 All rows: `-ngl 99 -b 2048 -fa on -c 131072`, `TURBO_AUTO_ASYMMETRIC=0`, needle
 at `--depth 114000` (~121,836 actual tokens).
@@ -425,23 +438,84 @@ comparison.
 
 ## What has NOT been established
 
-**`turbo2` KLD.** `turbo2` on the quant-tier config now passes both retrieval
-instruments — 5/5 needle at 121,836 and 5/5 semantic at 117,170 — so the
-recommendation is no longer resting on a single test. What it still lacks is
-KL-divergence against an f16-KV base at long context, which is the only
-instrument here that does not saturate. Both retrieval tests are pass/fail and
-both arms score 5/5, so they establish *no regression* and cannot rank.
-
-Open issue #305 also reports that *any* quantized K cache badly degrades
+Open issue #305 reports that *any* quantized K cache badly degrades
 attention-sink models such as gpt-oss, and `turbo2` is the most aggressive K
 quantizer available. Nothing in this file tests that class of model.
 
-**Ranking `turbo3` against `q4_0`.** The recall tests saturate at 5/5 for both,
-so they establish no-regression and stop there. Separating them needs KLD
-against an f16-KV base **at long context** — `llama-perplexity` is now built in
-the fork tree, and `kld/wikitext-2-raw/` is already on disk. Note the base
-logits file for a long-context run is large; that is the reason it was not done
-in the same sitting.
+---
+
+## KL-divergence: the measurement that reversed the recommendation
+
+Both retrieval tests saturate — `turbo2` and `q4_0` each score 5/5, which
+establishes no-regression and cannot rank. KLD does not saturate: it compares
+the full 151,936-entry output distribution token by token, so it returns a
+continuous number.
+
+**Method.** Reference is the *same weights* with **f16 KV**, which isolates the
+KV quantizer from everything else. `-c 32768`, `--chunks 2` (65,536 tokens of
+wikitext-2), `Qwen3.8-27B-UD-Q3_K_XL-v3`, base PPL 6.1684 ± 0.0798. 32,768 is
+the deepest f16 KV that fits on this card (2,048 MiB of cache + 12,537 of
+weights); the base logits file is 16.3 GB at ~297 KB per token evaluated.
+
+| KV | bits/val | Mean KLD | 99.9% KLD | Same top-p | RMS Δp | PPL | ΔPPL |
+|---|---|---|---|---|---|---|---|
+| `q8_0` | 8.5 | **0.000744** ± 0.000014 | 0.0178 | 98.54% | 0.78% | 6.1699 | +0.02% |
+| `q4_0` | 4.5 | **0.003901** ± 0.000059 | 0.0830 | 97.03% | 1.73% | 6.1858 | +0.28% |
+| `turbo3` | 3.25 | **0.009823** ± 0.000098 | 0.2116 | 95.24% | 2.68% | 6.2241 | +0.90% |
+| `turbo2` | 2.0 | **0.030743** ± 0.000337 | 0.7045 | 92.34% | 4.72% | 6.3607 | +3.11% |
+
+**`turbo3` is 2.5x worse than `q4_0`; `turbo2` is 7.9x worse.**
+
+### Why this kills the quant-tier upgrade
+
+README.md records `Q3_K_XL-v3`'s **weight** quantization at **0.0263 mean KLD /
+92.94% top-1** against BF16. `turbo2`'s **cache alone** costs **0.0307 / 92.34%**
+— more than the entire weight quantization of the model.
+
+The tier upgrade was `IQ4_XS` + `turbo2` versus `Q3_K_XL` + `q4_0`: better
+weights bought with a worse cache. The arithmetic does not work.
+
+| Config @131,072 | Weight cost | Cache cost | Combined |
+|---|---|---|---|
+| `Q3_K_XL-v3` + `q4_0` (current) | 0.0263 | 0.0039 | ~0.030 |
+| `IQ4_XS-v3` + `turbo2` | < 0.0263 | 0.0307 | > 0.031 |
+
+Even granting `IQ4_XS` a *perfect* 0.0 weight cost — impossible, it is a 4-bit
+quant — `turbo2`'s cache alone already exceeds the current configuration's
+total. **The trade cannot be won.** Stay on `Q3_K_XL` + `q4_0`.
+
+Two things make this conclusion stronger rather than weaker:
+
+* **It is measured at 32k, and the preset runs at 131,072.** KV quantization
+  error compounds with depth, so 128k can only be worse than these numbers.
+  There is no f16 reference at 131,072 on a 16GB card, so this cannot be
+  measured directly — but the direction is not in doubt.
+* **PPL would have hidden it.** `turbo3` moves perplexity by +0.90%, which
+  matches the TurboQuant paper's "~1% PPL loss" claim almost exactly. Over the
+  same run, top-1 agreement fell 1.8 points and KLD tripled. Perplexity scores
+  only the token that actually came next; it is close to blind to redistribution
+  among the rest of the vocabulary, which is precisely what a rotated 3-bit
+  codebook does.
+
+### What retrieval testing missed, and why that matters
+
+`turbo2` scored **5/5 needle at 121,836** and **5/5 semantic at 117,170** — on
+the very configuration KLD now rejects. Both tests were run properly and both
+results are real. They simply cannot distinguish a config at 0.0039 KLD from one
+at 0.0307 when both retrieve a planted fact correctly.
+
+The lesson generalises past TurboQuant: **needle and semantic recall are
+regression alarms, not quality instruments.** They answer "is long-range
+attention broken", and nothing finer. Any claim of the form "quantization X is
+as good as Y" needs KLD or an equivalent distributional measure.
+
+**KLD at 131,072.** The KLD above is measured at 32,768, because f16 KV does not
+fit at 131,072 on a 16GB card and there is therefore no reference to compare
+against. Since KV error compounds with depth, the real 128k penalty is larger
+than the numbers reported here — but by how much is unmeasured. Closing that gap
+needs a smaller model where f16 KV fits deep (Qwen3.5-9B would reach 128k+),
+trading model relevance for depth. Not worth doing unless the conclusion is
+being challenged, since the direction already decides the question.
 
 **Coverage — four models, and only two carry conclusions:**
 
