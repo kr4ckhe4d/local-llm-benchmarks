@@ -532,6 +532,66 @@ degrade with *any* quantized K), the MoE models, or Qwen3-Coder-Next. Head dim
 256 and hybrid attention — Qwen3.8's properties, and what most of this file
 rests on — are exactly what issue #294 concerns.
 
+## Looking for a config where it *would* win — both candidates failed
+
+The 128k rejection is quality-based, so the obvious follow-up is whether some
+other preset wins on capacity alone, where quality objections carry less weight.
+Two candidates were picked as the best cases on this box. Both lost.
+
+**Candidate 1 — Qwen3-Coder-Next at 1M.** Already maximally compromised
+(`q4_0` KV, `-ub 256`, `-ncmoe 46`), so `turbo3`'s ~1,920 MiB of KV savings
+could be spent pulling expert layers back off DDR4. Identical 122k prefill
+through `llama-server`, same instrument both arms:
+
+| @1M | VRAM | Free | Prefill | Needle |
+|---|---|---|---|---|
+| `q4_0`, `-ncmoe 46` (shipping) | 14,305 | 1,999 MiB | **179.8 tok/s** | 5/5 |
+| `turbo3`, `-ncmoe 44` | 14,015 | 2,289 MiB | 163.5 tok/s (**-9%**) | 5/5 |
+
+turbo3 had *more* free VRAM and *two fewer* CPU-resident expert layers and was
+still slower. The VRAM saving is real — it just cannot be converted into speed.
+
+**Candidate 2 — Qwen3.5-27B-Uncensored at 256K**, which README.md records as
+unreachable at any KV quant. Still unreachable: the compute buffer has a
+~1,192 MiB floor that neither `-ub` nor `-b` meaningfully moves
+(`-b 2048 → 512` changed it by *zero*), and weights + 2-bit KV + that floor
+exceeds the card. 192K allocates — at 11 MiB free — and then **core-dumps
+147,456 tokens into a prefill**. A context that can be allocated but not filled
+is worth nothing next to a solid 128K on `q4_0`.
+
+### Why it loses even where VRAM is the binding constraint
+
+TurboQuant dequantises through a Walsh-Hadamard rotation on every KV access.
+That compute scales with cache traffic, which scales with context — so the
+overhead is largest exactly where the compression is most needed. On Gemma 4 at
+fixed `-ncmoe` it cost 2.5-2.9% generation; at 1M on Coder-Next it cost 9% of
+prefill, enough to swallow two expert layers' worth of gain.
+
+**This is structural, not a tuning failure.** The trade is "spend compute to
+save VRAM", and on a 16GB card attached to a GPU this fast, the compute is worth
+more than the VRAM. It would read differently on a card that is bandwidth-rich
+and capacity-poor, or where the alternative is genuinely not running the model.
+
+### The compute buffer grows with prompt length
+
+README.md states the compute buffer "is sized from `-ub` at load time and does
+not grow with prompt length". That holds for stock quants; it does **not** hold
+for the turbo path. Four separate configs allocated cleanly and then died
+mid-prefill:
+
+| Config | Free at load | `-ub` | Died at |
+|---|---|---|---|
+| `IQ4_XS`+`turbo3` @131k | 304 MiB | 512 | 20,480 (17%) |
+| `IQ4_XS`+`turbo2` @131k | 700 MiB | 512 | 36,864 (30%) |
+| `Q3_K_XL`+`turbo2` @262k | 94 MiB | 256 | 30,720 (25%) |
+| Uncensored+`turbo2` @192k | 11 MiB | 256 | 147,456 (78%) |
+
+Lower `-ub` slows the growth rate but does not stop it. **A prefill that
+completes at one depth proves nothing about a deeper one** — the 192K config
+passed a 122k needle and then died at 147k. By that standard the one surviving
+recommendation-grade config (`IQ4_XS`+`turbo2`+`-ub 256`) is validated only to
+122k and should be assumed to fail deeper.
+
 ## Other open caveats
 
 * **#294** — turbo K-cache flash attention spills 295-720 VGPRs at head size
