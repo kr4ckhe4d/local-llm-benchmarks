@@ -55,10 +55,13 @@ when host bandwidth looks like the bottleneck, and on this board it is not
 a lever. D.O.C.P is enabled at the G.Skill kit's DDR4-3200 16-18-18-38
 profile, which is the correct setting for the slower of two mismatched kits.
 
-**One backend now: `build/`, `GGML_HIP=ON` (`AMDGPU_TARGETS=gfx1201`).**
-The Vulkan build was retired on 2026-08-17. The measurements below are why it
-existed and why it stopped being worth keeping — they are kept because they are
-the evidence, not because the routing still applies.
+**One backend in production: `build/`, `GGML_HIP=ON` (`AMDGPU_TARGETS=gfx1201`).**
+`switch-model.sh` routed every model to ROCm on 2026-08-17 and still does —
+`BACKEND_OVERRIDE` is an empty hook, no preset points at Vulkan. `build-vulkan/`
+itself was deleted that day but has since been rebuilt more than once (same
+commit as `build/` each time) to spot-check new models against the routing
+decision — see the "Re-verified" notes below. It is not kept installed
+permanently; it is a testing tool, rebuilt on demand and removed after.
 
 ---
 
@@ -76,6 +79,7 @@ file got that wrong):
 | GPT-OSS-20B, shallow | MXFP4 | **5529.9** / 148.5 | 4952.0 / **180.8** | *was Vulkan* |
 | GPT-OSS-20B, @131k depth | MXFP4 | **1035.2** / **70.5** | 1063.7 / 22.3 | **ROCm** |
 | Qwen3.8-27B, dense (`-ngl 99`) | Q3_K_XL | **1329.4** / **30.64** | 1161.8 / 16.91 | ROCm |
+| Laguna XS.2 33B-A3B (`-ncmoe 16`) | Q4_K_M | **1244.4** / **55.28** | 661.7 / 48.19 | ROCm |
 
 **K-quants (Q4_K_M) → ROCm**, unambiguously: 1.8-2.1x prompt, and it wins
 generation too once flash attention is on (Gemma 50.3 vs 48.0).
@@ -116,15 +120,23 @@ note the generation share of that comes from `-ncmoe 40 → 24`, not the backend
 
 **All Vulkan numbers at the bottom of this file are superseded.**
 
-### Re-verified on Qwen3.8-27B (2026-08-25)
+### Re-verified since retirement (2026-08-25)
 
-`build-vulkan/` was rebuilt from scratch (`cmake -DGGML_VULKAN=ON`, same
-checkout, same commit `7c35571e5` as `build/` — so unlike the drift that
-partly motivated the original retirement, this was not a version-skew
-comparison) specifically to check a dense K-quant model that hadn't been
-tested under Vulkan before. Result: ROCm wins prompt by 14% (1329.4 vs
-1161.8) and **generation by 81%** (30.64 vs 16.91) — the widest generation
-gap of any model in the table above. The retirement decision holds.
+`build-vulkan/` gets rebuilt from scratch on demand (`cmake -DGGML_VULKAN=ON`,
+same checkout/commit as `build/` each time — so unlike the drift that partly
+motivated the original retirement, these are not version-skew comparisons),
+spot-checked against a model, then removed again. Two models tested so far
+that hadn't been benched under Vulkan before:
+
+* **Qwen3.8-27B**, dense Q3_K_XL: ROCm wins prompt by 14% (1329.4 vs 1161.8)
+  and **generation by 81%** (30.64 vs 16.91) — the widest generation gap of
+  any model in the table above.
+* **Laguna XS.2 33B-A3B**, Q4_K_M (`-ncmoe 16`): ROCm wins prompt by **88%**
+  (1244.4 vs 661.7) — the widest prompt gap of any model in the table — and
+  generation by 15% (55.28 vs 48.19).
+
+Both confirm the routing decision: ROCm stays the only backend `switch-model.sh`
+spawns.
 
 ---
 
