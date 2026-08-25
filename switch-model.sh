@@ -47,7 +47,6 @@ declare -A MODEL_FILE=(
   [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
-  [qwen3.8-xxs]="Qwen3.8-27B-UD-IQ3_XXS-v3.gguf"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored-Q8_0.gguf"
   [glm4.7-flash]="GLM-4.7-Flash-UD-Q4_K_XL.gguf"
@@ -62,7 +61,6 @@ declare -A MODEL_LABEL=(
   [qwen3-coder]="Qwen3-Coder-Next"
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
-  [qwen3.8-xxs]="Qwen3.8-27B (IQ3_XXS)"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored"
   [glm4.7-flash]="GLM-4.7-Flash"
@@ -78,7 +76,6 @@ declare -A MODEL_BACKEND=(
   [qwen3-coder]="build"          # Q4_K_M: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL v3: ROCm
-  [qwen3.8-xxs]="build"          # IQ3_XXS v3: ROCm
   [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
   [qwen3.5-9b-uncensored]="build" # Q8_0: ROCm
   [glm4.7-flash]="build"          # UD-Q4_K_XL: ROCm
@@ -99,9 +96,6 @@ declare -A BACKEND_OVERRIDE=()
 # natively; none currently on disk does.
 declare -A CTX_TOKENS=(
   [16k]=16384 [32k]=32768 [64k]=65536 [128k]=131072 [256k]=262144
-  # 192k is Qwen3.8-27B at UD-IQ3_XXS — the most context that fits on this card
-  # for that model. Not a power-of-2 bucket, same as 200k below.
-  [192k]=196608
   [512k]=524288 [1m]=1048576
   # GLM-4.7-Flash's native ceiling (202752) doesn't land on any bucket above —
   # it's not a power-of-2 multiple like every other model's native max. 200k is
@@ -207,15 +201,6 @@ declare -A CONFIG=(
   # both faster AND roomier than the old v2/ubatch-256 pairing's 281 MiB.
   ["qwen3.8:64k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
   ["qwen3.8:128k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-
-  # Qwen3.8-27B one quant tier down (UD-IQ3_XXS, 3.148 BPW vs 3.802). Buys
-  # 2,099 MiB of trunk, which buys 64K more context. 192k measures 15,355 MiB
-  # with 672 MiB free — more headroom than the 128k Q3_K_XL preset has.
-  # Verified at depth: 5/5 needle at 189,482 and 5/5 semantic at 186,695, GTT
-  # flat. 256k fails to allocate at both ubatch 512 and 256, so native 262144
-  # stays out of reach. Prefill is the cost: 189K tokens took 686s cold.
-  ["qwen3.8-xxs:128k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.8-xxs:192k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
   # Qwen3.5-27B-Uncensored (HauhauCS, Aggressive) — DENSE 27B, arch qwen35, the
   # same architecture as qwen3.8 above one base version back. Same rules: no
@@ -351,7 +336,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 qwen3-coder muse-glimmer qwen3.8 qwen3.8-xxs qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
+  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 qwen3-coder muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"
