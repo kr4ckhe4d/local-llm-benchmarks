@@ -75,6 +75,7 @@ file got that wrong):
 | Gemma 4-26B-A4B (`-ncmoe 8`) | Q4_K_M | **1949.9** / **50.3** | 1064.7 / 48.0 | ROCm |
 | GPT-OSS-20B, shallow | MXFP4 | **5529.9** / 148.5 | 4952.0 / **180.8** | *was Vulkan* |
 | GPT-OSS-20B, @131k depth | MXFP4 | **1035.2** / **70.5** | 1063.7 / 22.3 | **ROCm** |
+| Qwen3.8-27B, dense (`-ngl 99`) | Q3_K_XL | **1329.4** / **30.64** | 1161.8 / 16.91 | ROCm |
 
 **K-quants (Q4_K_M) → ROCm**, unambiguously: 1.8-2.1x prompt, and it wins
 generation too once flash attention is on (Gemma 50.3 vs 48.0).
@@ -114,6 +115,16 @@ Combining the ROCm switch with `-ncmoe`/`-ub` tuning gives **4.8x prompt /
 note the generation share of that comes from `-ncmoe 40 → 24`, not the backend.
 
 **All Vulkan numbers at the bottom of this file are superseded.**
+
+### Re-verified on Qwen3.8-27B (2026-08-25)
+
+`build-vulkan/` was rebuilt from scratch (`cmake -DGGML_VULKAN=ON`, same
+checkout, same commit `7c35571e5` as `build/` — so unlike the drift that
+partly motivated the original retirement, this was not a version-skew
+comparison) specifically to check a dense K-quant model that hadn't been
+tested under Vulkan before. Result: ROCm wins prompt by 14% (1329.4 vs
+1161.8) and **generation by 81%** (30.64 vs 16.91) — the widest generation
+gap of any model in the table above. The retirement decision holds.
 
 ---
 
