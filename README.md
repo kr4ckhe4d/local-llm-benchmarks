@@ -2646,6 +2646,35 @@ ships `-ncmoe 8` but runs +14% prompt / +12% generation at `-ncmoe 4` on stock
 
 ---
 
+## Instella-MoE-16B-A3B-Think (experimental fork, not a preset)
+
+**Tested and blocked — not by quality, by a broken control.** Like TurboQuant,
+this architecture (`instella-moe`) is not in mainline llama.cpp and only runs
+from a fork ([`csabakecskemeti/llama.cpp`](https://github.com/csabakecskemeti/llama.cpp),
+branch `instella-moe`). Unlike TurboQuant's 165-commit-behind fork, this one is
+freshly rebased onto mainline with just four commits on top — a much smaller
+bet, and it built and loaded cleanly, no `-fa` support for this arch.
+
+The blocker: `enable_thinking:false` and `--reasoning-budget` — the two knobs
+that control every other thinking model in this file — are both silent no-ops
+here. The API response never includes a `reasoning_content` field, so
+chain-of-thought floods straight into `content` uncapped. Every probe with a
+realistic `max_tokens` (700-2400 across this repo's suite) gets cut off
+mid-reasoning before producing an answer: code quality scored **0/50**, tool
+calling fired **0/2** calls, and CDN freshness fell to **9/51 (18%)** — none of
+that is a measurement of the model's actual ability, it is a measurement of a
+token budget being consumed by unsuppressable thinking. VRAM fits cleanly at
+native 32,768 (13,361 MiB, 1,749 free), and generation runs a fast, flat ~100
+tok/s once it does produce output.
+
+Not wired into `switch-model.sh` — no mainline support, a second toolchain,
+and no way yet to get a bounded-length answer out of it.
+[`instella-moe.md`](instella-moe.md) has the full record, including the
+verbatim truncated response that pinned down the missing `reasoning_content`
+splitting.
+
+---
+
 ## Real-world testing
 
 Throughput, VRAM and recall are here. Whether the models can actually **do a
