@@ -981,6 +981,15 @@ within 1% before it was measured.
 
 ### Gemma 4-E2B — 9.3GB, dense, 35 layers, 1 KV head
 
+**Deleted from disk** — kept here because the measurements stand. Also
+pulled out of `switch-model.sh` and `models-preset.ini` entirely (the way
+Nemotron and Devstral were), rather than left dangling pointing at a file
+that no longer exists. Re-downloading is `hf download
+unsloth/gemma-4-E2B-it-GGUF gemma-4-E2B-it-BF16.gguf` — see the top of this
+section for the exact repo — and re-wiring it needs the
+`--reasoning-budget 1024` fix documented below; the version that shipped
+first did not have it and returned empty content through the router.
+
 `unsloth/gemma-4-E2B-it-GGUF`, BF16 — full precision, no quantisation. Arch is
 `gemma4`, and unlike the 26B-A4B MoE sibling above this one reports
 `enable_moe_block: false` — dense. "E2B" is Google's *effective*-parameter
@@ -2570,7 +2579,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | GPT-OSS-20B | 21B | ~3.6B | MoE | MXFP4 | 11.3GB | yes |
 | Qwen3.6-35B-A3B | 35B | ~3B | MoE hybrid, 40L | UD-Q4_K_M | 20.6GB | yes |
 | Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | UD-Q4_K_M | 15.8GB | yes |
-| Gemma 4-E2B | ~4.66B raw (E2B effective) | ~4.66B | Dense, 35L | BF16 | 9.3GB | yes |
+| Gemma 4-E2B | ~4.66B raw (E2B effective) | ~4.66B | Dense, 35L | BF16 | 9.3GB | deleted |
 | Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | yes |
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL (**Dynamic 2.0**) | 12.5GB | yes |
