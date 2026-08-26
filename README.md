@@ -2564,6 +2564,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL (**Dynamic 3.0**) | 12.2GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-IQ4_XS (Dynamic 3.0) | 13.3GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-IQ3_XXS (Dynamic 3.0) | 10.2GB | yes |
+| Instella-MoE-16B-A3B-Think | 15.86B | ~3B | MoE, fork-only arch | Q4_K_M | 9.75GB | deleted |
 | Nemotron-3-Nano-30B-A3B | 31.6B | ~3.5B | MoE Mamba2 hybrid, 52L | UD-Q4_K_XL | 22.8GB | deleted |
 | Devstral Small 2 24B | 23.6B | 23.6B | Dense, full attn, 40L | Q4_K_M | 14.3GB | deleted |
 | Qwen3-Coder-30B-A3B | 30.5B | ~3B | MoE, full attn, 48L | Q8_0 | 32.5GB | deleted |

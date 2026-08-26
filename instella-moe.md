@@ -3,6 +3,13 @@
 Measured 2026-08-26 on the RX 9070 XT (gfx1201, RDNA4, 16,304 MiB) described in
 [README.md](README.md).
 
+**Both the GGUF and the fork build were deleted from disk same day** — the
+model file (`~/llama.cpp/models/Instella-MoE-16B-A3B-Think-Q4_K_M.gguf`,
+10.47GB) and the `~/llama-instella/` build tree (1.2GB). Kept here because the
+measurements below stand; nothing in this section changes if it's
+re-downloaded. Re-cloning the fork and re-pulling the GGUF (see Build and The
+model, below) reproduces this exactly.
+
 **Verdict up front: not usable here yet, and not for a quality reason.** The
 only fork that loads this architecture at all does not wire up reasoning-content
 splitting for it. `enable_thinking:false` and `--reasoning-budget` — the two
@@ -170,8 +177,8 @@ this file do.
 * Not wired into `switch-model.sh` or `models-preset.ini` — it is not on
   mainline, needs a second toolchain, and cannot currently produce a
   bounded-length answer to a non-trivial prompt.
-* The GGUF and the built fork tree are kept on disk
-  (`~/llama.cpp/models/Instella-MoE-16B-A3B-Think-Q4_K_M.gguf`,
-  `~/llama-instella/`) in case the fork gets the reasoning-format fix upstream
-  and this is worth re-running with the actual coding/tool-calling ability
-  finally observable.
+* Deleted from disk (see top of this file) rather than kept resident, since
+  neither the GGUF nor the fork tree is usable as-is. If the fork gets the
+  reasoning-format fix upstream, both are a re-download and a re-clone away —
+  see Build and The model, above — and worth re-running to finally observe
+  the actual coding/tool-calling ability.
