@@ -2666,10 +2666,24 @@ docker run -d --network=host \
   -e OPENAI_API_BASE_URL=http://127.0.0.1:8090/v1 \
   -e OPENAI_API_KEY=local \
   -e ENABLE_OLLAMA_API=false \
+  -e WEBUI_SECRET_KEY="$(cat ~/.owui_secret_key)" \
   --name open-webui \
   --restart always \
   ghcr.io/open-webui/open-webui:main
 ```
+
+**`WEBUI_SECRET_KEY` must be pinned, or every update logs everyone out.**
+`start.sh` auto-generates this key on first boot when the env var is unset,
+and saves it to `/app/backend/.webui_secret_key` — **outside** the mounted
+`/app/backend/data` volume (checked in the image's own `start.sh`, not
+assumed). `docker rm` during an update destroys that file along with the
+container's writable layer, so the next boot silently generates a *new*
+random key. That key signs every login session, so a rotation force-logs
+every user out — which looks exactly like "the update wiped my settings"
+even though the database (chats, admin config, functions) is completely
+untouched in the volume the whole time. Generate one once
+(`openssl rand -base64 32 > ~/.owui_secret_key`) and pass it explicitly on
+every `docker run`; the update procedure below already assumes this.
 
 **`--network=host` is the part that matters.** It is what lets the container
 reach `llama-server` at `127.0.0.1:8090` — the same loopback the router binds.
@@ -2683,7 +2697,10 @@ serves without auth, so `local` is a placeholder. `ENABLE_OLLAMA_API=false`
 stops the UI probing for an Ollama backend that is not there.
 
 All chats, settings and uploads live in the named volume `open-webui`, not in
-the container. Updating therefore does not lose anything:
+the container. Updating therefore does not lose any *data* — but note the
+`WEBUI_SECRET_KEY` above: without it pinned, every update force-logs every
+user out even though the volume is fine, which is easy to mistake for data
+loss:
 
 ```bash
 docker pull ghcr.io/open-webui/open-webui:main
