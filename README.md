@@ -979,6 +979,53 @@ system RAM and VRAM stays roughly flat. That ratio also makes the fit
 predictable: `0.064*T + (40-N)*0.936*T/40 + KV` sized every row above to
 within 1% before it was measured.
 
+### Gemma 4-E2B — 9.3GB, dense, 35 layers, 1 KV head
+
+`unsloth/gemma-4-E2B-it-GGUF`, BF16 — full precision, no quantisation. Arch is
+`gemma4`, and unlike the 26B-A4B MoE sibling above this one reports
+`enable_moe_block: false` — dense. "E2B" is Google's *effective*-parameter
+label (MatFormer-style); the file itself is ~4.66B raw parameters at BF16
+(9,311,305,568 bytes / 2). Extreme GQA — **1 KV head** at `head_dim 256` —
+and only 7 of 35 layers keep a full KV cache (period-5: layers 4, 9, 14, 19,
+24, 29, 34; the rest are 512-token sliding window). KV is close to free,
+which makes this the cheapest context in the whole file.
+
+By far the lightest model tested here — the 9.3GB of BF16 weights alone are
+smaller than most of the *quantised* MoE models above. Native context
+131,072 fits whole with room to spare: no `-ncmoe` (dense, nothing to
+offload) and no KV quantisation needed anywhere.
+
+| Context | Extra flags | VRAM used | Free |
+|---|---|---|---|
+| 32K | `-ub 1024 -b 2048 -fa on` | 6,374 | 9,930 |
+| 131,072 *(native)* | `-ub 1024 -b 2048 -fa on` | 7,142 | 9,162 |
+
+Raw peak against a 1,194 MiB baseline; model-attributable is 5,180 / 5,948
+MiB respectively — under 6GB to hold the whole native context.
+
+700-token code prompt, temp 0.0, n=3: generation held flat at **~75 tok/s**
+(75.06 / 75.10 / 74.92) — the fastest generation of any model in this file,
+as expected for ~4.7B dense. Prompt processing was inconsistent run to run
+(395.5 → 133.1 → 136.1 tok/s); treat a single pp reading from this model with
+suspicion until re-checked.
+
+Native tool calling verified, single and parallel:
+`get_probe_token(seed=42)` → `PROBE-770487`; parallel → two token calls plus
+an `add_numbers` delegation, all arguments correct.
+
+**Coding quality is the weakest measured in this file.** 17/50 (34.0%) on the
+differential suite — below Laguna XS.2's 27/50, previously the floor — and
+two of seven tasks (`glob_match`, `shlex_split`) produced code that did not
+even parse (`SyntaxError`, 0/8 and 0/7). Unlike every quant/architecture
+tradeoff documented elsewhere in this file, this reads as the model simply
+being too small for the task — full BF16 precision rules out quantisation as
+the explanation.
+
+CDN freshness: 27/39 URLs resolve (69%), identical across all 3 runs — the
+same four dead URLs every time (`prop-types@15.8.1`, `recharts/umd`,
+`material-ui@latest`, `@mui/material@5/umd`), consistent with greedy decoding
+at `temperature 0.0`.
+
 ---
 
 ## Throughput
@@ -2510,6 +2557,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | GPT-OSS-20B | 21B | ~3.6B | MoE | MXFP4 | 11.3GB | yes |
 | Qwen3.6-35B-A3B | 35B | ~3B | MoE hybrid, 40L | UD-Q4_K_M | 20.6GB | yes |
 | Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | UD-Q4_K_M | 15.8GB | yes |
+| Gemma 4-E2B | ~4.66B raw (E2B effective) | ~4.66B | Dense, 35L | BF16 | 9.3GB | yes |
 | Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | yes |
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL (**Dynamic 2.0**) | 12.5GB | yes |
