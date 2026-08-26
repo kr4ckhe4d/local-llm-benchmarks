@@ -2761,3 +2761,67 @@ rather than click through it, install Caddy's root CA
 into the OS or browser trust store on each device that connects — optional,
 and only worth doing if the warning itself is the annoyance rather than the
 blocked APIs.
+
+### Web search returns stale results, and no backend can fix it
+
+**Symptom:** asked any model "what's the best X" for a fast-moving product
+category with no year specified, it answered from an old, well-ranked "best
+of"/buying-guide page — Canon DSLRs, specifically — without noticing the
+product line it was describing had since been discontinued. Saying "this is
+2026" got a better answer; saying it a second time ("X is too old") got the
+actually-current one. Three-plus turns to get there is not acceptable for
+something the model should get right on the first pass.
+
+**Root cause, checked in `open_webui/retrieval/web/*.py` inside the
+container, not assumed:** no search backend Open WebUI ships passes a
+recency/date-range parameter — checked DuckDuckGo, Tavily, Brave, Serper and
+Kagi. The DuckDuckGo case is sharpest: the underlying `ddgs` library supports
+a `timelimit` argument (day/week/month/year), and Open WebUI's connector
+simply never passes it —
+
+```python
+search_results = ddgs.text(query, safesearch='moderate', max_results=count, backend=backend or 'auto')
+```
+
+So switching search engine does not fix this; the gap is in Open WebUI's
+integration layer, not any one provider.
+
+**Two contributing bugs, both fixed, neither is the search backend:**
+
+1. `Admin Panel → Settings → Interface → Query Generation Prompt` was empty
+   (using the built-in default), which does inject `{{CURRENT_DATE}}` but
+   buries it as one line inside a long JSON-formatting instruction block. The
+   model that generates the search query is whatever chat model is
+   active — confirmed via `task.model.default = ""` and `Local Task Model:
+   Current Model` in the settings UI, so it is not a separate, weaker task
+   model. Fix: override the template with the date moved to the first line
+   and an explicit instruction to put the actual current year in the query
+   text, since that — not date-unawareness — was the observed failure mode.
+2. No global system prompt exists in this version of Open WebUI (checked all
+   ~280 keys in the `config` table; nothing like it is there), and the
+   per-model System Prompt field would mean setting it individually on every
+   router preset. Fix: a **Global Filter function**
+   (`openwebui-current-date-filter.py` in this repo) installed via
+   `Admin Panel → Functions`, injecting a system note with the real date into
+   every chat regardless of which model is selected.
+
+**What actually closed the gap was a third change, once the first two proved
+insufficient on their own:** the filter's note originally only asserted the
+current date. That was not enough — the model already knew the date and
+*still* took the stale buying-guide page at face value, because knowing the
+date does not by itself make a model suspicious of specific content. v1.1 of
+the filter adds an explicit instruction to treat "best/top/latest X" results
+as potentially superseded and check for discontinuation before presenting
+them as current. After that change, a bare prompt with no year and no
+pushback returned the correct, fully-hedged 2026 answer in one turn — 14
+searches and 8 fetches, up from 6 and 5, because it was now cross-referencing
+rather than trusting the top hit.
+
+**Not fixed, and not fixable by prompting:** `web.search.result_count` is 3
+by default (bumping it to ~5 gives more chance a current source appears in
+the mix, cheap insurance, not a fix). More fundamentally, no config change
+gives the search layer itself a freshness signal — the model is still doing
+all the recency judgement post-hoc, on ordinary-looking content, with a
+27B-class local model's reliability at that judgement call. Treat this as a
+standing limitation of the stack: for genuinely fast-moving categories,
+occasional pushback should still be expected, not a sign the setup is broken.
