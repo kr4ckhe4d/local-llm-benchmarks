@@ -1013,6 +1013,19 @@ Native tool calling verified, single and parallel:
 `get_probe_token(seed=42)` → `PROBE-770487`; parallel → two token calls plus
 an `add_numbers` delegation, all arguments correct.
 
+**It is a thinking model, and `--reasoning-budget` is not optional** — found
+the hard way after wiring this into `switch-model.sh`/`models-preset.ini`
+without it. Unlike Instella-MoE's fork (`instella-moe.md`), this chat
+template does correctly split `reasoning_content` from `content`, but with no
+budget cap the model spends the entire `max_tokens` on reasoning and returns
+`content: ""`, `finish_reason: "length"` — confirmed live through the router.
+Every probe below was already run through `run-suite.sh`, which always sets
+`--reasoning-budget 1024`, so the numbers are unaffected — but a request
+still needs `max_tokens` comfortably above that budget to see real output:
+verified `max_tokens 500` still returns empty content even with the budget
+set (never reaches the cutover), while `max_tokens 2000` produces a normal
+answer (2,319 chars reasoning, 5,684 chars real code, same prompt).
+
 **Coding quality is the weakest measured in this file.** 17/50 (34.0%) on the
 differential suite — below Laguna XS.2's 27/50, previously the floor — and
 two of seven tasks (`glob_match`, `shlex_split`) produced code that did not

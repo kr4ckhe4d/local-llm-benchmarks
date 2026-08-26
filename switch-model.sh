@@ -44,6 +44,7 @@ declare -A MODEL_FILE=(
   [laguna]="Laguna-XS-2.1-Q4_K_M.gguf"
   [laguna-q8]="Laguna-XS-2.1-Q8_0.gguf"
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
+  [gemma4-e2b]="gemma-4-E2B-it-BF16.gguf"
   [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
@@ -58,6 +59,7 @@ declare -A MODEL_LABEL=(
   [laguna]="Laguna XS.2"
   [laguna-q8]="Laguna XS.2 Q8_0"
   [gemma4]="Gemma 4-26B-A4B"
+  [gemma4-e2b]="Gemma 4-E2B"
   [qwen3-coder]="Qwen3-Coder-Next"
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
@@ -73,6 +75,7 @@ declare -A MODEL_BACKEND=(
   [laguna]="build"               # Q4_K_M: `laguna` arch, ROCm
   [laguna-q8]="build"            # Q8_0: near-lossless, 65-85% experts on CPU
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
+  [gemma4-e2b]="build"           # BF16: dense, 1 KV head, cheapest context here
   [qwen3-coder]="build"          # Q4_K_M: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL v3: ROCm
@@ -140,6 +143,22 @@ declare -A CONFIG=(
   ["gemma4:32k"]="-ncmoe 8"
   ["gemma4:128k"]="-ncmoe 12"
   ["gemma4:256k"]="-ncmoe 20"
+
+  # Gemma 4-E2B — BF16, DENSE (no -ncmoe), 35 layers, 1 KV head, only 7 of 35
+  # layers keep a full KV cache (period-5, the rest are 512-token sliding
+  # window). Native 131072 — the whole thing fits in under 6GB, so 128k here
+  # IS native, not a VRAM-capped subset the way it is for qwen3.8/qwen3.5. No
+  # KV quantisation needed at any context. Fastest generation on this card
+  # (~75 tok/s), but by far the weakest coding score (17/50) — see README.
+  #
+  # IS a thinking model — --reasoning-budget is not optional. Without it,
+  # confirmed live: a request through the router returned content="" with
+  # 500 tokens entirely consumed by reasoning_content, finish_reason=length.
+  # Even with the budget set, max_tokens has to clear ~1024 + real headroom
+  # or the response still ends mid-thought (verified: max_tokens 500 still
+  # empty, max_tokens 2000 produced real code).
+  ["gemma4-e2b:32k"]="-ub 1024 -b 2048 -fa on --reasoning-budget 1024"
+  ["gemma4-e2b:128k"]="-ub 1024 -b 2048 -fa on --reasoning-budget 1024"
 
   # Qwen3-Coder-Next — hybrid attention, 48 layers, 12 with KV. Native 262144.
   # ~47GB host RAM at these settings.
@@ -284,6 +303,9 @@ Models:
   laguna-q8      Laguna XS.2 Q8_0 33.2GB  same model, near-lossless. Same coding
                                           score, +25pts library knowledge, 30 tok/s
   gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L)
+  gemma4-e2b     Gemma 4-E2B      9.3GB   DENSE ~4.66B, 1 KV head, native 128k
+                                          fastest here (~75 tok/s), weakest
+                                          coding score (17/50) — full BF16
   qwen3-coder    Qwen3-Coder-Next 49.3GB  MoE 80B / 3B active, hybrid attn (48L)
                                           coding specialist, ~25 tok/s
   muse-glimmer   Muse Glimmer 30B 12.4GB  DENSE 30B, sliding-window attn (52L)
@@ -336,7 +358,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 qwen3-coder muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
+  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-e2b qwen3-coder muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"
