@@ -578,8 +578,12 @@ switch_model() {
   grep -iE 'kv_cache: size|recurrent: size' "$LOG" | tail -2 || true
 
   echo "==> Test request:"
+  # max_tokens is a cap, not a reservation — a trivial reply still costs three
+  # tokens. But every thinking model here spends the budget on reasoning FIRST,
+  # so a small cap truncates mid-think and returns empty content, which reads as
+  # a broken load when the server is fine. Keep this at 12k+.
   curl -s "http://localhost:${PORT}/v1/chat/completions" -H 'Content-Type: application/json' \
-    -d '{"messages":[{"role":"user","content":"Say hi in three words."}],"max_tokens":20}' \
+    -d '{"messages":[{"role":"user","content":"Say hi in three words."}],"max_tokens":12288}' \
     | python3 -c '
 import json, sys
 d = json.load(sys.stdin)

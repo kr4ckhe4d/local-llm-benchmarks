@@ -53,6 +53,11 @@ echo "    up. VRAM $(mib $VRAM) MiB, GTT $(mib $GTT) MiB"
 H="http://127.0.0.1:$PORT"
 
 # --- throughput, n=3 ---------------------------------------------------------
+# max_tokens stays 700 here on purpose: this measures tok/s over a FIXED
+# generation length, so 700 is the unit every throughput number in the
+# README was measured at. Raising it would redefine the benchmark, not fix
+# it -- truncation cannot bias a timing measurement. The quality harnesses
+# below use 12288 for the opposite reason; see needle-test.py.
 { hdr "throughput -- 700-token code-generation prompt, temperature 0.0, n=3"
   for i in 1 2 3; do
     curl -sS --max-time 900 "$H/v1/chat/completions" -H 'Content-Type: application/json' \
@@ -74,7 +79,7 @@ echo "    tool-calling.txt"
 
 # --- coding quality ----------------------------------------------------------
 { hdr "code quality -- differential vs stdlib, 50 checks, temperature 0.0"
-  "$HERE/code-quality-test.py" --host "$H" --label "$LABEL" --max-tokens 2400
+  "$HERE/code-quality-test.py" --host "$H" --label "$LABEL" --max-tokens 12288
 } > "$OUTDIR/code-quality.txt" 2>&1
 echo "    code-quality.txt"
 

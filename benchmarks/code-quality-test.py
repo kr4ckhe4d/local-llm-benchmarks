@@ -298,7 +298,11 @@ def main():
                     help="preset name, when talking to router mode on :8090")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--exec-timeout", type=int, default=30)
-    ap.add_argument("--max-tokens", type=int, default=1600)
+    # 12288, not 1600: reasoning counts against max_tokens and run-suite.sh
+    # serves with --reasoning-budget 1024, so the old default left 576
+    # tokens of content headroom on models that ignore enable_thinking.
+    # Headroom, not a fix for a known failure. See needle-test.py.
+    ap.add_argument("--max-tokens", type=int, default=12288)
     ap.add_argument("--show-code", action="store_true")
     a = ap.parse_args()
 

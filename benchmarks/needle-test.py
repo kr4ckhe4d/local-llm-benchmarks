@@ -98,9 +98,19 @@ def main():
         q = (hay + f"\n\n---\n\nUsing only the notes above, answer in one short "
                    f"sentence: what is {subject}?")
         t0 = time.time()
+        # max_tokens is 12288 deliberately. It is a CAP, not a reservation, so
+        # a short answer costs only what it costs. Reasoning tokens DO count
+        # against it, and two models here ignore `enable_thinking: false`
+        # entirely (Muse Glimmer uses reasoning_strength, GPT-OSS uses
+        # reasoning_effort), so on those the budget is shared with up to a
+        # full reasoning pass. 12k retires that interaction. Note the
+        # per-request `reasoning_budget_tokens` field is NOT a fallback:
+        # tested on b10463, budget 0 vs -1 gave byte-identical reasoning. The
+        # working model-agnostic control is server-side `--reasoning-budget`,
+        # which run-suite.sh already passes as 1024.
         body = {
             "messages": [{"role": "user", "content": q}],
-            "max_tokens": 60, "temperature": 0.0,
+            "max_tokens": 12288, "temperature": 0.0,
         }
         if a.no_think:
             body["chat_template_kwargs"] = {"enable_thinking": False}

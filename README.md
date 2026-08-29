@@ -1449,6 +1449,64 @@ Qwen chat-template variable and does nothing on Gemma 4. `--reasoning-budget 0`
 is the model-agnostic way to force an immediate end of thinking, and is what
 these numbers used.
 
+**`reasoning_budget_tokens` in the request body does not substitute for it.**
+The field exists in the server schema (`server-schema.cpp`) and the tags are
+auto-populated from the chat template, but on `b10463` sending `0` versus `-1`
+produced **byte-identical output** — 928 chars of reasoning either way on
+qwen3.8-27B, on a prompt built to overrun the budget. Measured, not assumed.
+The only control that works is server-side: `--reasoning-budget`, or
+`reasoning-budget =` in `models-preset.ini`.
+
+Which templates actually honour `enable_thinking`, read from the GGUFs on disk:
+
+| Honours `enable_thinking` | Ignores it (other knob) |
+|---|---|
+| GLM-4.7-Flash, Laguna XS.2 (both quants), Qwen3.5-27B/9B, Qwen3.6, Qwen3.8 (all), Gemma 4-26B-A4B | **Muse Glimmer** (`reasoning_strength`, defaults `high`), **GPT-OSS-20B** (`reasoning_effort`, defaults `medium`) |
+
+So the blanket claim above is too broad: Gemma 4-26B-A4B's template *does* carry
+`enable_thinking`, and sets `| default(false)` — thinking is off there unless
+asked for. Only two models on disk genuinely ignore the flag.
+
+**This did not invalidate the stored results, because `run-suite.sh` has always
+launched with `--reasoning-budget 1024`** (hardcoded in the server line, which
+is why it never appears in the `# flags :` header the probe files record). That
+is the server-side control, and it works on every model regardless of template.
+So reasoning was capped at 1024 tokens for every suite run ever generated.
+
+The residual risk is narrower: reasoning tokens still count against
+`max_tokens`, so a 1024-token cap ate into the budget. Worst case that left 176
+tokens of content headroom at tool-calling's old 1200, and 576 at
+code-quality's old 1600 default. Spot-checked on Muse Glimmer — the worst case,
+since it ignores the flag and defaults to `high` — both probes completed
+cleanly at the old budgets: valid parsing code at 2400, a correct tool call at
+1200. **No stored result in `benchmarks/` is known to be truncated.** The
+budgets moved to 12288 to retire the interaction, not to correct a known error.
+
+One stored result cannot be fully cleared, and it is worth naming. **Gemma
+4-E2B** is the only thinking model with a result folder. Its `code-quality` run
+lost two tasks whole — `glob_match` and `shlex_split`, both `DID NOT RUN —
+SyntaxError` — while the other five produced complete, parsing code (`csv_rows`
+7/7, `add_months` 6/6, and `parse_qsl` 0/7 by being *wrong*, not by failing to
+run). Those two are the longest functions in the suite, which is the shape
+truncation would take: under `run-suite.sh`'s `--reasoning-budget 1024` against
+`--max-tokens 2400`, worst case leaves 1,376 tokens of content. A reference
+`glob_match` measured ~900 tokens elsewhere, so it probably fit — but the run
+did not capture the generated code (`--show-code` was off), and the weights were
+deleted 2026-08-29, so this cannot be re-run. Treat that 17/50 as a floor rather
+than a measurement. Every other folder is on a model that emits no reasoning at
+all, so the question does not arise.
+
+The other exception is the deep needle/semantic probes at 60 and 120
+tokens. Those are hand-driven rather than run through `run-suite.sh`, so their
+server flags are not captured in the output files. At 60 tokens any reasoning at
+all yields empty content. Where the README names the flags used
+(`--reasoning-budget 0` for the Gemma 4 semantic-recall run) they are sound;
+where it does not, the artifact cannot confirm it either way.
+
+The throughput probe deliberately keeps `max_tokens: 700`: it measures tok/s
+over a fixed generation length, so 700 is the unit, and truncation cannot bias
+a timing measurement.
+
 **Qwen3.8-27B, spot-checked with `--no-think`:** needle 5/5 at 127,116 tokens
 on the 128K preset (cold prefill 339.2s, ~375 tok/s; cached follow-ups
 2.6-3.3s), and semantic recall 5/5 at 23,474 tokens. Not the full four-depth

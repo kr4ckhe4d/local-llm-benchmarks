@@ -19,9 +19,15 @@ TOOLS = [
  {"type":"function","function":{"name":"add_numbers","description":"Add two integers and return the sum.",
   "parameters":{"type":"object","properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"]}}},
 ]
+# max_tokens 12288: reasoning tokens count against the budget, and Muse
+# Glimmer / GPT-OSS ignore `enable_thinking: false` (they use
+# reasoning_strength / reasoning_effort). The old 1200 left only ~176
+# tokens of headroom against run-suite.sh's --reasoning-budget 1024.
+# It did not actually truncate when spot-checked; this is headroom, not
+# a fix for a known failure. See needle-test.py.
 def call(msgs):
     req = urllib.request.Request(HOST+"/v1/chat/completions",
-        data=json.dumps({"messages":msgs,"tools":TOOLS,"tool_choice":"auto","max_tokens":1200,
+        data=json.dumps({"messages":msgs,"tools":TOOLS,"tool_choice":"auto","max_tokens":12288,
                          "chat_template_kwargs":{"enable_thinking":False}}).encode(),
         headers={"Content-Type":"application/json"})
     return json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"]
