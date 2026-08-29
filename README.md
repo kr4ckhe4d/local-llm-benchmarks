@@ -595,13 +595,37 @@ IQ4_XS is used at exactly one context.
 *It must run q4_0 KV*, which the Tuning section calls the price of admission
 rather than an optimisation: 0% shallow but **-23.1% at 32K depth**. So the
 2.34x above is a shallow-end figure. Projected at real depth it is nearer
-**1.8x** (20.8 x 2.34 vs 27.0), and less again on reasoning-heavy turns.
-Measured on the serving path through the router, where the model thinks:
-acceptance fell to **58.9%, mean run 2.77**, against 86.8%/3.60 on the
-`enable_thinking: false` code probe. So the benefit is largest exactly where
-this model is used least -- short non-thinking completions -- and smallest on
-the long reasoning turns it is usually asked for. The depth figure is a
-projection and has not been measured.
+**1.8x**. That projection was wrong, and measuring beat it.
+
+**Measured at depth, 2026-08-29 — 29,353-token haystack, same three configs
+back to back:**
+
+| Config @29.4K | no-think | thinking |
+|---|---|---|
+| IQ4_XS, q8_0, `-ub 1024`, no MTP (the other preset) | 25.13 | 25.47 |
+| Q3_K_XL, q4_0, `-ub 512`, no MTP | 20.08 | 20.27 |
+| **Q3_K_XL, q4_0, `-ub 512`, +MTP** | **48.33** | **49.69** |
+
+Three things fall out, none of them guesses:
+
+* **q4_0's depth penalty is confirmed at -20.1%**, against the -23.1% the KV
+  table predicts at 32K -- consistent, marginally smaller at 29.4K. (A little
+  of that 20% is the quant file rather than the cache: Q3_K_XL-v3 is ~2% slower
+  than IQ4_XS-v3 shallow.)
+* **MTP is worth 2.41x at depth, MORE than the 2.34x it is worth shallow**,
+  even though acceptance *falls* from 86.8% to **70.1% (mean run 3.10)**. At
+  depth each forward pass reads more KV, so amortising one pass across ~3.1
+  accepted tokens saves proportionally more. Speculative decoding pays best
+  exactly where generation is slowest.
+* **Net against the preset you would otherwise run: 1.92x** (48.33 vs 25.13),
+  and thinking does not spoil it -- 49.69 vs 25.47 is 1.95x with reasoning on,
+  acceptance 69.0%.
+
+Acceptance is workload-dependent, not depth-dependent alone: 86.8% on the
+shallow non-thinking code probe, ~70% at depth on both, and as low as **58.9%**
+on a trivial one-liner through the router where the model reasoned at length
+about almost nothing. Prompt processing pays ~9% for the drafter (895 -> 811
+tok/s at depth).
 
 `qwen3.8-32k-mtp` is therefore a **second** preset beside `qwen3.8-32k`, not a
 replacement: speed option against fidelity option, the way `laguna` and
