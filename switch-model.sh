@@ -45,6 +45,7 @@ declare -A MODEL_FILE=(
   [laguna-q8]="Laguna-XS-2.1-Q8_0.gguf"
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [gemma4-q8]="gemma-4-26B-A4B-it-Q8_0.gguf"
+  [gemma4-vision]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
   [qwen3.8-mtp]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
@@ -60,6 +61,7 @@ declare -A MODEL_LABEL=(
   [laguna-q8]="Laguna XS.2 Q8_0"
   [gemma4]="Gemma 4-26B-A4B"
   [gemma4-q8]="Gemma 4-26B-A4B Q8_0"
+  [gemma4-vision]="Gemma 4-26B-A4B +vision"
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
   [qwen3.8-mtp]="Qwen3.8-27B +MTP"
@@ -76,6 +78,7 @@ declare -A MODEL_BACKEND=(
   [laguna-q8]="build"            # Q8_0: near-lossless, 65-85% experts on CPU
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [gemma4-q8]="build"            # Q8_0: ROCm
+  [gemma4-vision]="build"        # Q4_K_M + mmproj: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL v3: ROCm
   [qwen3.8-mtp]="build"          # Q3_K_XL v3 + MTP: ROCm
@@ -154,6 +157,13 @@ declare -A CONFIG=(
   # more disk and 47% less generation. -ncmoe measured WITH the drafter.
   ["gemma4-q8:32k"]="-ncmoe 17 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
   ["gemma4-q8:128k"]="-ncmoe 20 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  # Gemma 4 + vision (mmproj-F16, gemma4v) + MTP. The projector costs ~1.9GB,
+  # so -ncmoe rises from the text preset's 8. Verified reading a probe image at
+  # both contexts. 32k: ncmoe 10/11/12 -> 427/880/1,334 free. 128k: 14/15/16 ->
+  # 163/588/1,043. Shipping the values with a real margin.
+  ["gemma4-vision:32k"]="-ncmoe 11 -mm models/mmproj-F16.gguf -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4-vision:128k"]="-ncmoe 16 -mm models/mmproj-F16.gguf -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+
   ["gemma4-q8:256k"]="-ncmoe 24 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
 
   # Muse Glimmer 30B — DENSE (no -ncmoe), 52 layers, 2 KV heads (16:1 GQA) and a
@@ -304,6 +314,8 @@ Models:
                                           +MTP drafter: 93 tok/s (1.79x)
   gemma4-q8      Gemma 4 Q8_0     26.9GB  same model, flat Q8. No measured
                                           quality gain; half the speed
+  gemma4-vision  Gemma 4 +vision  17.0GB  Q4_K_M + 1.19GB mmproj, reads images
+                                          32k/128k, MTP included
   muse-glimmer   Muse Glimmer 30B 12.4GB  DENSE 30B, sliding-window attn (52L)
                                           agentic specialist, 52 tok/s with DFlash
   qwen3.8        Qwen3.8-27B      12.5GB  DENSE 27B, hybrid attn (64L), thinking
@@ -355,7 +367,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-q8 muse-glimmer qwen3.8 qwen3.8-mtp qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
+  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-q8 gemma4-vision muse-glimmer qwen3.8 qwen3.8-mtp qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"

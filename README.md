@@ -333,6 +333,34 @@ at 12 with MTP attached the fit leaves only 425 MiB, at 13 it leaves 880.
 | 128K | **13** | 15,424 | 880 |
 | 256K | 20 | 15,059 | 1,245 |
 
+**Vision works, and composes with MTP.** Measured 2026-08-29. Gemma 4 is
+multimodal and `b10463` already has the graph — `PROJECTOR_TYPE_GEMMA4V` in
+`clip.cpp`, with `libmtmd` and `llama-mtmd-cli` built. It needs
+`mmproj-F16.gguf` (1.19GB, `clip.vision.projector_type = gemma4v`, 224px),
+which is a separate download. Vision only: llama.cpp also carries `gemma4a` /
+`gemma4ua` audio projectors, but they are not in this file and are not on disk.
+
+The projector costs **~1.9GB of VRAM**, more than its 1.19GB file, so `-ncmoe`
+must rise. At the text preset's `-ncmoe 8` the 32K fit leaves **39 MiB** — the
+unshippable-margin case again. With the MTP drafter attached as well:
+
+| Context | `-ncmoe` 10/11/12 (32K) or 14/15/16 (128K) — free MiB | Ship |
+|---|---|---|
+| 32K | 427 / **880** / 1,334 | `-ncmoe 11` |
+| 128K | 163 / 588 / **1,043** | `-ncmoe 16` |
+
+Verified end to end at both contexts on a probe image, and again through the
+router: read the rendered text `PROBE-770487` exactly, named red circle / blue
+square / green triangle, counted three, and solved rendered arithmetic
+(`7 + 35` → 42). **4/4 every time.** A 640x420 image costs only **~177 prompt
+tokens**. Draft acceptance on the vision turn reached **95.9%, mean run 3.88** —
+the highest measured on this box, because describing an image produces very
+predictable tokens.
+
+Wired as `gemma4-vision-32k` / `gemma4-vision-128k`, separate from the text
+presets: attaching the projector to those would raise `-ncmoe` for everyone and
+cost text-only speed for a capability most turns do not use.
+
 **Q8_0 was tried and is not worth it.** 26.9GB against Q4_K_M's 16.9GB. It fits
 — the model is 84.8% expert tensors, so `-ncmoe` absorbs the extra bits — at
 `-ncmoe` 17/20/24 for 32K/128K/256K with the drafter attached (free 436/644/915).
@@ -2795,6 +2823,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | UD-Q4_K_M | 15.8GB | yes |
 | Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | Q8_0 (flat, no imatrix) | 26.9GB | yes |
 | Gemma 4 MTP drafter | — | — | NEXTN sidecar (`gemma4-assistant`) | Q8_0 | 0.46GB | yes |
+| Gemma 4 vision projector | — | — | CLIP `gemma4v`, 224px | F16 | 1.19GB | yes |
 | Gemma 4-E2B | ~4.66B raw (E2B effective) | ~4.66B | Dense, 35L | BF16 | 9.3GB | deleted |
 | Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | deleted |
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
