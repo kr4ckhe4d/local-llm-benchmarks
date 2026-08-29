@@ -44,6 +44,7 @@ declare -A MODEL_FILE=(
   [laguna]="Laguna-XS-2.1-Q4_K_M.gguf"
   [laguna-q8]="Laguna-XS-2.1-Q8_0.gguf"
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
+  [gemma4-q8]="gemma-4-26B-A4B-it-Q8_0.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
@@ -57,6 +58,7 @@ declare -A MODEL_LABEL=(
   [laguna]="Laguna XS.2"
   [laguna-q8]="Laguna XS.2 Q8_0"
   [gemma4]="Gemma 4-26B-A4B"
+  [gemma4-q8]="Gemma 4-26B-A4B Q8_0"
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored"
@@ -71,6 +73,7 @@ declare -A MODEL_BACKEND=(
   [laguna]="build"               # Q4_K_M: `laguna` arch, ROCm
   [laguna-q8]="build"            # Q8_0: near-lossless, 65-85% experts on CPU
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
+  [gemma4-q8]="build"            # Q8_0: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL v3: ROCm
   [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
@@ -134,9 +137,21 @@ declare -A CONFIG=(
 
   # Gemma 4 — RE-TUNED for ROCm. The old Vulkan values (5/8/16) do not load.
   # Not a hybrid-attention model. Native 262144.
-  ["gemma4:32k"]="-ncmoe 8"
-  ["gemma4:128k"]="-ncmoe 12"
-  ["gemma4:256k"]="-ncmoe 20"
+  # MTP drafter is a SEPARATE file for Gemma 4 (Qwen3.8 carries its head
+  # in-file as blk.64), so it needs -md as well as --spec-type. Worth 1.79x
+  # at 32k: 51.2 -> 93.0 tok/s, 84% acceptance, mean run 3.5. The drafter's
+  # own KV grows with context (~550MiB at 32k, ~1,300 at 128k), which is why
+  # 128k runs -ncmoe 13 rather than the 12 it uses without MTP.
+  ["gemma4:32k"]="-ncmoe 8 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4:128k"]="-ncmoe 13 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4:256k"]="-ncmoe 20 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+
+  # Gemma 4 at Q8_0 — comparison config, not the default. Scored 33/50 on
+  # code-quality against Q4_K_M's 37/50 and tied on cdn-freshness, for 10GB
+  # more disk and 47% less generation. -ncmoe measured WITH the drafter.
+  ["gemma4-q8:32k"]="-ncmoe 17 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4-q8:128k"]="-ncmoe 20 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4-q8:256k"]="-ncmoe 24 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
 
   # Muse Glimmer 30B — DENSE (no -ncmoe), 52 layers, 2 KV heads (16:1 GQA) and a
   # 2048-token sliding window on 3 of every 4 layers. That attention layout is
@@ -274,6 +289,9 @@ Models:
   laguna-q8      Laguna XS.2 Q8_0 33.2GB  same model, near-lossless. Same coding
                                           score, +25pts library knowledge, 30 tok/s
   gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L)
+                                          +MTP drafter: 93 tok/s (1.79x)
+  gemma4-q8      Gemma 4 Q8_0     26.9GB  same model, flat Q8. No measured
+                                          quality gain; half the speed
   muse-glimmer   Muse Glimmer 30B 12.4GB  DENSE 30B, sliding-window attn (52L)
                                           agentic specialist, 52 tok/s with DFlash
   qwen3.8        Qwen3.8-27B      12.5GB  DENSE 27B, hybrid attn (64L), thinking
@@ -323,7 +341,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
+  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-q8 muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"

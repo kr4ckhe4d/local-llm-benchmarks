@@ -303,6 +303,59 @@ already-extended model — the least trustworthy rows in this file.
 Gemma 4 hard-caps at 256K. It is *not* a hybrid-attention model, which is why
 its VRAM scales so much worse with context than the two Qwen models.
 
+**MTP speculative decoding: 1.79x, and it needs a 462MB sidecar.** Measured
+2026-08-29. Unlike Qwen3.8, which carries its MTP head in-file as `blk.64`,
+Gemma 4 ships the drafter as a **separate file**
+(`mtp-gemma-4-26B-A4B-it.gguf`), so it needs `-md` as well as `--spec-type
+draft-mtp`. `b10463` already supports the pairing — `gemma4.cpp` exposes the
+post-final-norm hidden state as `h_nextn` for the drafter to read, and
+`gemma4-assistant` is a registered arch. No rebuild.
+
+| Config | `-ncmoe` | Generation | vs baseline |
+|---|---|---|---|
+| Q4_K_M, no MTP | 8 | 51.2 tok/s | — |
+| **Q4_K_M + MTP** | 8 | **93.0 tok/s** | **1.79x** |
+| Q8_0, no MTP | 17 | 28.4 tok/s | — |
+| **Q8_0 + MTP** | 17 | **48.8 tok/s** | **1.72x** |
+
+700-token prompt, temp 0.0, n=3, 32K. Draft acceptance **84%**, mean run 3.5
+tokens — better than the 70.9% DFlash gets on Muse Glimmer. On the serving path
+acceptance drops to 66-71% because the router lets the model think and reasoning
+text drafts worse than code.
+
+The drafter carries **its own KV cache, which grows with context** — ~550 MiB at
+32K but ~1,300 MiB at 128K. That is why the 128K preset moved to `-ncmoe 13`:
+at 12 with MTP attached the fit leaves only 425 MiB, at 13 it leaves 880.
+
+| Context | `-ncmoe` + MTP | Peak | Free |
+|---|---|---|---|
+| 32K | 8 | 15,589 | 715 |
+| 128K | **13** | 15,424 | 880 |
+| 256K | 20 | 15,059 | 1,245 |
+
+**Q8_0 was tried and is not worth it.** 26.9GB against Q4_K_M's 16.9GB. It fits
+— the model is 84.8% expert tensors, so `-ncmoe` absorbs the extra bits — at
+`-ncmoe` 17/20/24 for 32K/128K/256K with the drafter attached (free 436/644/915).
+But it buys nothing measurable:
+
+| Probe | UD-Q4_K_M | Q8_0 |
+|---|---|---|
+| code-quality | 37/50 (74%) | 33/50 (66%) |
+| cdn-freshness | 36/39 (92%), 6/9 clean | 36/39 (92%), 6/9 clean — *same three dead URLs* |
+| tool calling | ✓ single + parallel | ✓ single + parallel |
+| generation | **51.2** / 93.0 MTP | 28.4 / 48.8 MTP |
+
+**Do not read the code-quality gap as Q8 being worse.** Four checks in 50 is
+exactly the resolution `benchmarks/kld-test.sh` documents this probe as *not*
+having. The honest statement is that the two are indistinguishable on quality
+while Q8 costs 10GB and 47% of generation. Note also that this is not a clean
+bit-depth comparison: `UD-Q4_K_M` is Unsloth Dynamic (imatrix-calibrated, mixed
+precision) while `Q8_0` is flat round-to-nearest with no imatrix. Ordering them
+properly needs KLD against a BF16 reference, which has not been run.
+
+Both quants are wired into `models-preset.ini` and `switch-model.sh`; Q4 is the
+default and Q8 is kept only as the comparison config.
+
 ### Muse Glimmer 30B — 12.4GB, **dense** 30B, 52 layers
 
 The only dense model in the set, and the first one where `-ncmoe` is irrelevant —
@@ -1747,7 +1800,14 @@ model's, not the harness's.
 | Qwen3.8-27B `UD-Q3_K_XL` **v2** | 3.932 | 33/50 (66%) | 2/7 |
 | Qwen3.8-27B `UD-IQ4_XS` v3 | 4.131 | 30/50 (60%) | 2/7 |
 | Laguna XS 2.1 `Q4_K_M` | ~4.5 | 27/50 (54%) | 1/7 |
+| Gemma 4-26B-A4B `UD-Q4_K_M` † | ~5.4 | **37/50 (74%)** | 3/7 |
+| Gemma 4-26B-A4B `Q8_0` † | ~8.5 | 33/50 (66%) | 2/7 |
 | Laguna XS 2.1 `Q8_0` | ~8.5 | 27/50 (54%) | 2/7 |
+
+† The two Gemma 4 rows were measured 2026-08-29 at `--max-tokens 12288`; every
+other row used 2400. They are directly comparable to each other but not exactly
+to the rest of the table. Their 4-check spread is inside this probe's noise
+floor — see the Gemma 4 section.
 
 **BPW does not order this table.** The highest-bit quant scores lowest and the
 lowest-bit quant scores highest. IQ4_XS lost 9 checks in one go by emitting
@@ -2653,6 +2713,8 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | GPT-OSS-20B | 21B | ~3.6B | MoE | MXFP4 | 11.3GB | yes |
 | Qwen3.6-35B-A3B | 35B | ~3B | MoE hybrid, 40L | UD-Q4_K_M | 20.6GB | yes |
 | Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | UD-Q4_K_M | 15.8GB | yes |
+| Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | Q8_0 (flat, no imatrix) | 26.9GB | yes |
+| Gemma 4 MTP drafter | — | — | NEXTN sidecar (`gemma4-assistant`) | Q8_0 | 0.46GB | yes |
 | Gemma 4-E2B | ~4.66B raw (E2B effective) | ~4.66B | Dense, 35L | BF16 | 9.3GB | deleted |
 | Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | deleted |
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
