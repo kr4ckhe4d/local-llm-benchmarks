@@ -47,6 +47,7 @@ declare -A MODEL_FILE=(
   [gemma4-q8]="gemma-4-26B-A4B-it-Q8_0.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
+  [qwen3.8-mtp]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored-Q8_0.gguf"
   [glm4.7-flash]="GLM-4.7-Flash-UD-Q4_K_XL.gguf"
@@ -61,6 +62,7 @@ declare -A MODEL_LABEL=(
   [gemma4-q8]="Gemma 4-26B-A4B Q8_0"
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
+  [qwen3.8-mtp]="Qwen3.8-27B +MTP"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored"
   [glm4.7-flash]="GLM-4.7-Flash"
@@ -76,6 +78,7 @@ declare -A MODEL_BACKEND=(
   [gemma4-q8]="build"            # Q8_0: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL v3: ROCm
+  [qwen3.8-mtp]="build"          # Q3_K_XL v3 + MTP: ROCm
   [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
   [qwen3.5-9b-uncensored]="build" # Q8_0: ROCm
   [glm4.7-flash]="build"          # UD-Q4_K_XL: ROCm
@@ -208,6 +211,15 @@ declare -A CONFIG=(
   ["qwen3.8:64k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
   ["qwen3.8:128k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
+  # Qwen3.8 + MTP at 32k. 16k MTP is "qwen3.8 16k" above; this is the only
+  # other context the drafter fits at -- 64k and 128k both fail to allocate,
+  # their baselines already leaving only 878 and 509 MiB. Needs q4_0 KV and
+  # ub 512 (q8_0/ub1024 will not allocate), and needs Q3_K_XL-v3: IQ4_XS-v3 is
+  # 1.1GB larger and OOMs building the draft context at every context, 16k
+  # included. Measured 29.52 -> 69.14 tok/s (2.34x), 86.8% acceptance, 321 MiB
+  # free. That is the shallow figure; q4_0 KV costs up to 23% at 32k depth.
+  ["qwen3.8-mtp:32k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+
   # Qwen3.5-27B-Uncensored (HauhauCS, Aggressive) — DENSE 27B, arch qwen35, the
   # same architecture as qwen3.8 above one base version back. Same rules: no
   # -ncmoe, native 262144 unreachable.
@@ -296,6 +308,8 @@ Models:
                                           agentic specialist, 52 tok/s with DFlash
   qwen3.8        Qwen3.8-27B      12.5GB  DENSE 27B, hybrid attn (64L), thinking
                                           32 tok/s shallow, but 9.6 at 131k depth
+  qwen3.8-mtp    Qwen3.8-27B +MTP 12.5GB  same file, MTP at 32k: 69 tok/s (2.34x)
+                                          costs q4_0 KV — see notes
   qwen3.5-uncensored
                  Qwen3.5-27B-Unc. 12.4GB  DENSE 27B, same arch as qwen3.8 one base
                                           back. 32k/64k only. ~30 tok/s shallow
@@ -341,7 +355,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-q8 muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
+  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-q8 muse-glimmer qwen3.8 qwen3.8-mtp qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"

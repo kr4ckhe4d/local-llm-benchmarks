@@ -562,6 +562,51 @@ already have. `--spec-type draft-mtp` on build `b10463`:
 | v3 @16K, no MTP | 29.70 tok/s | 2.3-2.6s |
 | **v3 @16K, MTP** | **69.47 tok/s (2.34x)** | **0.9-1.1s** |
 
+**MTP reaches 32K too, measured 2026-08-29 — but not past it, and not free.**
+The 16K pin was a real ceiling for the *flags it was tried with*, not for MTP
+itself: every failure at 32K used `-ub 1024`. Dropping to `-ub 512` with q4_0
+KV loads.
+
+| Context | MTP fits? | Peak / free | Why |
+|---|---|---|---|
+| 16K | ✓ | 15,723 / 581 | q8_0 KV, the existing preset |
+| **32K** | **✓** | **15,983 / 321** | needs **q4_0 KV + `-ub 512`** |
+| 64K | ✗ | — | baseline already leaves 878 MiB |
+| 128K | ✗ | — | baseline already leaves 509 MiB |
+
+At 32K, 700-token probe, n=3: **29.52 → 69.14 tok/s, 2.34x**, draft acceptance
+**86.8%, mean run 3.60** — the highest acceptance measured on this box, above
+Gemma 4's 84% and DFlash's 70.9%. Same config without MTP is 29.52, and the
+current q8_0/`-ub 1024` preset is 29.70, so q4_0 KV costs nothing *shallow*,
+exactly as the KV table predicts (0% at depth 0).
+
+**Two costs, both of which the preset states rather than hides.**
+
+*It must run `Q3_K_XL-v3`.* `IQ4_XS-v3` is 1.1GB larger and OOMs building the
+draft context at **every** context, 16K included — `common_speculative_init_result:
+creating MTP draft context ... allocating 114.02 MiB ... cudaMalloc failed`.
+That 1.1GB is precisely the drafter's headroom. This is also why the 16K MTP
+preset always used Q3_K_XL-v3 while the 32K preset uses IQ4_XS: forced, not
+inconsistent. The fidelity cost is real but bounded — median KLD 0.0108 vs
+0.0074, same top-1 92.94% vs 94.08%, i.e. 7.06% of tokens disagreeing with
+BF16 against 5.92%. Note Q3_K_XL-v3 is already what 64K, 128K and 16K-MTP run;
+IQ4_XS is used at exactly one context.
+
+*It must run q4_0 KV*, which the Tuning section calls the price of admission
+rather than an optimisation: 0% shallow but **-23.1% at 32K depth**. So the
+2.34x above is a shallow-end figure. Projected at real depth it is nearer
+**1.8x** (20.8 x 2.34 vs 27.0), and less again on reasoning-heavy turns.
+Measured on the serving path through the router, where the model thinks:
+acceptance fell to **58.9%, mean run 2.77**, against 86.8%/3.60 on the
+`enable_thinking: false` code probe. So the benefit is largest exactly where
+this model is used least -- short non-thinking completions -- and smallest on
+the long reasoning turns it is usually asked for. The depth figure is a
+projection and has not been measured.
+
+`qwen3.8-32k-mtp` is therefore a **second** preset beside `qwen3.8-32k`, not a
+replacement: speed option against fidelity option, the way `laguna` and
+`laguna-q8` sit side by side.
+
 That beats Muse Glimmer's DFlash (1.64x) and puts this model's follow-up
 latency level with GLM-4.7-Flash's 1.1-1.2s.
 
