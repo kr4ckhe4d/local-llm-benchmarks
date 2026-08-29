@@ -571,8 +571,19 @@ KV loads.
 |---|---|---|---|
 | 16K | ✓ | 15,723 / 581 | q8_0 KV, the existing preset |
 | **32K** | **✓** | **15,983 / 321** | needs **q4_0 KV + `-ub 512`** |
-| 64K | ✗ | — | baseline already leaves 878 MiB |
-| 128K | ✗ | — | baseline already leaves 509 MiB |
+| 48K | ✗ | 16,268 / **36** | loads, but 36 MiB free — not shippable |
+| 64K | ✗ | — | fails even at q4_0 + `-ub 256` |
+| 128K | ✗ | — | fails at q4_0 + `-ub 512` |
+
+**The drafter costs ~2.45GB, roughly constant, not the 335 MiB of `blk.64`.**
+That is the real ceiling and it is worth stating plainly, because the obvious
+guess (the head is small, so it should fit anywhere) is wrong. The MTP draft
+context carries its own KV and recurrent-state buffers. Measured at 32K: 13,514
+MiB without the drafter, 15,983 with. So the limit is simply where
+`base(ctx) + 2.45GB` crosses 16,304 — 64K's own baseline is 14,249, which needs
+~16,700 and misses by about 400 MiB. 48K squeaks in at 36 MiB free, which is
+below the margin anything should ship at (see the GTT spill guard in
+`fit.sh`; a 24 MiB "fit" is exactly the case it exists to catch).
 
 At 32K, 700-token probe, n=3: **29.52 → 69.14 tok/s, 2.34x**, draft acceptance
 **86.8%, mean run 3.60** — the highest acceptance measured on this box, above
