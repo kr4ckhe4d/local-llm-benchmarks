@@ -201,10 +201,12 @@ stretch, so pushing further stacks a second extension on top.
 ### If you do want 1M
 
 It works, and the configs below are measured, but you have to opt in by hand.
-**Qwen3-Coder-Next is the only sensible choice** — it is the only
-coding-specialist model whose hybrid architecture makes 1M viable in 16GB. A
-conventional full-attention coder needs ~52GB of KV at 1M. There is no separate
-"1M" GGUF to download; 1M is a runtime flag on the 262,144-native weights.
+**Qwen3-Coder-Next is the only sensible choice** — but it is **no longer on
+disk** (deleted 2026-08-29; see its section below for the re-download). It is
+the only coding-specialist model whose hybrid architecture makes 1M viable in
+16GB. A conventional full-attention coder needs ~52GB of KV at 1M. There is no
+separate "1M" GGUF to download; 1M is a runtime flag on the 262,144-native
+weights.
 
 ```bash
 ~/llama.cpp/build/bin/llama-server -m models/Qwen3-Coder-Next-UD-Q4_K_M.gguf \
@@ -241,6 +243,20 @@ read from
 † Beyond native 262,144 — needs YaRN, not a `switch-model.sh` preset.
 
 ### Qwen3-Coder-Next — 49.3GB, MoE 80B/~3B active, coding specialist
+
+**Deleted from disk (2026-08-29)** — kept here because the measurements
+stand. It was removed for its footprint, not for capability: 49.3GB on a 914GB
+SATA SSD, ~47GB resident host RAM, and a ~93s cold load every time idle-sleep
+dropped it. Also pulled out of `switch-model.sh` and `models-preset.ini`
+entirely (the way Nemotron, Devstral and Gemma 4-E2B were), rather than left
+dangling pointing at a file that no longer exists. Re-downloading is `hf
+download unsloth/Qwen3-Coder-Next-GGUF Qwen3-Coder-Next-UD-Q4_K_M.gguf` —
+`general.repo_url` on the GGUF is `huggingface.co/unsloth`, base model
+`Qwen/Qwen3-Coder-Next`.
+
+**This deletion costs the only 1M-context coding config in this file** — see
+"If you do want 1M" above. Nothing else on disk replaces it: the 1M row below
+worked only because this model's hybrid attention keeps KV at 13,056 B/token.
 
 | Context | Extra flags | VRAM used | Free |
 |---|---|---|---|
@@ -2580,7 +2596,7 @@ per-model child that is *also* named `llama-server`, so `pkill -x` matches both.
 | Qwen3.6-35B-A3B | 35B | ~3B | MoE hybrid, 40L | UD-Q4_K_M | 20.6GB | yes |
 | Gemma 4-26B-A4B | 25.2B | ~3.8B | MoE, 30L | UD-Q4_K_M | 15.8GB | yes |
 | Gemma 4-E2B | ~4.66B raw (E2B effective) | ~4.66B | Dense, 35L | BF16 | 9.3GB | deleted |
-| Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | yes |
+| Qwen3-Coder-Next | 80B | ~3B | MoE hybrid, 48L | UD-Q4_K_M | 49.3GB | deleted |
 | Muse Glimmer 30B | 30B | 30B | Dense SWA, 52L | UD-Q3_K_XL | 12.4GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL (**Dynamic 2.0**) | 12.5GB | yes |
 | Qwen3.8-27B | 27B | 27B | Dense hybrid, 64L | UD-Q3_K_XL (**Dynamic 3.0**) | 12.2GB | yes |

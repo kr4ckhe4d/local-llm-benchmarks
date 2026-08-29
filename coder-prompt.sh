@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Send a properly-structured coding prompt to Qwen3-Coder-Next @ 128K.
 #
+# NOTE: Qwen3-Coder-Next was deleted from disk 2026-08-29 and unwired from
+# switch-model.sh/models-preset.ini. This script still works — it posts to
+# whatever is serving :8090 — but the system prompt and the sampling block at
+# the bottom are tuned to that specific model. Re-check both against whichever
+# model you point it at; thinking models in particular want a reasoning budget
+# and different temperature.
+#
 #   ./coder-prompt.sh "add rate limiting to the /upload endpoint" src/api/*.rs
 #   ./coder-prompt.sh -m 8000 "explain how auth flows through this" $(rg -l auth src/)
 #

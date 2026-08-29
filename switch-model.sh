@@ -44,7 +44,6 @@ declare -A MODEL_FILE=(
   [laguna]="Laguna-XS-2.1-Q4_K_M.gguf"
   [laguna-q8]="Laguna-XS-2.1-Q8_0.gguf"
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
-  [qwen3-coder]="Qwen3-Coder-Next-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
@@ -58,7 +57,6 @@ declare -A MODEL_LABEL=(
   [laguna]="Laguna XS.2"
   [laguna-q8]="Laguna XS.2 Q8_0"
   [gemma4]="Gemma 4-26B-A4B"
-  [qwen3-coder]="Qwen3-Coder-Next"
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored"
@@ -73,7 +71,6 @@ declare -A MODEL_BACKEND=(
   [laguna]="build"               # Q4_K_M: `laguna` arch, ROCm
   [laguna-q8]="build"            # Q8_0: near-lossless, 65-85% experts on CPU
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
-  [qwen3-coder]="build"          # Q4_K_M: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
   [qwen3.8]="build"              # Q3_K_XL v3: ROCm
   [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
@@ -140,12 +137,6 @@ declare -A CONFIG=(
   ["gemma4:32k"]="-ncmoe 8"
   ["gemma4:128k"]="-ncmoe 12"
   ["gemma4:256k"]="-ncmoe 20"
-
-  # Qwen3-Coder-Next — hybrid attention, 48 layers, 12 with KV. Native 262144.
-  # ~47GB host RAM at these settings.
-  ["qwen3-coder:32k"]="-ncmoe 38 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
-  ["qwen3-coder:128k"]="-ncmoe 40 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
-  ["qwen3-coder:256k"]="-ncmoe 42 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
 
   # Muse Glimmer 30B — DENSE (no -ncmoe), 52 layers, 2 KV heads (16:1 GQA) and a
   # 2048-token sliding window on 3 of every 4 layers. That attention layout is
@@ -261,7 +252,6 @@ declare -A CONFIG=(
 # running out of trained range and emitting garbage.
 declare -A YARN=(
   [qwen3.6]="--rope-scaling yarn --rope-scale 4 --yarn-orig-ctx 262144"
-  [qwen3-coder]="--rope-scaling yarn --rope-scale 4 --yarn-orig-ctx 262144"
 )
 
 usage() {
@@ -284,8 +274,6 @@ Models:
   laguna-q8      Laguna XS.2 Q8_0 33.2GB  same model, near-lossless. Same coding
                                           score, +25pts library knowledge, 30 tok/s
   gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L)
-  qwen3-coder    Qwen3-Coder-Next 49.3GB  MoE 80B / 3B active, hybrid attn (48L)
-                                          coding specialist, ~25 tok/s
   muse-glimmer   Muse Glimmer 30B 12.4GB  DENSE 30B, sliding-window attn (52L)
                                           agentic specialist, 52 tok/s with DFlash
   qwen3.8        Qwen3.8-27B      12.5GB  DENSE 27B, hybrid attn (64L), thinking
@@ -326,7 +314,6 @@ Notes:
 
 Examples:
   $(basename "$0") router
-  $(basename "$0") qwen3-coder 256k
   $(basename "$0") gpt-oss-20b 128k
   $(basename "$0") stop
   $(basename "$0") start
@@ -336,7 +323,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 qwen3-coder muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
+  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 muse-glimmer qwen3.8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"
@@ -563,7 +550,8 @@ switch_model() {
 
   echo "==> Waiting for health check..."
   local ok=0 st
-  # Qwen3-Coder-Next is 49GB and can take a couple of minutes to load cold.
+  # Laguna XS.2 Q8_0 is 35.6GB — the largest left on disk — and can take a
+  # couple of minutes to load cold off the SATA SSD.
   for _ in $(seq 1 80); do
     # DFlash always emits "[spec] failed to measure draft model memory: failed
     # to create llama_context" during its memory-fitting probe, and the log
