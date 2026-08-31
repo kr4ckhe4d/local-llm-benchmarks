@@ -59,7 +59,16 @@ GTT_BASE=$(mib $GTT_USED)
 cleanup() { [ -n "${PID:-}" ] && kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; }
 trap cleanup EXIT
 
-"$BIN" -m "$MODEL_DIR/$MODEL" -ngl 99 -c "$CTX" --host 127.0.0.1 --port "$PORT" \
+# -np 1 to match production, added 2026-08-31. models-preset.ini sets
+# `parallel = 1` in its [*] section, so every router preset runs one slot.
+# fit.sh did not, so llama.cpp auto-selected four and every row here measured a
+# configuration nothing actually serves. It costs ~450 MiB at 32K even with a
+# unified KV, and far more with a drafter attached: the DFlash2 drafter carries
+# a recurrent-state cache that scales per slot (~630 MiB each), which is why
+# four slots wanted 2,394 MiB of it. This is why the README concluded MTP caps
+# at 32K on Qwen3.8 -- at the preset's own -np 1 it fits 64K with 888 MiB free.
+# Override with NP= to measure a multi-slot configuration deliberately.
+"$BIN" -m "$MODEL_DIR/$MODEL" -ngl 99 -c "$CTX" -np "${NP:-1}" --host 127.0.0.1 --port "$PORT" \
        "$@" >"$LOG" 2>&1 &
 PID=$!
 

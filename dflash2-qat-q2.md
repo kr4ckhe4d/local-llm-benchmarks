@@ -73,7 +73,15 @@ no existing preset needed `-np`. Every row below pins `-np 1`.
 **Correction to the README.** It records MTP as failing above 32K on Qwen3.8.
 That was measured at default `-np`. At `-np 1`, `-ub 256`, q4_0, MTP reaches
 **64K at 69.02 tok/s, peak 15,064 MiB**. The 32K ceiling was a slot-count
-artifact, not an MTP limit.
+artifact, not an MTP limit. Re-verified on production `build/` (b10463):
+`peak=15416 free=888`, no GTT spill.
+
+**128K is still out of reach for every drafter on this target.** Measured at
+`-np 1` on b10463, MTP fails on the KV cache at both `-ub 512` and `-ub 256`.
+DFlash2 fails too — the target leaves ~600-940 MiB and the drafter wants
+~1,710. The 128K preset itself re-measures at `peak=15705 free=599` (the README
+records 281, at four slots). So speculative decoding at 128K needs a *smaller
+target* than `UD-Q3_K_XL-v3`, not different flags.
 
 ---
 
@@ -240,6 +248,12 @@ explained; the looping claim is not addressed.
 * `fit.sh`, `run-suite.sh`: `BIN` is now overridable, so a side build can be
   measured without disturbing `build/`. `run-suite.sh` already records
   `$BIN --version` in every output header, so results self-identify.
+* `fit.sh`: now passes `-np 1` by default, overridable with `NP=`.
+  `models-preset.ini` sets `parallel = 1` in its `[*]` section, so every router
+  preset runs one slot — but `fit.sh` did not, so llama.cpp auto-selected four
+  and every row it produced measured a configuration nothing serves. Worth
+  ~450 MiB at 32K, and far more with a drafter attached. This mismatch is why
+  the README concluded MTP caps at 32K.
 * `fit.sh`: added a VRAM settle-wait before `BASE` is sampled. A killed
   llama-server does not release VRAM instantly, and back-to-back runs were
   sampling `BASE` at 12,093 MiB while the previous model was still resident.
