@@ -13,7 +13,10 @@
 set -uo pipefail
 
 LLAMA_DIR="$HOME/llama.cpp"
-BIN="$LLAMA_DIR/build/bin/llama-server"
+# Overridable so a side build (e.g. the DFlash2 worktree at ~/llama.cpp-dflash2)
+# can be measured without disturbing the production build. The header written
+# into each output file records the build actually used.
+BIN="${BIN:-$LLAMA_DIR/build/bin/llama-server}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT="${PORT:-8099}"
 VRAM=/sys/class/drm/card1/device/mem_info_vram_used

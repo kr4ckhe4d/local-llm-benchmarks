@@ -15,7 +15,9 @@
 set -uo pipefail
 
 LLAMA_DIR="$HOME/llama.cpp"
-BIN="$LLAMA_DIR/build/bin/llama-server"          # ROCm; the only build now
+# ROCm; the only production build. BIN is overridable so a side build (e.g. the
+# DFlash2 worktree at ~/llama.cpp-dflash2) can be measured without disturbing it.
+BIN="${BIN:-$LLAMA_DIR/build/bin/llama-server}"
 MODEL_DIR="$LLAMA_DIR/models"
 VRAM_USED=/sys/class/drm/card1/device/mem_info_vram_used
 VRAM_TOTAL=/sys/class/drm/card1/device/mem_info_vram_total
@@ -34,6 +36,23 @@ MODEL="${MODEL:?set MODEL=<file.gguf> (relative to $MODEL_DIR)}"
 
 mib() { echo $(( $(cat "$1") / 1024 / 1024 )); }
 TOTAL=$(mib $VRAM_TOTAL)
+
+# Settle before reading BASE, added 2026-08-31. A killed llama-server does not
+# release VRAM instantly, so back-to-back runs used to sample BASE while the
+# previous model was still resident. That inflates BASE (making 'model' nonsense)
+# and, worse, leaves the new run genuinely short of VRAM -- a sweep of the
+# Qwen3.8 + DFlash2 drafter reported four "failed to allocate buffer for rs
+# cache" failures that were pure contention: the same configs load fine on a
+# quiesced card. Wait for two consecutive identical readings.
+SETTLE_MAX="${SETTLE_MAX:-60}"
+prev=-1
+for _ in $(seq "$SETTLE_MAX"); do
+  cur=$(mib $VRAM_USED)
+  [ "$cur" -eq "$prev" ] && break
+  prev=$cur
+  sleep 1
+done
+
 BASE=$(mib $VRAM_USED)
 GTT_BASE=$(mib $GTT_USED)
 
