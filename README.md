@@ -5,6 +5,16 @@
 Every number in this file was measured on this machine. The right-hand column
 is why each spec keeps showing up in the results.
 
+> **The box changed on 2026-09-21** — Ryzen 9 5950X + 64 GB DDR4-3200 →
+> Ryzen 7 9800X3D + 32 GB DDR5-6000. The GPU, ROCm, llama.cpp and every GGUF
+> are unchanged. **This file is the DDR4 record and stays as measured.** The
+> re-measurement of the tables that host memory actually moves — Qwen3.6 and
+> Laguna `-ncmoe` sweeps (+23-37%), Qwen3.8 as a dense control (unmoved), the
+> thread advice (now 8, not 16), and measured host bandwidth — is in
+> **[ddr5-9800x3d.md](ddr5-9800x3d.md)**. Where the two disagree on a
+> CPU-offloaded number, that file is current. VRAM-fit rows here are
+> unaffected: the card did not change.
+
 | Component | Spec | Why it matters here |
 |---|---|---|
 | **GPU** | AMD Radeon RX 9070 XT — Navi 48, `gfx1201`, RDNA4, **16,304 MiB VRAM** | The binding constraint on this whole file. Every `-ncmoe`, KV-quant and `-ub` decision is bought against these 16GB |
