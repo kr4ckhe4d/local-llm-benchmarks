@@ -44,6 +44,16 @@
 # 16m49s CPU-only, peak RSS 54.9 GB against 62 GB, no swap. Do NOT partially
 # offload the BF16 pass: -ngl 16 measured 56 tok/s prefill against 107 at
 # -ngl 0, i.e. partial GPU offload is 2x SLOWER here.
+#
+# ON THE 32 GB BOX (since 2026-09-21) THE BF16 PASS IS NOT PRACTICAL: the
+# weights page from disk through mmap every pass, estimated 4-5 hours. Use the
+# Q8_0 reference instead -- ~8 minutes, and verified to reproduce the BF16
+# numbers to within 1.5% with the same ordering (see gsq-rco.md):
+#   BASE_FILE=$KLD_DIR/qwen3.8-27B-q8_0.kld \
+#     ./kld-test.sh base  Qwen3.8-27B-Q8_0.gguf 200 "-ngl 34 -t 8"
+#   BASE_FILE=$KLD_DIR/qwen3.8-27B-q8_0.kld \
+#     ./kld-test.sh score q8ref/<label> <model.gguf> 200 "-ngl 99"
+# Scores go under q8ref/ so they never overwrite a BF16-referenced kld.txt.
 
 set -uo pipefail
 

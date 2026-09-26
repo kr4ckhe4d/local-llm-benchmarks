@@ -45,6 +45,10 @@ build and timestamp, so a file is interpretable on its own.
 | `fit.txt` | VRAM sweep across contexts | by hand |
 | `kld.txt` | KL-divergence vs the BF16 reference | `kld-test.sh score` |
 
+`q8ref/<model>/kld.txt` is the same measurement against a Q8_0 reference. BF16
+no longer fits the 32 GB box. Q8_0 reproduces the BF16 figures to within 1.5%
+(`gsq-rco.md`).
+
 The deep-recall probes are driven by hand because each costs ~12 minutes of
 prefill at 190K and needs a depth chosen per model. Their files are the
 captured run output, headed with the depth actually built — **both scripts
