@@ -15,6 +15,12 @@ is why each spec keeps showing up in the results.
 > CPU-offloaded number, that file is current. VRAM-fit rows here are
 > unaffected: the card did not change.
 
+> **llama.cpp moved on 2026-10-02** — `b10463` (`7c35571e5`) → build 11345
+> (`a868c3e3c`). Numbers in this file are from `7c35571e5` and stay as
+> measured. The before/after on Qwen3.8 — **prefill +25-28%, generation
+> +3-7%**, MTP acceptance flat — and the rebuilt throughput probe are in
+> **[llama-a868c3e3c.md](llama-a868c3e3c.md)**.
+
 | Component | Spec | Why it matters here |
 |---|---|---|
 | **GPU** | AMD Radeon RX 9070 XT — Navi 48, `gfx1201`, RDNA4, **16,304 MiB VRAM** | The binding constraint on this whole file. Every `-ncmoe`, KV-quant and `-ub` decision is bought against these 16GB |
@@ -24,7 +30,7 @@ is why each spec keeps showing up in the results.
 | **OS** | CachyOS, kernel 7.1.5 | |
 | **ROCm** | 7.2.53211 (`build/`, `GGML_HIP=ON`, `AMDGPU_TARGETS=gfx1201`) | Wins K-quants by 1.7-2.1x prompt |
 | ~~Vulkan~~ | RADV, Mesa 26.1.6 — **retired 2026-08-17** | Its one win was shallow MXFP4 generation; see below |
-| **llama.cpp** | `b10463` (`7c35571e5`, 2026-08-17) | Tool calling was broken on `e583f3b4f` and fixed here — see the tool-calling section |
+| **llama.cpp** | `b10463` (`7c35571e5`, 2026-08-17) — **now `a868c3e3c`**, see above | Tool calling was broken on `e583f3b4f` and fixed here — see the tool-calling section |
 
 The GPU is `card1` on this box, so VRAM is read from
 `/sys/class/drm/card1/device/mem_info_vram_used` throughout.
@@ -2701,8 +2707,22 @@ Two traps, both of which cost a full build cycle each:
   right up to the point every compile fails on a missing header. `rm -rf
   build/CMakeCache.txt build/CMakeFiles` and reconfigure.
 
-Back up the working binary first (`cp build/bin/llama-server /tmp/`) — a failed
-build leaves you with no server at all.
+Keep the working build before updating — a failed build leaves you with no
+server at all. **Copying `build/bin/llama-server` is not a backup**: its
+RUNPATH loads `libllama`, `libggml-hip` and the rest from `build/bin`, so a
+copy runs whatever was built there last. Build the old commit in a worktree
+instead, which doubles as the "before" for an A/B:
+
+```bash
+git -C ~/llama.cpp worktree add --detach ~/llama.cpp-<old> <old-commit>
+# then the configure + build above, run inside ~/llama.cpp-<old>
+```
+
+* **`~/llama.cpp/models` is a symlink to `/mnt/fast/models`**, so `git status`
+  lists the tracked `models/ggml-vocab-*` files as deleted. That is expected.
+  Do not `git checkout -- models` to "restore" them: it replaces the symlink
+  with a directory and every preset stops finding its GGUF. `git pull
+  --ff-only` works with the deletions in place.
 
 ### Serving
 

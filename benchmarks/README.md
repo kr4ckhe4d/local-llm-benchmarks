@@ -3,8 +3,9 @@
 Probe scripts, and one folder per model holding that model's raw output.
 
 Everything here was measured on the machine described in the root `README.md`
-(RX 9070 XT, 16,304 MiB, ROCm, llama.cpp `b10463`). The root README holds the
-*conclusions*; this folder holds the evidence they were drawn from.
+(RX 9070 XT, 16,304 MiB, ROCm, llama.cpp `b10463` unless an output file's
+header names another build). The root README holds the *conclusions*; this
+folder holds the evidence they were drawn from.
 
 ## Layout
 
@@ -12,6 +13,7 @@ Everything here was measured on the machine described in the root `README.md`
 benchmarks/
   run-suite.sh              driver -- runs the probes and writes into a model folder
   fit.sh                    VRAM fit measurement (has the GTT spill guard)
+  throughput-test.py        generation + prefill tok/s, MTP acceptance, --depth
   needle-test.py            verbatim long-context recall
   semantic-recall-test.py   recall by meaning, against near-miss distractors
   tool-calling-test.py      native OpenAI `tools` path, single + parallel
@@ -36,7 +38,7 @@ build and timestamp, so a file is interpretable on its own.
 
 | File | Probe | Written by |
 |---|---|---|
-| `throughput.txt` | 700-token code prompt, temp 0.0, n=3 | `run-suite.sh` |
+| `throughput.txt` | 700-token code prompt, temp 0.0, n=3 (via `throughput-test.py` since 2026-10-02; older files' `pp` column is a prompt-cache artefact) | `run-suite.sh` |
 | `tool-calling.txt` | single + parallel native tool calls | `run-suite.sh` |
 | `code-quality.txt` | 50 differential checks vs stdlib | `run-suite.sh` |
 | `cdn-freshness.txt` | 3 prompts x 3 runs, every URL HEADed | `run-suite.sh` |

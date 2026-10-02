@@ -61,15 +61,11 @@ H="http://127.0.0.1:$PORT"
 # README was measured at. Raising it would redefine the benchmark, not fix
 # it -- truncation cannot bias a timing measurement. The quality harnesses
 # below use 12288 for the opposite reason; see needle-test.py.
-{ hdr "throughput -- 700-token code-generation prompt, temperature 0.0, n=3"
-  for i in 1 2 3; do
-    curl -sS --max-time 900 "$H/v1/chat/completions" -H 'Content-Type: application/json' \
-      -d '{"messages":[{"role":"user","content":"Write a complete Python implementation of a thread-safe LRU cache class with get, put, and delete methods, full docstrings, and type hints. Then write pytest unit tests for it. Output only code."}],"max_tokens":700,"temperature":0.0,"chat_template_kwargs":{"enable_thinking":false}}' \
-    | python3 -c "
-import sys,json
-t=json.load(sys.stdin)['timings']
-print(f\"run$i  pp {t['prompt_per_second']:8.1f} tok/s | tg {t['predicted_per_second']:6.2f} tok/s | {t['predicted_n']:4d} tok in {t['predicted_ms']/1000:6.2f}s\")"
-  done
+# throughput-test.py replaced an inline curl loop on 2026-10-02: that loop's
+# pp column was a prompt-cache artefact and it dropped MTP draft acceptance.
+# See the script's docstring.
+{ hdr "throughput -- 700-token code-generation prompt, temperature 0.0, n=3, warmup discarded, prompt cache off"
+  "$HERE/throughput-test.py" --host "$H" --runs 3
   printf '\nVRAM %s MiB | GTT %s MiB\n' "$(mib $VRAM)" "$(mib $GTT)"
 } > "$OUTDIR/throughput.txt" 2>&1
 echo "    throughput.txt"
