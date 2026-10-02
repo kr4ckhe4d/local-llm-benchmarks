@@ -118,3 +118,74 @@ it to Q3_K_XL-v3's measured 321 MiB at depth, not to the probe's own figures.
 MTP at q8_0 KV or at 48k might fit where Q3_K_XL-v3 does not. **Neither was fit-tested.** Even if they fit, it would be
 trading 2x KLD and 18% speed for context, which the existing 64k/128k presets
 already provide without a drafter.
+
+---
+
+## The smaller sizes: IQ3_XXS and IQ2_S (2026-10-02)
+
+The repo also ships `IQ3_XXS-mtp` (10.4 GB) and `IQ2_S-mtp` (9.6 GB), 2.7 and
+3.5 GB under UD-Q3_K_XL-v3. That is more than the ~2.45 GB the MTP drafter
+costs, so the question was whether they buy MTP past its 32K ceiling, and at
+what price. Measured on llama.cpp `a868c3e3c`, with Q3_K_XL-v3 re-run beside
+them as the same-build control. Driver and raw output:
+`benchmarks/raw/gsq-rco-small/`.
+
+**Verdict: not adopted, and not the right file for MTP at depth either.** Both
+do unlock MTP at 64K and 128K, but at 3.8-5.2x the KLD, and Unsloth's own
+files of the same size are more faithful.
+
+| | UD-Q3_K_XL-v3 | GSQ-RCO IQ3_XXS | GSQ-RCO IQ2_S |
+|---|---|---|---|
+| Size | 13.1 GB | 10.4 GB | 9.6 GB |
+| Mean KLD vs Q8_0 | **0.0264** | 0.0996 (3.8x) | 0.1376 (5.2x) |
+| Same top-1 | **92.89%** | 86.28% | 83.93% |
+| tg, no MTP, shallow | 32.66 | 34.63 (+6%) | 36.01 (+10%) |
+| tg, no MTP, 16.8K deep | 25.34 | 26.59 | 27.31 |
+| tg, MTP, shallow | **70.00** | 56.21 (−20%) | 58.37 (−17%) |
+| tg, MTP, 16.8K deep | **63.79** | 53.04 (−17%) | 52.52 (−18%) |
+| Draft acceptance, shallow / deep | 84.6 / 85.7% | 82.0 / 84.5% | 85.2 / 82.4% |
+| MTP reach | 32K, q4_0 | **64K q8_0** (2,186 free), 128K q4_0 † | **64K q8_0** (2,992 free), **128K q4_0** (2,195 free) |
+
+tok/s, 700-token probe, `32k-mtp` flags (`-ub 512`, q4_0 KV). The control
+reproduces both its earlier scores: KLD 0.0264 vs 0.0265 on `7c35571e5`, MTP
+70.00 vs 70.05 this morning. IQ2_S at 128K q8_0 loads with 185 MiB free,
+under the 281 line, so it is not a fit. IQ3_XXS at 128K q8_0 fails outright.
+
+† Fits, but the row is suspect: it ran straight after the failed q8_0 load
+and saw a 101 MiB desktop baseline and GTT −149, so the desktop had been
+evicted. `model=14,802` suggests ~1,100 MiB free on a normal desktop.
+
+### Same kernel story as IQ3_S, only more so
+
+Without a drafter the smaller files are 6-10% *faster*, simply by being
+smaller. With MTP they are 17-20% slower, for the reason found for IQ3_S:
+`llama-bench` puts them level or ahead at one and two tokens and 19-25% behind
+at four to eight, where MTP verifies.
+
+| | pp1 | pp2 | pp4 | pp8 |
+|---|---|---|---|---|
+| Q3_K_XL-v3 | 25.5 | 54.5 | **94.1** | **136.0** |
+| GSQ-RCO IQ3_XXS | 32.3 | 58.9 | 70.9 | 110.7 |
+| GSQ-RCO IQ2_S | 28.0 | 60.3 | 71.8 | 110.2 |
+
+(`-r 3`; pp1 carries ±6-16 of noise, pp4/pp8 ±7-11.)
+
+### Unsloth's files of the same size are better
+
+KLD from this repo's earlier runs (BF16 reference, which the Q8_0 reference
+reproduces to within 1.5%):
+
+| File | Size | Mean KLD | Same top-1 |
+|---|---|---|---|
+| Unsloth UD-IQ3_XXS | 10.9 GB | **0.0589** | **89.28%** |
+| GSQ-RCO IQ3_XXS | 10.4 GB | 0.0996 | 86.28% |
+| Unsloth UD-Q2_K_XL | 9.8 GB | **0.0889** | **87.02%** |
+| GSQ-RCO IQ2_S | 9.6 GB | 0.1376 | 83.93% |
+
+Unsloth's Q2_K_XL is 0.6 GB *smaller* than GSQ-RCO IQ3_XXS and still closer
+to the reference. So if MTP at 64K is worth a fidelity cut, the cut should be
+made with an Unsloth file. UD-Q2_K_XL is also K-quant-heavy, so it may avoid
+the slow IQ small-batch path that costs GSQ-RCO its MTP speed. **That is
+untested**: neither Unsloth file has been run under MTP. Both KLD figures
+postdate Unsloth's 2026-08-19 re-quantisation (measured 2026-08-21 and
+2026-08-31), so they describe the files Hugging Face serves now.
