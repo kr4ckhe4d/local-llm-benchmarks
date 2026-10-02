@@ -104,3 +104,50 @@ The generation unit is unchanged — same prompt, temperature 0.0, thinking off,
 already in the README. Even with the cache off, the shallow prefill figure is
 ~54 tokens of mostly fixed overhead and swings ±20 tok/s; read prefill from a
 `--depth` run.
+
+## `qwen3.8-128k` re-verified, and `-ub 1024` rejected
+
+The 128K preset sits closest to the VRAM ceiling, so it was re-fit on the new
+build (`fit.sh`, with the fixes below) and then loaded with a real
+**128,212-token** prompt, 2,860 tokens short of the 131,072 limit.
+
+| `-ub` | Needs (excl. desktop) | Peak, real 128K prompt | Free | Prefill @ 128K | tg @ 128K |
+|---|---|---|---|---|---|
+| 512, `7c35571e5` | 15,662 | — | 365 (desktop 277) | — | — |
+| **512, `a868c3e3c`** | **15,220** | 15,784 | **520** (desktop 562) | **800 tok/s** | 9.76 |
+| 1024, `a868c3e3c` | 15,443 | 16,007 | 297 | 744 tok/s | 9.79 |
+
+GTT moved by 6 MiB or less in every row, so nothing spilled to host memory.
+
+* **The new build needs 442 MiB less for the same flags.** The preset is
+  safer now than when it shipped, even with today's desktop taking 285 MiB
+  more.
+* **`-ub 1024` is slower where this preset lives.** It was worth ~12% prefill
+  at shallow depth on 64K, but at 128K depth it loses 7%, and it leaves 297
+  MiB, 16 above the 281 danger line. n=1 per row, but slower *and* tighter
+  needs no second sample. The preset stays at `-ub 512`.
+* Generation at full depth is ~9.8 tok/s, a third of shallow. That is the
+  q4_0 KV and full attention over 128K tokens, and the batch size does not
+  move it.
+
+## `fit.sh`: the peak was a single sample
+
+The deep run exposed it. `fit.sh` read VRAM once, after a ten-token probe, and
+called that the peak: **15,763 MiB**, against **15,784** polled during the real
+128K prompt. Two causes, both fixed:
+
+1. **One sample is not a peak.** VRAM is now polled every 0.2s from launch to
+   the end of the probe. The spill check moves to the post-probe sample, which
+   is the reading whose drop below `loaded` signals a migration to GTT.
+2. **A ten-token prompt never runs a full batch,** so GEMM workspace that ROCm
+   allocates lazily on the first large batch was never counted. The probe is
+   now ~2,560 tokens (`PROBE_TOKENS`), enough to clear `-b 2048`.
+
+Re-run, the same config reads **15,782**, within 2 MiB of the real prompt. The
+cost was 21 MiB here, so earlier `fit.sh` rows read about that much
+optimistic, which matters only for rows within a few tens of MiB of the
+281 MiB line.
+
+Also added: an abort if another `llama-server` is running (its VRAM was
+silently counted as baseline; `ALLOW_OTHERS=1` to override), a warning when
+VRAM fails to settle before `BASE` is read, and deleting the log on success.
