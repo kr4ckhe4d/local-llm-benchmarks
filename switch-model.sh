@@ -34,7 +34,7 @@ STATE="$HOME/.cache/switch-model.last"
 # backend at all, so router and pinned mode are equivalent on that axis.
 PRESET="$LLAMA_DIR/models-preset.ini"
 ROUTER_BACKEND="build"   # ROCm
-MODELS_MAX=1             # 16GB card — a second resident model will not allocate
+MODELS_MAX=1             # MoE presets take 19-43 GB of the 48.9 across both cards
 
 # Idle sleep: after this many seconds with no requests, llama-server calls
 # destroy() and releases the model — VRAM drops to ~0 while the process keeps
@@ -53,8 +53,9 @@ declare -A MODEL_FILE=(
   [gemma4-q8]="gemma-4-26B-A4B-it-Q8_0.gguf"
   [gemma4-vision]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [muse-glimmer]="Muse-Glimmer-30B-UD-Q3_K_XL.gguf"
-  [qwen3.8]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
-  [qwen3.8-mtp]="Qwen3.8-27B-UD-Q3_K_XL-v3.gguf"
+  [qwen3.8]="Qwen3.8-27B-UD-IQ4_XS-v3.gguf"
+  [qwen3.8-mtp]="Qwen3.8-27B-UD-IQ4_XS-v3.gguf"   # kept for old commands; = qwen3.8
+  [qwen3.8-q8]="Qwen3.8-27B-Q8_0.gguf"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored-Q8_0.gguf"
   [glm4.7-flash]="GLM-4.7-Flash-UD-Q4_K_XL.gguf"
@@ -71,6 +72,7 @@ declare -A MODEL_LABEL=(
   [muse-glimmer]="Muse Glimmer 30B"
   [qwen3.8]="Qwen3.8-27B"
   [qwen3.8-mtp]="Qwen3.8-27B +MTP"
+  [qwen3.8-q8]="Qwen3.8-27B Q8_0 +MTP"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored"
   [glm4.7-flash]="GLM-4.7-Flash"
@@ -86,8 +88,9 @@ declare -A MODEL_BACKEND=(
   [gemma4-q8]="build"            # Q8_0: ROCm
   [gemma4-vision]="build"        # Q4_K_M + mmproj: ROCm
   [muse-glimmer]="build"         # Q3_K_XL: ROCm
-  [qwen3.8]="build"              # Q3_K_XL v3: ROCm
-  [qwen3.8-mtp]="build"          # Q3_K_XL v3 + MTP: ROCm
+  [qwen3.8]="build"              # IQ4_XS v3 + MTP: ROCm
+  [qwen3.8-mtp]="build"          # IQ4_XS v3 + MTP: ROCm
+  [qwen3.8-q8]="build"           # Q8_0 + MTP: ROCm
   [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
   [qwen3.5-9b-uncensored]="build" # Q8_0: ROCm
   [glm4.7-flash]="build"          # UD-Q4_K_XL: ROCm
@@ -120,6 +123,12 @@ declare -A CTX_TOKENS=(
 # "server is listening" with real headroom left over — not the absolute
 # tightest -ncmoe found. Combos not listed were either not tested or exceed
 # that model's supported context.
+# TWO CARDS since 2026-10-05 (9070 XT + R9700, 48.9 GB, auto layer split).
+# -ncmoe is gone from every MoE config below except laguna-q8:256k (2): the
+# experts now fit in VRAM, which is worth +40% to +185% generation. Comments
+# below that explain a particular -ncmoe value, or a feature dropped "for
+# VRAM", describe the single 16 GB card. models-preset.ini holds the measured
+# before/after for each config and is the reference; this table mirrors it.
 declare -A CONFIG=(
   # GPT-OSS-20B — native 131072, and that is already YaRN-stretched 32x from a
   # 4096 base (see gpt-oss.rope.scaling.* in the GGUF). 128k is its ceiling.
@@ -127,25 +136,25 @@ declare -A CONFIG=(
   ["gpt-oss-20b:128k"]=""
 
   # Qwen3.6-35B-A3B — hybrid attention, 40 layers, 10 with KV. Native 262144.
-  ["qwen3.6:32k"]="-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
-  ["qwen3.6:128k"]="-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
-  ["qwen3.6:256k"]="-ncmoe 24 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
+  ["qwen3.6:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
+  ["qwen3.6:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
+  ["qwen3.6:256k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0"
 
   # Laguna XS.2 (Poolside) — hybrid attention, 40 layers, 10 full (period 4) +
   # 30 SWA(512), 8 KV heads x 128 (4x Qwen3.6's). Thinking defaults off in the
   # template but the server does not honour that on its own — must pass
   # enable_thinking:false or it burns the whole token budget on reasoning.
-  ["laguna:32k"]="-ncmoe 16 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-  ["laguna:128k"]="-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-  ["laguna:256k"]="-ncmoe 26 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna:256k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
 
   # Laguna XS.2 at Q8_0 -- 33GB, near-lossless. Identical code-quality to
   # Q4_K_M (27/50 both) but +25 points on cdn-freshness. 30.2 tok/s vs 47.
   # Higher -ncmoe than Q4_K_M because the file is 1.8x larger; the payoff is
   # a roomier long-context fit (1,348 MiB free at 256K vs Q4_K_M's 490).
-  ["laguna-q8:32k"]="-ncmoe 26 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-  ["laguna-q8:128k"]="-ncmoe 30 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-  ["laguna-q8:256k"]="-ncmoe 34 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna-q8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna-q8:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
+  ["laguna-q8:256k"]="-ncmoe 2 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
 
   # Gemma 4 — RE-TUNED for ROCm. The old Vulkan values (5/8/16) do not load.
   # Not a hybrid-attention model. Native 262144.
@@ -154,23 +163,23 @@ declare -A CONFIG=(
   # at 32k: 51.2 -> 93.0 tok/s, 84% acceptance, mean run 3.5. The drafter's
   # own KV grows with context (~550MiB at 32k, ~1,300 at 128k), which is why
   # 128k runs -ncmoe 13 rather than the 12 it uses without MTP.
-  ["gemma4:32k"]="-ncmoe 8 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
-  ["gemma4:128k"]="-ncmoe 13 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
-  ["gemma4:256k"]="-ncmoe 20 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4:32k"]="-md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4:128k"]="-md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4:256k"]="-md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
 
   # Gemma 4 at Q8_0 — comparison config, not the default. Scored 33/50 on
   # code-quality against Q4_K_M's 37/50 and tied on cdn-freshness, for 10GB
   # more disk and 47% less generation. -ncmoe measured WITH the drafter.
-  ["gemma4-q8:32k"]="-ncmoe 17 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
-  ["gemma4-q8:128k"]="-ncmoe 20 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4-q8:32k"]="-md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4-q8:128k"]="-md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
   # Gemma 4 + vision (mmproj-F16, gemma4v) + MTP. The projector costs ~1.9GB,
   # so -ncmoe rises from the text preset's 8. Verified reading a probe image at
   # both contexts. 32k: ncmoe 10/11/12 -> 427/880/1,334 free. 128k: 14/15/16 ->
   # 163/588/1,043. Shipping the values with a real margin.
-  ["gemma4-vision:32k"]="-ncmoe 11 -mm models/mmproj-F16.gguf -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
-  ["gemma4-vision:128k"]="-ncmoe 16 -mm models/mmproj-F16.gguf -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4-vision:32k"]="-mm models/mmproj-F16.gguf -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4-vision:128k"]="-mm models/mmproj-F16.gguf -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
 
-  ["gemma4-q8:256k"]="-ncmoe 24 -md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
+  ["gemma4-q8:256k"]="-md models/mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp"
 
   # Muse Glimmer 30B — DENSE (no -ncmoe), 52 layers, 2 KV heads (16:1 GQA) and a
   # 2048-token sliding window on 3 of every 4 layers. That attention layout is
@@ -187,8 +196,8 @@ declare -A CONFIG=(
   # is dropped at 128k — with it, VRAM sits at 15.87/15.92 GiB and any real
   # prompt OOMs.
   ["muse-glimmer:32k"]="-md models/dflash-kquant.gguf --spec-type draft-dflash -ub 512 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
-  ["muse-glimmer:64k"]="-md models/dflash-kquant.gguf --spec-type draft-dflash -ub 256 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
-  ["muse-glimmer:128k"]="-fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
+  ["muse-glimmer:64k"]="-md models/dflash-kquant.gguf --spec-type draft-dflash -ub 512 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
+  ["muse-glimmer:128k"]="-md models/dflash-kquant.gguf --spec-type draft-dflash -ub 512 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 64 --chat-template-kwargs {\"reasoning_strength\":\"low\"}"
 
   # Qwen3.8-27B — DENSE 27B (no -ncmoe), hybrid attention, 64 layers, 16 with
   # KV. Native 262144, but this card cannot reach it: 4 KV heads x 256 across 16
@@ -210,31 +219,22 @@ declare -A CONFIG=(
   # at max_tokens 1200. reasoning_effort 'low' does NOT fix it (still 0 content),
   # and on an ill-posed prompt thinking never terminates at all — 28,174 chars
   # with no </think> at max_tokens 8000. Capping the budget restores content.
-  # 16k is the MTP preset: 2.34x generation (29.70 -> 69.47 tok/s), ~1s
-  # follow-ups. Costs a FIXED ~2,212 MiB (a second full context, not blk.64's
-  # 198.8 MiB of weights), which is why it cannot go past 16k — 24k leaves
-  # 95 MiB and 32k leaves 33. At 16k it leaves 415 MiB, verified at depth.
-  ["qwen3.8:16k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  # 64k runs q8_0, not q4_0, despite the tighter fit (697 MiB free vs 1,503).
-  # q4_0 KV costs up to 23% of generation at depth — measured, see README — and
-  # that is the depth this preset exists for. -ub 512 buys back the compute
-  # buffer q8_0 needs.
-  # ubatch 1024 at 64k and 512 at 128k, both up one step from the Dynamic 2.0
-  # presets. The v3 file is 391 MiB lighter (measured), which is exactly what
-  # pays for it: 64k now measures 746 MiB free, 128k 372-376 MiB — the latter
-  # both faster AND roomier than the old v2/ubatch-256 pairing's 281 MiB.
-  ["qwen3.8:64k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.8:128k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  # TWO CARDS (2026-10-05): every Qwen3.8 config is IQ4_XS-v3 + q8_0 KV + MTP.
+  # On 16 GB, MTP was confined to 16k/32k on Q3_K_XL with q4_0 KV, and 128k ran
+  # q4_0 without it. Now 71 tok/s shallow at any context, 27 at 128K depth (was
+  # 9.2). -ub 512 from 128k up: it beats 1024 by 15% prefill at depth. 16k is
+  # gone; it existed only because MTP fit nowhere larger. See models-preset.ini.
+  ["qwen3.8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:64k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:128k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:256k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
-  # Qwen3.8 + MTP at 32k. 16k MTP is "qwen3.8 16k" above; this is the only
-  # other context the drafter fits at -- 64k and 128k both fail to allocate,
-  # their baselines already leaving only 878 and 509 MiB. Needs q4_0 KV and
-  # ub 512 (q8_0/ub1024 will not allocate), and needs Q3_K_XL-v3: IQ4_XS-v3 is
-  # 1.1GB larger and OOMs building the draft context at every context, 16k
-  # included. Measured 29.52 -> 69.14 tok/s (2.34x), 86.8% acceptance, 321 MiB
-  # free. That is the shallow figure; q4_0 KV costs up to 23% at 32k depth.
-  ["qwen3.8-mtp:32k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  # qwen3.8-mtp is the same model and flags now; kept so old commands work.
+  ["qwen3.8-mtp:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+
+  # Q8_0 + MTP: near-lossless, 50 tok/s. 256k leaves 933 MiB on the 9070 XT.
+  ["qwen3.8-q8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8-q8:128k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
   # Qwen3.5-27B-Uncensored (HauhauCS, Aggressive) — DENSE 27B, arch qwen35, the
   # same architecture as qwen3.8 above one base version back. Same rules: no
@@ -250,7 +250,8 @@ declare -A CONFIG=(
   # No 128k. It loads (32 MiB free) but that is below the baseline drift above,
   # so it is not a preset you could select safely by accident.
   ["qwen3.5-uncensored:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.5-uncensored:64k"]="-ub 512 -b 2048 -fa on -ctk q4_0 -ctv q4_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-uncensored:64k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-uncensored:128k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
   # Qwen3.5-9B-Uncensored (HauhauCS, Aggressive) — DENSE 9B, arch qwen35, same
   # family as qwen3.5-uncensored above but 32 layers not 64: half the
@@ -280,11 +281,11 @@ declare -A CONFIG=(
   # both here, same as everywhere else in this file. min-p 0.01 because
   # llama.cpp's own default (0.05) is higher than upstream's recommendation.
   # q8_0 KV confirmed working for MLA on this build.
-  ["glm4.7-flash:32k"]="-ncmoe 12 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --min-p 0.01 --repeat-penalty 1.0 --reasoning-budget 1024"
-  ["glm4.7-flash:128k"]="-ncmoe 20 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --min-p 0.01 --repeat-penalty 1.0 --reasoning-budget 1024"
+  ["glm4.7-flash:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --min-p 0.01 --repeat-penalty 1.0 --reasoning-budget 1024"
+  ["glm4.7-flash:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --min-p 0.01 --repeat-penalty 1.0 --reasoning-budget 1024"
   # -ub 512, not 1024, to buy back compute-buffer headroom at native context —
   # same trick as qwen3.8's 128k preset.
-  ["glm4.7-flash:200k"]="-ncmoe 28 -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --min-p 0.01 --repeat-penalty 1.0 --reasoning-budget 1024"
+  ["glm4.7-flash:200k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --min-p 0.01 --repeat-penalty 1.0 --reasoning-budget 1024"
 
 
 )
@@ -311,42 +312,41 @@ Models:
   gpt-oss-20b    GPT-OSS-20B      11.3GB  MoE 21B / 3.6B active, native 128K
                                           fastest by far (~177 tok/s, all in VRAM)
   qwen3.6        Qwen3.6-35B-A3B  20.6GB  MoE 35B / 3B active, hybrid attn (40L)
+                                          74 tok/s at every context, no offload
   laguna         Laguna XS.2      18.9GB  MoE 33B / 3B active, hybrid attn (40L)
-                                          fastest coder here (47 tok/s) but the
-                                          least accurate — 27/50 code-quality
+                                          90 tok/s, but the least accurate coder
+                                          here — 27/50 code-quality
   laguna-q8      Laguna XS.2 Q8_0 33.2GB  same model, near-lossless. Same coding
-                                          score, +25pts library knowledge, 30 tok/s
+                                          score, +25pts library knowledge, 80 tok/s
   gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L)
-                                          +MTP drafter: 93 tok/s (1.79x)
-  gemma4-q8      Gemma 4 Q8_0     26.9GB  same model, flat Q8. No measured
-                                          quality gain; half the speed
+                                          +MTP drafter: 143 tok/s, fastest here
+  gemma4-q8      Gemma 4 Q8_0     26.9GB  same model, flat Q8. 132 tok/s, 8% off
+                                          Q4; fidelity gain not yet measured
   gemma4-vision  Gemma 4 +vision  17.0GB  Q4_K_M + 1.19GB mmproj, reads images
-                                          32k/128k, MTP included
+                                          32k/128k, MTP included, 143 tok/s
   muse-glimmer   Muse Glimmer 30B 12.4GB  DENSE 30B, sliding-window attn (52L)
-                                          agentic specialist, 52 tok/s with DFlash
-  qwen3.8        Qwen3.8-27B      12.5GB  DENSE 27B, hybrid attn (64L), thinking
-                                          32 tok/s shallow, but 9.6 at 131k depth
-  qwen3.8-mtp    Qwen3.8-27B +MTP 12.5GB  same file, MTP at 32k: 69 tok/s (2.34x)
-                                          costs q4_0 KV — see notes
+                                          agentic specialist, 65 tok/s with DFlash
+  qwen3.8        Qwen3.8-27B      13.3GB  DENSE 27B, hybrid attn (64L), thinking
+                                          IQ4_XS + MTP: 71 tok/s, 27 at 128k depth
+  qwen3.8-mtp    (same as qwen3.8, kept so old commands still work)
+  qwen3.8-q8     Qwen3.8-27B Q8_0 27.1GB  near-lossless + MTP: 50 tok/s. 32k/128k
   qwen3.5-uncensored
                  Qwen3.5-27B-Unc. 12.4GB  DENSE 27B, same arch as qwen3.8 one base
-                                          back. 32k/64k only. ~30 tok/s shallow
+                                          back. 32k-128k, ~32 tok/s, no MTP head
   qwen3.5-9b-uncensored
                  Qwen3.5-9B-Unc.  8.9GB   DENSE 9B, same family, half the layers.
                                           Reaches native 256k. ~56 tok/s shallow
   glm4.7-flash   GLM-4.7-Flash    16.3GB  MoE 30B/~3B active, MLA attention (not
-                                          Qwen). 32k/128k/200k. ~43 tok/s @32k
+                                          Qwen). 32k/128k/200k. 75 tok/s
 
 Context: 32k 64k 128k 200k 256k  (only sizes within each model's native trained
-range, further capped by what actually fits in 16GB VRAM. muse-glimmer caps
-at 128k, gpt-oss-20b at 128k. qwen3.8 and qwen3.5-uncensored (27B) are native
-256k but VRAM-capped at 128k/64k here — dense weights plus 4-KV-head attention
-leave no room; qwen3.5-9b-uncensored is the same architecture family with half
-the layers, which halves the per-token KV cost and reaches its full native
-256k with headroom to spare. glm4.7-flash's native ceiling is 202752, not a
-round bucket, hence the 200k label — its MoE weights only just exceed 16GB, so
-it needs far less CPU offload than qwen3.6 to reach any given context. 512k/1m
-are not offered by any model currently on disk. Run '$(basename "$0") list'.)
+range. Two cards since 2026-10-05, a 9070 XT and an R9700, 48.9 GB that
+llama.cpp splits every model across; nearly every config now fits with no CPU
+offload, so generation barely changes with context. muse-glimmer and
+gpt-oss-20b cap at 128k (native). qwen3.8-q8 stops at 128k: 256k leaves under
+1 GB on the 9070 XT. glm4.7-flash's native ceiling is 202752, not a round
+bucket, hence the 200k label. 512k/1m are not offered by any model currently
+on disk. Run '$(basename "$0") list'.)
 
 Notes:
   * 'router' vs '<model> <context>': the router serves every preset in
@@ -373,7 +373,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-q8 gemma4-vision muse-glimmer qwen3.8 qwen3.8-mtp qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
+  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-q8 gemma4-vision muse-glimmer qwen3.8 qwen3.8-mtp qwen3.8-q8 qwen3.5-uncensored qwen3.5-9b-uncensored glm4.7-flash; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"
@@ -589,7 +589,7 @@ switch_model() {
   printf '%s %s\n' "$model" "$ctx" > "$STATE"
   cd "$LLAMA_DIR"
   # shellcheck disable=SC2086
-  nohup "$bin" -m "models/$file" -ngl 99 -c "$tokens" $extra -np 1 \
+  nohup "$bin" -m "models/$file" -ngl 99 -c "$tokens" $extra -np 1 --load-mode dio \
     --sleep-idle-seconds "$SLEEP_IDLE" \
     --host "$HOST" --port "$PORT" > "$LOG" 2>&1 < /dev/null &
   disown
