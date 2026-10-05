@@ -20,6 +20,12 @@ HOST="0.0.0.0"
 # pinned model, or "router" — so 'start' can bring it back.
 STATE="$HOME/.cache/switch-model.last"
 
+# VRAM readings across every dGPU, added 2026-10-05 with the R9700. This used to
+# read card1 only, which with two cards is a fraction of a split model. The
+# script is reached through two symlinks (~/.local/bin, ~/llama.cpp), so resolve
+# the real path before looking for the helper next to it.
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/benchmarks/gpu-mem.sh"
+
 # Router mode: one process fronts every preset in models-preset.ini and loads
 # them on demand, so Open WebUI's dropdown switches models with no shell at all.
 # The router spawns children from /proc/self/exe, so every model runs on the
@@ -383,16 +389,12 @@ list_combos() {
   echo "  rocm = build/  (single backend — Vulkan retired)"
 }
 
-vram_used() {
-  awk '{printf "%d", $1/1024/1024}' /sys/class/drm/card1/device/mem_info_vram_used 2>/dev/null || echo "?"
-}
-
 # SIGTERM first — llama-server shuts down cleanly on it. In router mode
 # (--models-preset) this matches both the router and the child process it
 # spawned per model, since both are named llama-server.
 stop_server() {
   if ! pgrep -x llama-server > /dev/null 2>&1 && ! pgrep -x llama-cli > /dev/null 2>&1; then
-    echo "No llama-server running. VRAM in use: $(vram_used) / 16304 MiB"
+    echo "No llama-server running. VRAM in use: $(vram_report)"
     return 0
   fi
   echo "==> Stopping llama-server/llama-cli..."
@@ -415,7 +417,7 @@ stop_server() {
     ps -o pid,etime,cmd -C llama-server 2>/dev/null | tail -n +2 >&2 || true
     return 1
   fi
-  echo "==> Stopped. VRAM in use: $(vram_used) / 16304 MiB"
+  echo "==> Stopped. VRAM in use: $(vram_report)"
 }
 
 start_router() {
@@ -502,7 +504,7 @@ status() {
   echo "Health: $st"
   local vram
   vram=$(vram_used)
-  echo "VRAM in use: ${vram} / 16304 MiB"
+  echo "VRAM in use: $(vram_report)"
   # /health, /props and /v1/models all bypass the sleep state upstream, so none
   # of them report it and none of them wake the model — checking status is free.
   # Low VRAM against a live process is the observable signal.
@@ -570,7 +572,7 @@ switch_model() {
   # A big VRAM consumer (Resolve, a game, a compositor doing something odd)
   # is the usual cause of an allocation failure on a config that used to work.
   local vram_before
-  vram_before=$(awk '{printf "%d", $1/1024/1024}' /sys/class/drm/card1/device/mem_info_vram_used 2>/dev/null || echo 0)
+  vram_before=$(vram_used)
   if (( vram_before > 1500 )); then
     echo "    WARNING: ${vram_before} MiB of VRAM already in use before load."
     echo "    If this fails to allocate, close whatever is holding it (DaVinci"
@@ -616,9 +618,7 @@ switch_model() {
     exit 1
   fi
 
-  local vram_after
-  vram_after=$(awk '{printf "%d", $1/1024/1024}' /sys/class/drm/card1/device/mem_info_vram_used 2>/dev/null || echo "?")
-  echo "==> Loaded. VRAM: ${vram_after} / 16304 MiB"
+  echo "==> Loaded. VRAM: $(vram_report)"
   grep -iE 'kv_cache: size|recurrent: size' "$LOG" | tail -2 || true
 
   echo "==> Test request:"

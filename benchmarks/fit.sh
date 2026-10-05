@@ -19,9 +19,10 @@ LLAMA_DIR="$HOME/llama.cpp"
 # DFlash2 worktree at ~/llama.cpp-dflash2) can be measured without disturbing it.
 BIN="${BIN:-$LLAMA_DIR/build/bin/llama-server}"
 MODEL_DIR="$LLAMA_DIR/models"
-VRAM_USED=/sys/class/drm/card1/device/mem_info_vram_used
-VRAM_TOTAL=/sys/class/drm/card1/device/mem_info_vram_total
-GTT_USED=/sys/class/drm/card1/device/mem_info_gtt_used
+# VRAM/GTT summed across every dGPU, added 2026-10-05 with the R9700. With two
+# cards llama.cpp splits layers across both by default, so the old card1-only
+# reading saw a fraction of the model. See gpu-mem.sh.
+. "$(dirname "$(readlink -f "$0")")/gpu-mem.sh"
 # How far GTT may drift before a row is treated as spilled. Desktop GTT moved
 # <10 MiB across a whole session of measurements; a real spill moved it 150.
 GTT_TOLERANCE="${GTT_TOLERANCE:-48}"
@@ -34,8 +35,7 @@ CTX="$1"; shift
 MODEL="${MODEL:?set MODEL=<file.gguf> (relative to $MODEL_DIR)}"
 [ -f "$MODEL_DIR/$MODEL" ] || { echo "no such model: $MODEL_DIR/$MODEL" >&2; exit 2; }
 
-mib() { echo $(( $(cat "$1") / 1024 / 1024 )); }
-TOTAL=$(mib $VRAM_TOTAL)
+TOTAL=$(vram_total)
 
 # Settle before reading BASE, added 2026-08-31. A killed llama-server does not
 # release VRAM instantly, so back-to-back runs used to sample BASE while the
@@ -47,7 +47,7 @@ TOTAL=$(mib $VRAM_TOTAL)
 SETTLE_MAX="${SETTLE_MAX:-60}"
 prev=-1
 for _ in $(seq "$SETTLE_MAX"); do
-  cur=$(mib $VRAM_USED)
+  cur=$(vram_used)
   [ "$cur" -eq "$prev" ] && break
   prev=$cur
   sleep 1
@@ -64,8 +64,9 @@ if [ -z "${ALLOW_OTHERS:-}" ] && pgrep -x llama-server >/dev/null; then
   exit 2
 fi
 
-BASE=$(mib $VRAM_USED)
-GTT_BASE=$(mib $GTT_USED)
+BASE=$(vram_used)
+GTT_BASE=$(gtt_used)
+CARD_BASE=(); for i in "${!GPU_DEVS[@]}"; do CARD_BASE[i]=$(gpu_mib "$i" vram_used); done
 
 cleanup() {
   [ -n "${PID:-}" ] && kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null
@@ -90,9 +91,22 @@ PID=$!
 # taken after the probe, which misses anything transient. Measured against a
 # real 128K-token prompt on the qwen3.8-128k preset, the old single sample read
 # 15,763 MiB and the true peak was 15,784.
+#
+# Per card as well as summed, added 2026-10-05. A split config fails when ONE
+# card fills, so the binding figure is the tightest card's headroom, not the
+# sum's. The summed peak is the max of the sum over time, not the sum of the
+# per-card maxima, which can come from different moments.
+# File format: "<summed peak> <card0 peak> <card1 peak> ..."
 PEAKF="$LOG.peak"; echo 0 >"$PEAKF"
-( p=0; while kill -0 "$PID" 2>/dev/null; do
-    v=$(mib $VRAM_USED); [ "$v" -gt "$p" ] && p=$v && echo "$p" >"$PEAKF"
+( s=0; p=(); for i in "${!GPU_DEVS[@]}"; do p[i]=0; done
+  while kill -0 "$PID" 2>/dev/null; do
+    t=0
+    for i in "${!GPU_DEVS[@]}"; do
+      v=$(gpu_mib "$i" vram_used); t=$(( t + v ))
+      [ "$v" -gt "${p[i]}" ] && p[i]=$v
+    done
+    [ "$t" -gt "$s" ] && s=$t
+    echo "$s ${p[*]}" >"$PEAKF"
     sleep 0.2
   done ) &
 POLL=$!
@@ -110,8 +124,9 @@ for _ in $(seq "$TIMEOUT"); do
 done
 grep -q "listening on" "$LOG" || { echo "TIMEOUT after ${TIMEOUT}s  ctx=$CTX  $*"; exit 1; }
 
-LOADED=$(mib $VRAM_USED)
-GTT_LOADED=$(mib $GTT_USED)
+LOADED=$(vram_used)
+GTT_LOADED=$(gtt_used)
+CARD_LOADED=(); for i in "${!GPU_DEVS[@]}"; do CARD_LOADED[i]=$(gpu_mib "$i" vram_used); done
 
 # Generation probe — forces the compute buffers to allocate for real.
 # The prompt is ~PROBE_TOKENS long, added 2026-10-02: a one-line prompt never
@@ -132,10 +147,11 @@ if ! grep -q '"content"' <<<"$PROBE"; then
   exit 1
 fi
 
-POST=$(mib $VRAM_USED)
+POST=$(vram_used)
+CARD_POST=(); for i in "${!GPU_DEVS[@]}"; do CARD_POST[i]=$(gpu_mib "$i" vram_used); done
 sleep 0.4  # one more poller tick
-PEAK=$(cat "$PEAKF")
-GTT_PEAK=$(mib $GTT_USED)
+read -r PEAK CARD_PEAK_STR <"$PEAKF"; read -r -a CARD_PEAK <<<"$CARD_PEAK_STR"
+GTT_PEAK=$(gtt_used)
 GTT_DELTA=$(( GTT_PEAK - GTT_BASE ))
 # printf %+d so a negative drift reads "gtt-24", not "gtt+-24"
 [ "$GTT_LOADED" -gt "$GTT_PEAK" ] && GTT_DELTA=$(( GTT_LOADED - GTT_BASE ))
@@ -153,7 +169,11 @@ GTT_DELTA=$(( GTT_PEAK - GTT_BASE ))
 # Reproduced twice. Two independent signatures catch it:
 #   1. POST < LOADED  -- VRAM fell after load, i.e. something moved out
 #   2. GTT rose beyond tolerance -- we can see where it moved to
-if [ "$POST" -lt "$LOADED" ] || [ "$GTT_DELTA" -gt "$GTT_TOLERANCE" ]; then
+# With two cards the first signature is checked per card too: a buffer can move
+# off one card while the other grows, leaving the sum flat.
+CARD_DROP=0
+for i in "${!GPU_DEVS[@]}"; do [ "${CARD_POST[i]}" -lt "${CARD_LOADED[i]}" ] && CARD_DROP=1; done
+if [ "$POST" -lt "$LOADED" ] || [ "$CARD_DROP" -eq 1 ] || [ "$GTT_DELTA" -gt "$GTT_TOLERANCE" ]; then
   echo "SPILL ctx=$CTX  loaded=${LOADED}  post=${POST}  free_at_load=$(( TOTAL - LOADED ))  gtt$(printf %+d "$GTT_DELTA")  (total=${TOTAL}, base=${BASE})  flags: $*"
   echo "      -> host-memory spill, NOT a fit. Judge by free_at_load=$(( TOTAL - LOADED )), not by peak."
   exit 1
@@ -164,5 +184,17 @@ fi
 # between sessions. Calibrating against README's Qwen3.8-27B 32K row showed the
 # raw numbers differ by 440 MiB purely from baseline drift, while the
 # baseline-subtracted figure reproduced to within 1 MiB.
+#
+# With more than one card, a second line gives each card's share and marks the
+# tightest. Judge a split config by that card's free, not by the summed free.
 echo "ctx=$CTX  model=$(( PEAK - BASE ))  peak=${PEAK}  free=$(( TOTAL - PEAK ))  (total=${TOTAL}, base=${BASE}, loaded=${LOADED}, gtt$(printf %+d "$GTT_DELTA"))  flags: $*"
+if [ "${#GPU_DEVS[@]}" -gt 1 ]; then
+  line="      per-card:"; tight=""; tight_free=-1
+  for i in "${!GPU_DEVS[@]}"; do
+    n=$(gpu_name "$i"); t=$(gpu_mib "$i" vram_total); f=$(( t - CARD_PEAK[i] ))
+    line+="  $n model=$(( CARD_PEAK[i] - CARD_BASE[i] )) peak=${CARD_PEAK[i]} free=$f"
+    if [ "$tight_free" -lt 0 ] || [ "$f" -lt "$tight_free" ]; then tight=$n; tight_free=$f; fi
+  done
+  echo "$line  | tightest: $tight $tight_free free"
+fi
 rm -f "$LOG" "$PEAKF"  # success only; every failure path above keeps the log

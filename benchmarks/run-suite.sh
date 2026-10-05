@@ -19,16 +19,14 @@ LLAMA_DIR="$HOME/llama.cpp"
 BIN="${BIN:-$LLAMA_DIR/build/bin/llama-server}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT="${PORT:-8099}"
-VRAM=/sys/class/drm/card1/device/mem_info_vram_used
-GTT=/sys/class/drm/card1/device/mem_info_gtt_used
+. "$HERE/gpu-mem.sh"     # VRAM/GTT summed across every dGPU
 
 [ $# -ge 4 ] || { echo "usage: $0 <out-dir> <model.gguf> <ctx> \"<flags>\" [extra-server-flags]" >&2; exit 2; }
 LABEL="$1"; OUTDIR="$HERE/$1"; MODEL="$2"; CTX="$3"; FLAGS="$4"; shift 4
 EXTRA=("$@")
 mkdir -p "$OUTDIR"
 
-mib() { echo $(( $(cat "$1") / 1048576 )); }
-settle() { for _ in $(seq 60); do [ "$(mib $VRAM)" -lt 900 ] && return 0; sleep 1; done; return 1; }
+settle() { for _ in $(seq 60); do vram_idle 900 && return 0; sleep 1; done; return 1; }
 
 hdr() {
   printf '# %s\n# model : %s\n# ctx   : %s\n# flags : %s %s\n# host  : %s, llama.cpp %s\n# date  : %s\n\n' \
@@ -51,7 +49,7 @@ for _ in $(seq 600); do
   kill -0 $PID 2>/dev/null || { echo "LOAD FAILED"; grep -iE "failed|error" "$LOG" | tail -3; exit 1; }
   sleep 1
 done
-echo "    up. VRAM $(mib $VRAM) MiB, GTT $(mib $GTT) MiB"
+echo "    up. VRAM $(vram_report), GTT $(gtt_used) MiB"
 
 H="http://127.0.0.1:$PORT"
 
@@ -66,7 +64,7 @@ H="http://127.0.0.1:$PORT"
 # See the script's docstring.
 { hdr "throughput -- 700-token code-generation prompt, temperature 0.0, n=3, warmup discarded, prompt cache off"
   "$HERE/throughput-test.py" --host "$H" --runs 3
-  printf '\nVRAM %s MiB | GTT %s MiB\n' "$(mib $VRAM)" "$(mib $GTT)"
+  printf '\nVRAM %s | GTT %s MiB\n' "$(vram_report)" "$(gtt_used)"
 } > "$OUTDIR/throughput.txt" 2>&1
 echo "    throughput.txt"
 

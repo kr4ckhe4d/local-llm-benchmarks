@@ -65,10 +65,8 @@ KLD_DIR="${KLD_DIR:-$LLAMA_DIR/kld}"
 CORPUS="${CORPUS:-$KLD_DIR/wikitext-2-raw/wiki.test.raw}"
 BASE_FILE="${BASE_FILE:-$KLD_DIR/qwen3.8-27B-bf16.kld}"
 CTX=512                       # KLD convention; do not change without regenerating the base
-VRAM=/sys/class/drm/card1/device/mem_info_vram_used
-GTT=/sys/class/drm/card1/device/mem_info_gtt_used
+. "$HERE/gpu-mem.sh"     # VRAM/GTT summed across every dGPU
 
-mib() { echo $(( $(cat "$1") / 1048576 )); }
 die() { echo "$*" >&2; exit 2; }
 
 [ -f "$CORPUS" ] || die "no corpus at $CORPUS"
@@ -80,12 +78,12 @@ base)
   [ -f "$MODEL_DIR/$MODEL" ] || die "no such model: $MODEL_DIR/$MODEL"
   mkdir -p "$KLD_DIR"
   echo "==> base: $MODEL, $CHUNKS chunks -> $BASE_FILE"
-  echo "    VRAM before: $(mib $VRAM) MiB, GTT $(mib $GTT) MiB"
+  echo "    VRAM before: $(vram_report), GTT $(gtt_used) MiB"
   # shellcheck disable=SC2086
   "$BIN" -m "$MODEL_DIR/$MODEL" -f "$CORPUS" -c "$CTX" --chunks "$CHUNKS" \
          $EXTRA --kl-divergence-base "$BASE_FILE"
   rc=$?
-  echo "    VRAM after: $(mib $VRAM) MiB, GTT $(mib $GTT) MiB"
+  echo "    VRAM after: $(vram_report), GTT $(gtt_used) MiB"
   [ $rc -eq 0 ] || die "base generation failed rc=$rc"
   ls -la "$BASE_FILE"
   ;;
@@ -120,7 +118,7 @@ PY
     # shellcheck disable=SC2086
     "$BIN" -m "$MODEL_DIR/$MODEL" -f "$CORPUS" -c "$CTX" --chunks "$CHUNKS" \
            $EXTRA --kl-divergence --kl-divergence-base "$BASE_FILE" 2>&1
-    printf '\nVRAM %s MiB | GTT %s MiB\n' "$(mib $VRAM)" "$(mib $GTT)"
+    printf '\nVRAM %s | GTT %s MiB\n' "$(vram_report)" "$(gtt_used)"
   } | tee "$OUT" | grep -E "Mean KLD|Mean Δp|RMS Δp|Same top p|Final estimate|99.0%   KLD"
   echo "==> $OUT"
   ;;
