@@ -8,6 +8,7 @@ New = the same flags with the smallest n-cpu-moe that fits, ideally none.
   python3 moe_sweep.py <out.txt> [preset ...]
   DIO=1 python3 moe_sweep.py <out.txt> [preset ...]   # load with --load-mode dio
   PRESETS=/tmp/old.ini python3 moe_sweep.py ...       # sweep another preset file
+  LOGDIR=logs python3 moe_sweep.py ...                # keep llama-server logs there
 
 PRESETS was added after the run, for reproducing the "as written" column
 without touching the live file the router reads:
@@ -23,6 +24,7 @@ REPO = "/home/nipuna/code/local-llm-benchmarks"
 BIN = "/home/nipuna/llama.cpp/build/bin/llama-server"
 MARGIN = int(os.environ.get("MARGIN", 1024))
 PRESETS = os.environ.get("PRESETS", f"{REPO}/models-preset.ini")
+LOGDIR = os.environ.get("LOGDIR", "/tmp/claude-1000")
 OUT = sys.argv[1]
 ONLY = sys.argv[2:]  # optional preset names
 
@@ -92,7 +94,7 @@ def wait_idle():
 
 def probe(p, ncmoe):
     wait_idle()
-    logf = open(f"/tmp/claude-1000/sweep-{p['name']}-{ncmoe}.log", "w")
+    logf = open(f"{LOGDIR}/sweep-{p['name']}-{ncmoe}.log", "w")
     proc = subprocess.Popen([BIN, "-m", p["model"], "-ngl", "99", "-np", "1", "-c", p["ctx-size"],
                              *flags(p, ncmoe), "--host", "127.0.0.1", "--port", "8099"],
                             stdout=logf, stderr=subprocess.STDOUT)

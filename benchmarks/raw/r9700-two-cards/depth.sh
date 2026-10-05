@@ -9,6 +9,7 @@ BIN=/home/nipuna/llama.cpp/build/bin/llama-server
 M=/home/nipuna/llama.cpp/models
 CORPUS=/home/nipuna/llama.cpp/kld/wikitext-2-raw/wiki.test.raw
 TARGET=${TARGET:-128000}
+LOGDIR=${LOGDIR:-/tmp}
 . "$B/gpu-mem.sh"
 Q="--temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
@@ -16,10 +17,10 @@ depth() {  # depth <label> <model> <flags...>
   local label=$1 model=$2; shift 2
   for _ in $(seq 90); do vram_idle 900 && break; sleep 1; done
   "$BIN" -m "$M/$model" -ngl 99 -np 1 -c 131072 --load-mode dio "$@" $Q \
-    --host 127.0.0.1 --port 8099 > "/tmp/depth-$label.log" 2>&1 &
+    --host 127.0.0.1 --port 8099 > "$LOGDIR/depth-$label.log" 2>&1 &
   local pid=$!
   for _ in $(seq 300); do curl -s localhost:8099/health 2>/dev/null | grep -q ok && break; sleep 1; done
-  ( while kill -0 $pid 2>/dev/null; do vram_used >> "/tmp/depth-$label.vram"; sleep 1; done ) &
+  ( while kill -0 $pid 2>/dev/null; do vram_used >> "$LOGDIR/depth-$label.vram"; sleep 1; done ) &
   local poll=$!
   python3 - "$label" "$TARGET" "$CORPUS" <<'PY'
 import json, sys, urllib.request
@@ -41,8 +42,8 @@ print(f"{label:28} prompt {t['prompt_n']:6d} tok @ {t['prompt_per_second']:7.1f}
       f"tg {t['predicted_per_second']:6.2f} tok/s ({t['predicted_n']} tok){acc}")
 PY
   kill $pid; wait $pid 2>/dev/null; kill $poll 2>/dev/null
-  echo "    VRAM peak $(sort -n "/tmp/depth-$label.vram" | tail -1) MiB summed"
-  rm -f "/tmp/depth-$label.vram"
+  echo "    VRAM peak $(sort -n "$LOGDIR/depth-$label.vram" | tail -1) MiB summed"
+  rm -f "$LOGDIR/depth-$label.vram"
 }
 
 depth new-ub512   Qwen3.8-27B-UD-IQ4_XS-v3.gguf  -ub 512  -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp

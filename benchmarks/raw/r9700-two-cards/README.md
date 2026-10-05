@@ -16,13 +16,25 @@ What is here instead:
   transcription, not a capture: the summary lines exactly as printed, with long
   flag lists dropped. Every figure in it also appears in `models-preset.ini`
   comments or in commit `c18f1bc`.
+* **`logs/`**, a captured rerun of the Qwen3.8 half, the same night
+  (23:11-23:26): `dense.sh qwen38` and `depth.sh` through `logs/run-qwen38.sh`,
+  with `qwen38-rerun.txt` as the summary and every llama-server log beside it.
+  It reproduces `results.txt` sections 4-6. The Qwen3.8 32K MTP runs moved from
+  `dense.sh rest` into `dense.sh qwen38` for it, and both scripts now take
+  `LOGDIR` (default `/tmp`) so a rerun can keep its logs.
+* **`logs/gemma-sweep.txt`**, the eight Gemma 4 rows of the MoE sweep, rerun
+  23:30-23:39 through `logs/run-gemma.sh` against `logs/presets-4c4b695.ini`
+  (the single-card presets, so "as written" is the same before). It reproduces
+  the Gemma rows of `results.txt` section 1. `moe_sweep.py` also takes `LOGDIR`
+  now.
 
 | File | What it ran |
 |---|---|
 | `moe_sweep.py` | every MoE preset: least `n-cpu-moe` with 1 GiB free on the tightest card, then old vs new on the 700-token probe |
-| `dense.sh` | Qwen3.8 IQ4_XS vs Q8_0 with and without MTP; Qwen3.5-27B 64k; Muse-Glimmer 64k/128k |
+| `dense.sh` | `qwen38`: Qwen3.8 IQ4_XS vs Q8_0 with and without MTP, 32K-256K. `rest`: Qwen3.5-27B 64k; Muse-Glimmer 64k/128k |
 | `depth.sh` | Qwen3.8 at a real 128,025-token prompt: `-ub 512` vs 1024, and the old preset |
-| `results.txt` | what they printed |
+| `results.txt` | what they printed, transcribed |
+| `logs/` | the Qwen3.8 rerun, captured |
 
 All three need `benchmarks/gpu-mem.sh` and `fit.sh` as of commit `4c4b695`.
 Nothing else may hold a GPU while they run; `fit.sh` refuses if another
