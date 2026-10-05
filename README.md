@@ -21,6 +21,15 @@ is why each spec keeps showing up in the results.
 > +3-7%**, MTP acceptance flat — and the rebuilt throughput probe are in
 > **[llama-a868c3e3c.md](llama-a868c3e3c.md)**.
 
+> **A second card went in on 2026-10-05** — a Radeon AI PRO R9700 (32 GB)
+> beside the 9070 XT, 48.9 GB total, both PCIe 5.0 x8. This file stays the
+> single-card record, and every "16 GB" constraint below is that card's. With
+> two cards, **MoE presets drop CPU offload entirely and gain 40-185%**, flat
+> with context (Gemma 4 143 tok/s, Laguna 90, Qwen3.6 74), and **Qwen3.8 runs
+> IQ4_XS + MTP at every context, 71 tok/s, 3x faster at 128K depth**. Every
+> preset was re-fit; the measurements are in
+> **[r9700+rx9070.md](r9700+rx9070.md)**.
+
 | Component | Spec | Why it matters here |
 |---|---|---|
 | **GPU** | AMD Radeon RX 9070 XT — Navi 48, `gfx1201`, RDNA4, **16,304 MiB VRAM** | The binding constraint on this whole file. Every `-ncmoe`, KV-quant and `-ub` decision is bought against these 16GB |

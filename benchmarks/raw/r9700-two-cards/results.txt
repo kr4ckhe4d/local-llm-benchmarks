@@ -1,0 +1,114 @@
+# Two-card results, 2026-10-05. TRANSCRIBED from session output; see README.md.
+# host  : Linux 7.2.6-1-cachyos, ROCm 7.2.53211-3d9ef42, llama.cpp build 11345 (a868c3e3c)
+# cards : RX 9070 XT 16,304 MiB (ROCm0, DRM card1) + AI PRO R9700 32,624 MiB
+#         (ROCm1, DRM card0), both PCIe 5.0 x8 from CPU root ports
+# probe : 700-token code prompt, temp 0, n=3; tg is the median run, tok/s
+# free  : fit.sh, tightest card (always the 9070 XT), MiB, real 2,560-token probe
+
+## 0. First look -- existing presets, no changes, auto split
+
+Qwen3.8-27B IQ4_XS-v3, 32k, -ub 1024, q8_0 KV, no MTP (the qwen3.8-27B-32k preset)
+  split: R9700 10,885 MiB + 9070 XT 5,479 MiB
+  run1 31.58 | run2 31.57 | run3 31.56        (single card recorded: 30.27)
+
+Qwen3.6-35B-A3B Q4_K_M, 128k, -ub 1024, q8_0 KV, NO preset sampling flags
+  -ncmoe 20 : R9700 12,711 + 9070 XT 2,577 MiB | tg 51.57 51.69 51.77 | pp warm ~90
+  -ncmoe 0  : R9700 16,297 + 9070 XT 9,706 MiB | tg 77.13 77.18 77.16 | pp warm ~129
+  (the sweep below, with the preset's sampling incl. presence-penalty 1.5, reads
+   73.96 for the same no-offload config: ~4% lower, not investigated)
+
+## 1. MoE sweep -- moe_sweep.py, margin 1024 MiB
+#  qwen3.6 + laguna Q4: mmap load. laguna Q8, gemma4, glm: DIO=1 (both old and new).
+
+preset                       as written          new                   free
+qwen3.6-35B-A3B-32k          52.91 (ncmoe 16)    73.93 (0)             7,731
+qwen3.6-35B-A3B-128k         50.12 (ncmoe 20)    73.96 (0)             6,496
+qwen3.6-35B-A3B-256k         47.49 (ncmoe 24)    73.73 (0)             4,808
+laguna-33B-A3B-32k           60.47 (ncmoe 16)    89.95 (0)             8,108
+laguna-33B-A3B-128k          57.03 (ncmoe 20)    89.72 (0)             6,139
+laguna-33B-A3B-256k          52.82 (ncmoe 26)    89.81 (0)             3,517
+laguna-33B-A3B-q8-32k        40.99 (ncmoe 26)    80.34 (0)             3,314
+laguna-33B-A3B-q8-128k       38.54 (ncmoe 30)    80.32 (0)             1,346
+laguna-33B-A3B-q8-256k       36.17 (ncmoe 34)    75.94 (2)             1,116
+gemma4-26B-A4B-32k           92.62 (ncmoe  8)   143.50 (0)             8,930
+gemma4-26B-A4B-128k          79.01 (ncmoe 13)   143.64 (0)             8,162
+gemma4-26B-A4B-256k          68.25 (ncmoe 20)   142.45 (0)             6,998
+gemma4-26B-A4B-vision-32k    83.42 (ncmoe 11)   143.60 (0)             7,500
+gemma4-26B-A4B-vision-128k   73.82 (ncmoe 16)   143.14 (0)             6,732
+gemma4-26B-A4B-q8-32k        54.86 (ncmoe 17)   132.44 (0)             5,297
+gemma4-26B-A4B-q8-128k       51.25 (ncmoe 20)   132.55 (0)             4,529
+gemma4-26B-A4B-q8-256k       46.40 (ncmoe 24)   132.39 (0)             3,505
+glm-4.7-flash-30B-A3B-32k    53.76 (ncmoe 12)    74.88 (0)             8,919
+glm-4.7-flash-30B-A3B-128k   45.43 (ncmoe 20)    74.77 (0)             7,251
+glm-4.7-flash-30B-A3B-200k   40.25 (ncmoe 28)    74.80 (0)             6,885
+
+laguna-33B-A3B-q8-256k, ncmoe 0 (rejected):
+  ctx=262144 model=43325 peak=43934 free=4994
+  per-card: R9700 model=27873 peak=27930 free=4694  9070XT model=15452 peak=16004 free=300
+laguna-33B-A3B-q8-256k, ncmoe 2 (shipped):
+  per-card: R9700 free=4694  9070XT model=14636 peak=15188 free=1116
+laguna-33B-A3B-q8-256k, ncmoe 34 old probe, third run: 13.18 tok/s (outlier; median 36.17)
+
+laguna-33B-A3B-q8-32k under mmap (first sweep, no DIO):
+  fit ncmoe=0  NO  TIMEOUT after 300s -- never reached "listening on"; IO pressure 52%
+
+## 2. Laguna Q8 at 256k, rebalancing the split instead of offloading (fit.sh, dio)
+
+-ts 3,7      SPILL loaded=46526 post=46661 free_at_load=2402 gtt+449
+-ts 2.8,7.2  model=46452 peak=46746 free=2182
+             per-card: R9700 peak=31734 free=890  9070XT peak=15012 free=1292
+
+## 3. Load mode (llama-server to "listening on", Qwen3.6 Q4_K_M 22 GB, 32k)
+
+auto (mmap)  5.6 s   then  1.8 s (warm page cache)
+dio          3.8 s   then  3.8 s
+Laguna Q8 35.6 GB, fit.sh 32k ncmoe 0: dio 10 s end to end; mmap > 300 s (timeout)
+
+## 4. Qwen3.8-27B -- dense.sh qwen38 (q8_0 KV, -ub 1024)
+
+config                    tg runs                       draft    free
+IQ4_XS 128k no drafter    31.58 31.56 31.55             --       8,834
+IQ4_XS 128k MTP           70.39 71.23 71.28             85.1%    8,675
+IQ4_XS 256k MTP           70.42 71.17 71.20             85.1%    5,778
+Q8_0   128k no drafter    19.15 19.14 19.10             --       3,986
+Q8_0   128k MTP           49.94 50.47 50.45             83.8%    3,829
+Q8_0   256k MTP           49.96 50.46 50.43             83.8%      933  (R9700 1,188) -> not shipped
+
+## 5. dense.sh rest
+
+Qwen3.8 IQ4_XS 32k MTP -ub 1024   70.81 71.48 71.38  85.1%  free 10,847
+Qwen3.8 Q8_0   32k MTP -ub 1024   49.97 50.49 50.49  83.8%  free  6,001
+Qwen3.5-27B 64k q4_0 -ub 512      32.07 32.07 32.07         free 10,735
+Qwen3.5-27B 64k q8_0 -ub 1024     32.37 32.36 32.32         free 10,059
+Muse 64k  DFlash -ub 256          64.41 65.25 65.21  81.1%  free 10,701
+Muse 64k  DFlash -ub 512          64.41 65.26 65.16  81.1%  free 10,349
+Muse 128k no drafter              34.86 34.87 34.85         free 10,814
+Muse 128k DFlash -ub 512          64.40 65.23 65.19  81.1%  free  9,929
+
+Final fits at the shipped flags (fit.sh, dio, q8_0 KV):
+Qwen3.8 IQ4_XS 128k MTP -ub 512   model=22247  9070XT free 9,138
+Qwen3.8 IQ4_XS 256k MTP -ub 512   model=29671  9070XT free 6,754
+Qwen3.8 Q8_0   128k MTP -ub 512   model=35580  9070XT free 4,292
+Qwen3.5-27B    128k     -ub 1024  model=20870  9070XT free 8,427
+
+## 6. depth.sh -- one 128,025-token prompt each, 256 max tokens
+
+new-ub512   prompt 128025 tok @ 1054.2 tok/s | tg 27.32 tok/s (135 tok) | draft 59.7% | VRAM peak 22,638
+new-ub1024  prompt 128025 tok @  920.0 tok/s | tg 27.80 tok/s (129 tok) | draft 61.5% | VRAM peak 24,664
+old-preset  prompt 128025 tok @ 1187.2 tok/s | tg  9.23 tok/s (149 tok) |             | VRAM peak 18,075
+
+nvtop during old-preset prefill: R9700 100% busy, 300/300 W, 2,776 MHz, 63 C, fan 62%;
+9070 XT 53% busy (eff 32%), 205/330 W, 62 C.
+
+## 7. Router check on the committed preset file (port 8098, --models-max 1)
+
+36 presets listed. Short code reply, temp 0:
+qwen3.8-27B-16k-mtp (alias)   ok | tg 71.4 | draft 94%
+qwen3.8-64k (alias)           ok | tg 71.3 | draft 94%
+qwen3.8-27B-256k              ok | tg 71.0 | draft 94%
+qwen3.8-27B-q8-128k           ok | tg 51.4 | draft 94%
+qwen3.5-27B-uncensored-128k   ok | tg 32.3 | no drafter
+muse-glimmer-30B-128k         ok | tg 57.7 | draft 68%
+laguna-33B-A3B-q8-256k        ok | loaded 9 s | R9700 27,901 + 9070 XT 14,900 MiB
+gemma4-26B-A4B-vision-128k    ok | loaded 4 s | R9700 14,796 + 9070 XT  9,142 MiB
+qwen3.6-35B-A3B-256k          ok | loaded 5 s | R9700 18,588 + 9070 XT 11,209 MiB

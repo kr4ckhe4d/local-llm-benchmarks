@@ -5,6 +5,16 @@
 # See that repo's README for the raw numbers behind every config below.
 set -euo pipefail
 
+# This script drives the GPUs on the Linux box, so refuse anywhere else. The
+# tables below need bash 4+ (declare -A); macOS ships bash 3.2, where the first
+# one dies as "gpt: unbound variable". The /sys check also catches a Mac with a
+# newer bash from Homebrew.
+if (( BASH_VERSINFO[0] < 4 )) || [[ ! -d /sys/class/drm ]]; then
+  echo "switch-model.sh runs on the GPU box (needs bash 4+ and /sys/class/drm)." >&2
+  echo "From another machine: ssh <gpu-box> switch-model ${*:-router}" >&2
+  exit 2
+fi
+
 LLAMA_DIR="$HOME/llama.cpp"
 # Single backend: build/ (ROCm). Vulkan was retired — its only win was shallow
 # MXFP4 generation for gpt-oss-20b (181 vs 148 tok/s), which applied solely to
