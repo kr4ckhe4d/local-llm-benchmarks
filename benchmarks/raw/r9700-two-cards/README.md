@@ -27,6 +27,11 @@ What is here instead:
   (the single-card presets, so "as written" is the same before). It reproduces
   the Gemma rows of `results.txt` section 1. `moe_sweep.py` also takes `LOGDIR`
   now.
+* **`logs/gemma-q8.txt`** (`run-gemma-q8.sh`): Gemma 4 Q8_0 vision fits at
+  32K/128K/256K, the probe image end to end at 128K, and a Q4-vs-Q8_0 KLD run
+  that came out invalid (`gemma-kld-q4-vs-q8-INVALID.txt`; see "Open" in
+  r9700+rx9070.md). `gemma-ppl-diagnostics.txt` has the 8-chunk perplexity
+  runs that ruled out the split, batch size and SWA cache.
 
 | File | What it ran |
 |---|---|
