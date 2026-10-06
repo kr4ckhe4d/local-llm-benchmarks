@@ -8,6 +8,8 @@ New = the same flags with the smallest n-cpu-moe that fits, ideally none.
   python3 moe_sweep.py <out.txt> [preset ...]
   DIO=1 python3 moe_sweep.py <out.txt> [preset ...]   # load with --load-mode dio
   PRESETS=/tmp/old.ini python3 moe_sweep.py ...       # sweep another preset file
+  BIN=~/llama.cpp-x/build/bin/llama-server ...        # another build (fit.sh reads BIN too)
+  PROBE_TEMP=1.0 ...                                  # probe at the presets' sampling temperature
   LOGDIR=logs python3 moe_sweep.py ...                # keep llama-server logs there
 
 PRESETS was added after the run, for reproducing the "as written" column
@@ -21,7 +23,7 @@ as one argument that matches nothing and the sweep exits silently.
 import json, os, re, subprocess, sys, time, urllib.request
 
 REPO = "/home/nipuna/code/local-llm-benchmarks"
-BIN = "/home/nipuna/llama.cpp/build/bin/llama-server"
+BIN = os.environ.get("BIN", "/home/nipuna/llama.cpp/build/bin/llama-server")  # side builds
 MARGIN = int(os.environ.get("MARGIN", 1024))
 PRESETS = os.environ.get("PRESETS", f"{REPO}/models-preset.ini")
 LOGDIR = os.environ.get("LOGDIR", "/tmp/claude-1000")
@@ -110,7 +112,8 @@ def probe(p, ncmoe):
             time.sleep(1)
         runs = []
         body = json.dumps({"messages": [{"role": "user", "content": PROMPT}], "max_tokens": 700,
-                           "temperature": 0.0, "chat_template_kwargs": {"enable_thinking": False}}).encode()
+                           "temperature": float(os.environ.get("PROBE_TEMP", 0.0)), "seed": 42,
+                           "chat_template_kwargs": {"enable_thinking": False}}).encode()
         for _ in range(3):
             req = urllib.request.Request("http://127.0.0.1:8099/v1/chat/completions", data=body,
                                          headers={"Content-Type": "application/json"})

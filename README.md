@@ -25,6 +25,10 @@ is why each spec keeps showing up in the results.
 > +3-7%**, MTP acceptance flat — and the rebuilt throughput probe are in
 > **[llama-a868c3e3c.md](llama-a868c3e3c.md)**.
 
+> **llama.cpp moved again on 2026-10-06**, to b11434 (`5e03bdd87`). Measured
+> against 11345 first: Laguna +4%, GLM +5%, gpt-oss-20b −3.6%, Qwen3.8 128K
+> prefill −4%, everything else flat. See **[llama-b11434.md](llama-b11434.md)**.
+
 > **A second card went in on 2026-10-05** — a Radeon AI PRO R9700 (32 GB)
 > beside the 9070 XT, 48.9 GB total, both PCIe 5.0 x8. This file stays the
 > single-card record, and every "16 GB" constraint below is that card's. With

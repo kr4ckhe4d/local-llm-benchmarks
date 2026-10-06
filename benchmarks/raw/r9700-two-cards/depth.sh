@@ -5,7 +5,7 @@
 # Run 2026-10-05.
 set -uo pipefail
 B=/home/nipuna/code/local-llm-benchmarks/benchmarks
-BIN=/home/nipuna/llama.cpp/build/bin/llama-server
+BIN=${BIN:-/home/nipuna/llama.cpp/build/bin/llama-server}
 M=/home/nipuna/llama.cpp/models
 CORPUS=/home/nipuna/llama.cpp/kld/wikitext-2-raw/wiki.test.raw
 TARGET=${TARGET:-128000}
