@@ -134,25 +134,26 @@ def fmt(runs):
     return f"tg {tg:6.2f} (runs {', '.join(f'{r[1]:.2f}' for r in runs)}) | pp warm {pp:6.1f} | n {runs[0][2]}"
 
 
-for p in presets():
-    if ONLY and p["name"] not in ONLY:
-        continue
-    old = int(p["n-cpu-moe"])
-    log(f"\n######## {p['name']}  (ctx {p['ctx-size']}, preset n-cpu-moe {old})")
-    chosen = None
-    candidates = [0] + list(range(2, old, 2))
-    for n in candidates:
-        ok, text, first = fit(p, n)
-        log(f"  fit ncmoe={n:<2} {'OK  ' if ok else 'NO  '} {first}")
-        for extra in text.splitlines()[1:]:
-            if "per-card" in extra or "FAIL" in extra or "SPILL" in extra or "ABORT" in extra:
-                log(f"      {extra.strip()}")
-        if ok:
-            chosen = n
-            break
-    if chosen is None:
-        log("  -> nothing below the preset value fits with margin; leaving it")
-        continue
-    log(f"  -> new n-cpu-moe {chosen}")
-    log(f"  probe old (ncmoe {old}): {fmt(probe(p, old))}")
-    log(f"  probe new (ncmoe {chosen}): {fmt(probe(p, chosen))}")
+if __name__ == "__main__":
+    for p in presets():
+        if ONLY and p["name"] not in ONLY:
+            continue
+        old = int(p["n-cpu-moe"])
+        log(f"\n######## {p['name']}  (ctx {p['ctx-size']}, preset n-cpu-moe {old})")
+        chosen = None
+        candidates = [0] + list(range(2, old, 2))
+        for n in candidates:
+            ok, text, first = fit(p, n)
+            log(f"  fit ncmoe={n:<2} {'OK  ' if ok else 'NO  '} {first}")
+            for extra in text.splitlines()[1:]:
+                if "per-card" in extra or "FAIL" in extra or "SPILL" in extra or "ABORT" in extra:
+                    log(f"      {extra.strip()}")
+            if ok:
+                chosen = n
+                break
+        if chosen is None:
+            log("  -> nothing below the preset value fits with margin; leaving it")
+            continue
+        log(f"  -> new n-cpu-moe {chosen}")
+        log(f"  probe old (ncmoe {old}): {fmt(probe(p, old))}")
+        log(f"  probe new (ncmoe {chosen}): {fmt(probe(p, chosen))}")
