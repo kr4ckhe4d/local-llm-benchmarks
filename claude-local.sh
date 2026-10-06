@@ -12,7 +12,10 @@
 # Written for macOS, so bash 3.2: no associative arrays, no ${x,,}.
 set -uo pipefail
 
-ROUTER="${ROUTER:-http://192.168.4.228:8090}"
+# By mDNS name, not IP: the box takes its address from DHCP, and after a
+# power cut on 2026-10-06 it came back as .94 instead of .228. macOS resolves
+# .local natively; the box runs avahi.
+ROUTER="${ROUTER:-http://CachyPC.local:8090}"
 # Gemma 4 + vision since 2026-10-06: 3.8 s warm turns, 37/50 on code-quality,
 # and it can read images, so a screenshot no longer kills the session. See
 # claude-harness.md, "Choosing a model".

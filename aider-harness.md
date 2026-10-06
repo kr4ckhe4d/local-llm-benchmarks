@@ -313,6 +313,42 @@ frontend regression neither of the earlier two harnesses produced.
 
 ---
 
+## Plain `aider`, configured once (2026-10-06)
+
+`aider-local.sh --setup` makes plain `aider` use the router, with no wrapper
+needed afterwards. It writes three global files:
+
+| File | What | Notes |
+|---|---|---|
+| `~/.aider.conf.yml` | router URL, default model, `edit-format: diff`, `detect-urls: false` | written once; never overwritten |
+| `~/.aider.model.settings.yml` | one entry per router preset | regenerated each run |
+| `~/.aider.model.metadata.json` | each preset's real context window | regenerated each run |
+
+Three settings in it are not obvious:
+
+* **`use_temperature: false` for every preset.** aider otherwise sends
+  `temperature 0` and overrides the preset's own sampling. For the Qwen
+  thinking models that is the setting the 2026-09-26 looping incident was
+  about (models-preset.ini, Qwen3.6).
+* **The weak and editor models are the main model.** aider uses its "weak
+  model" for commit messages and summaries. The router keeps one model
+  resident (`--models-max 1`), so a different weak model would evict the
+  main one on every commit.
+* **Context sizes come from the preset name**, with GLM's 200k as its real
+  202,752. Without the metadata file aider warns "unknown context window" and
+  budgets its repo map blind.
+
+Re-run `--setup` whenever presets change. To change the default model, edit
+`model:` in `~/.aider.conf.yml` (and the two lines below it), or pass
+`--model openai/<preset>`.
+
+Re-verified on llama.cpp b11434, aider 0.86.2: plain `aider --yes-always
+--message "...fix the bug..." calc.py test_calc.py` on `qwen3.8-27B-128k`
+fixed the bug with a SEARCH/REPLACE edit, and the weak-model slot wrote the
+commit message, in 15.5 s. The router is addressed as
+`http://CachyPC.local:8090`, by mDNS name, because the box's DHCP address
+changes (claude-harness.md, "Over the LAN").
+
 ## Using it: two different answers depending on who's watching
 
 The four fixes above split cleanly by whether a human is present to answer

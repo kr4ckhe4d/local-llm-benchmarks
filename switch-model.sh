@@ -483,7 +483,7 @@ start_router() {
     exit 1
   fi
 
-  echo "==> Router live at http://192.168.4.228:${PORT} — presets available:"
+  echo "==> Router live at http://$(hostname).local:${PORT} ($(hostname -I | cut -d' ' -f1)) — presets available:"
   curl -s "http://localhost:${PORT}/v1/models" 2>/dev/null | python3 -c '
 import json, sys
 for m in json.load(sys.stdin)["data"]:
@@ -660,7 +660,7 @@ m = d["choices"][0]["message"]
 print(m.get("content") or m.get("reasoning_content", "")[:100])
 ' 2>/dev/null || echo "  (request sent — see $LOG if this looks wrong)"
 
-  echo "==> ${MODEL_LABEL[$model]} is live at http://192.168.4.228:${PORT}"
+  echo "==> ${MODEL_LABEL[$model]} is live at http://$(hostname).local:${PORT} ($(hostname -I | cut -d' ' -f1))"
 }
 
 case "${1:-}" in

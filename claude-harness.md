@@ -246,10 +246,19 @@ The router already binds `0.0.0.0`, so nothing needs changing on the server.
 
 | | |
 |---|---|
-| Router | `http://192.168.4.228:8090` |
+| Router | **`http://CachyPC.local:8090`** (mDNS; was `192.168.4.228`, see below) |
 | **Not** the router | `:8080` is **Open WebUI** — the easiest mistake to make |
 | Subnet | interface is **`/22`**, so `192.168.4.0–192.168.7.255` is one subnet |
 | Firewall | `ufw` active but not blocking 8090 — confirmed by curl **from** the laptop |
+
+**Use the name, not the IP (2026-10-06).** The box takes its address from
+DHCP (`ipv4.method auto`). After a power cut it came back as `192.168.4.94`,
+and everything pointing at `.228` stopped reaching the router. avahi is
+running, so `CachyPC.local` resolves on the LAN, and macOS resolves `.local`
+natively. `claude-local.sh` and `aider-local.sh` now default to it, and
+`switch-model.sh` prints both the name and the current IP. A DHCP reservation
+on the network router would also pin the IP; that has to be set there, not on
+this box.
 
 The `/22` matters: `192.168.5.24` and `192.168.4.228` look like different
 networks under the usual `/24` assumption, but are in-subnet neighbours here.
