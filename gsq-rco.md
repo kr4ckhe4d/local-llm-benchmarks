@@ -10,8 +10,9 @@ runs on the stock build unmodified.
 already run, it is 1 GB smaller, has twice the KL-divergence and is 18% slower
 under MTP. The only thing it buys is VRAM headroom.
 
-The sibling repo `Qwen3.8-Flash-Next-GSQ-RCO-GGUF` is 66-76 GB and does not fit
-16 GB VRAM + 32 GB RAM at any of its sizes.
+The sibling repo `Qwen3.8-Flash-Next-GSQ-RCO-GGUF` did not fit the single card.
+With the R9700 its Q2_0 does, and it was tried on 2026-10-06; see
+[Qwen3.8-Flash-Next](#qwen38-flash-next-gsq-rco-q2_0) below. Also not adopted.
 
 ---
 
@@ -189,3 +190,59 @@ the slow IQ small-batch path that costs GSQ-RCO its MTP speed. **That is
 untested**: neither Unsloth file has been run under MTP. Both KLD figures
 postdate Unsloth's 2026-08-19 re-quantisation (measured 2026-08-21 and
 2026-08-31), so they describe the files Hugging Face serves now.
+
+---
+
+## Qwen3.8-Flash-Next GSQ-RCO Q2_0
+
+Tried 2026-10-06 on the two cards (R9700 + 9070 XT, 48.9 GB), llama.cpp
+b11434. `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`, `Q2_0/`, 66.4 GB in two
+shards. Arch `qwen4exp`: 512 experts x 48 layers, 10 active, 176.9B total
+(51.8B of it embeddings, mostly a per-layer n-gram table), ~6.7B active per
+token. Q2_0 was picked over IQ2_XS for the publisher's 3.4x prefill at the
+same task average; IQ3_XXS's 47 GB of weights would not leave room for KV.
+
+**Verdict: not adopted.** One real Claude Code session (a WebGL landing page,
+the same task as in `claude-harness.md`) finished, at clearly lower quality than
+Qwen3.8-27B Q8_0. It was thorough but spent four rounds chasing a NaN that came
+from a typo in its own test snippet. That matches the publisher's scores: 89.07
+task average against 93.12 for BF16, LiveCodeBench v6 81 against 87. Preset
+and files removed.
+
+Not ruled out: the session ran at `reasoning-budget = 1024`, and several steps
+thought for ~36 s, about 1,000 tokens at the rate it ran, so it was likely
+being cut off. Q8 had the same cap. No speed probe or `cdn-freshness` was run.
+
+### How it fits, for next time
+
+The weights shard (37.6 GB) goes on the GPUs. The n-gram shard (28.8 GB) stays
+on the NVMe, read one row per token with `--lazy-mode on`.
+
+**Use `-lm dio`, not the model card's `-lm mmap`.** Under mmap the loader
+prefetches every mapping (`prefetch_size = -1` in `init_mappings`), the n-gram
+shard included, and on 32 GB of RAM that thrashed the page cache: 44.6 GB read
+at ~300 MB/s, no "listening" in 600 s. `-lm dio -lzm on` loads in 11 s; the
+lazy tensors are still mapped without mmap mode (`llama-model-loader.cpp`,
+the `use_mmap || lazy.any()` branch).
+
+`fit.sh`, `-lm dio -lzm on -fa on`, f16 KV unless noted, MiB free per card:
+
+| ctx | flags | R9700 | 9070 XT | |
+|---|---|---|---|---|
+| 32K | auto split | 7,801 | 1,797 | fits |
+| 32K | `-ts 13,35` | 5,517 | 4,080 | fits |
+| 128K | auto split | 5,152 | **125** | too tight |
+| 128K | q8_0 KV | 6,067 | 429 | too tight |
+| 128K | `-ts 14,34` | 3,358 | 1,916 | fits |
+| 128K | `-ts 13,35` | 2,623 | 2,650 | **fits, balanced** |
+| 256K | `-ts 13,35` | | | spills to GTT |
+| 256K | `-ts 13,35`, q8_0 KV | 910 | 1,091 | marginal |
+
+`-ts` is 9070 XT (ROCm0) first. KV is small (12 of 48 layers have full
+attention, 2 KV heads): 32K -> 128K costs ~4.3 GB.
+
+The embedded chat template is Qwen3.8-27B's byte for byte, including the
+late-system `raise_exception` that breaks Claude Code, so
+`templates/qwen38-late-system.jinja` works unchanged. The file has no MTP
+layer. Through the router, a Messages API tool-call probe returned a correct
+`tool_use` in 7.7 s including the cold load.
