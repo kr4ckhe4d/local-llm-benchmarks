@@ -395,6 +395,36 @@ resident. `IN_tok` is what was *not* served from cache.
   offload ([r9700+rx9070.md](r9700+rx9070.md)), so cold loads and prefill are
   several times faster.
 
+## A real build: Qwen3.8 in one session (2026-10-06)
+
+The fixture above proves the loop works. This shows what it can build. One
+prompt, given interactively via `claude-local qwen3.8-27B-128k` (Claude Code
+2.1.291, default permission mode, so edits were approved by hand), asked for an
+Apple-style single-file landing page with a raw WebGL 2 particle engine. The
+spec required no libraries or CDN, a hand-written `Mat4` (perspective,
+lookAt, identity), GLSL `300 es` shaders, ~30,000 particles with additive
+blending, soft round sprites via `gl_PointCoord`, a bento grid with exact
+colours and blur, and a lerped mouse-parallax orbital camera.
+
+| | |
+|---|---|
+| Result | `index.html`, 1,027 lines, every listed requirement present (checked by grep: `Mat4` object, `#version 300 es`, `gl.SRC_ALPHA, gl.ONE`, `gl_PointCoord`, 30,000, lerp, `#0071e3`, `rgba(29, 29, 31, 0.5)`, `backdrop-filter`); zero external URLs |
+| API time | 6 m 42 s (13 m 6 s wall, the rest being manual approvals) |
+| Tokens | 92.5k input, **260.5k from cache** (70% of input), 15.9k output |
+| Same prompt in aider | did not produce a working page (the user's report) |
+
+* **The `$0.99` Claude Code prints is not real.** It prices an unknown model at
+  a default rate; the run cost electricity.
+* **Its cache warning does not apply here as stated.** "cold, idle 3m 24s"
+  assumes Anthropic's 5-minute cache lifetime. llama.cpp's cache does not
+  expire by time. What *does* drop it is the router unloading an idle model
+  after `--sleep-idle-seconds 900` (15 min), or loading a different model.
+* **Why the harness mattered more than the model:** the same Qwen3.8 via aider
+  has to emit a 32 KB file as one chat message for a text parser, with no way
+  to look at the result. Claude Code let it `Write`, read back, `Edit` and check
+  over several turns. This is a whole-new-file task, which is aider's weakest
+  shape. aider is at its best on targeted edits in an existing repo.
+
 ## Choosing a model
 
 Claude Code is an agentic loop. It rewards reliable tool calls and
