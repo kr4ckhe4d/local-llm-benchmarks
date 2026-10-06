@@ -338,9 +338,32 @@ Three settings in it are not obvious:
   202,752. Without the metadata file aider warns "unknown context window" and
   budgets its repo map blind.
 
-Re-run `--setup` whenever presets change. To change the default model, edit
-`model:` in `~/.aider.conf.yml` (and the two lines below it), or pass
-`--model openai/<preset>`.
+Re-run `--setup` whenever presets change.
+
+**Short model names.** `/models <search>` searches aider's whole cloud
+catalogue as well as the router, so "gemma" or "qwen3.8" return pages of
+hosted models (`256k` is the only term that matches router presets alone).
+So `--setup` also writes **aliases**, one per preset, taken from the router's
+own short names in `/v1/models`: `gemma4-vision-128k`, `qwen3.8-128k`,
+`qwen3.6-128k`, `glm4.7-flash-200k` and so on. They sit in a marked block at
+the end of `~/.aider.conf.yml` that each run replaces; the rest of the file is
+never touched. `aider-local.sh list` shows every preset.
+
+**Switching models: restart, or use two commands.**
+
+```
+aider --model gemma4-vision-128k          # cleanest: everything pairs correctly
+/model gemma4-vision-128k                 # in a session...
+/weak-model gemma4-vision-128k            # ...then this, every time
+```
+
+aider's `/model` hands the *previous* weak model to the new one
+(`commands.py`, `cmd_model`), and no setting changes that. Skip the second
+command and every commit message calls the old model, so the router swaps
+models twice per commit. For the same reason `~/.aider.conf.yml` sets no
+`weak-model:` or `editor-model:` at all. A value there overrides every
+preset's own pairing, which is how the first version of this config paired
+Gemma with Qwen3.8. The default model is `model:` in that file.
 
 Re-verified on llama.cpp b11434, aider 0.86.2: plain `aider --yes-always
 --message "...fix the bug..." calc.py test_calc.py` on `qwen3.8-27B-128k`
