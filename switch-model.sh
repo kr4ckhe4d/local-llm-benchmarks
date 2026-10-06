@@ -242,17 +242,17 @@ declare -A CONFIG=(
   # q4_0 without it. Now 71 tok/s shallow at any context, 27 at 128K depth (was
   # 9.2). -ub 512 from 128k up: it beats 1024 by 15% prefill at depth. 16k is
   # gone; it existed only because MTP fit nowhere larger. See models-preset.ini.
-  ["qwen3.8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.8:64k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.8:128k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.8:256k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:32k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen38-late-system.jinja -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:64k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen38-late-system.jinja -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:128k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen38-late-system.jinja -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8:256k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen38-late-system.jinja -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
   # qwen3.8-mtp is the same model and flags now; kept so old commands work.
-  ["qwen3.8-mtp:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8-mtp:32k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen38-late-system.jinja -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
   # Q8_0 + MTP: near-lossless, 50 tok/s. 256k leaves 933 MiB on the 9070 XT.
-  ["qwen3.8-q8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.8-q8:128k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8-q8:32k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen38-late-system.jinja -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.8-q8:128k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen38-late-system.jinja -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
   # Qwen3.5-27B-Uncensored (HauhauCS, Aggressive) — DENSE 27B, arch qwen35, the
   # same architecture as qwen3.8 above one base version back. Same rules: no
@@ -268,9 +268,9 @@ declare -A CONFIG=(
   # (Single card.) No 128k: it loaded at 32 MiB free, below the drift above. On
   # two cards 128k leaves 8,979 MiB on the 9070 XT and is a preset again, and
   # 64k is back on q8_0 KV.
-  ["qwen3.5-uncensored:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.5-uncensored:64k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.5-uncensored:128k"]="-ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-uncensored:32k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-uncensored:64k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-uncensored:128k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -ub 512 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
   # Qwen3.5-9B-Uncensored (HauhauCS, Aggressive) — DENSE 9B, arch qwen35, same
   # family as qwen3.5-uncensored above but 32 layers not 64: half the
@@ -282,9 +282,9 @@ declare -A CONFIG=(
   # well short of native. -ub 1024 and q8_0 KV hold at every context; there was
   # never a tradeoff to make. Pinned to the R9700 (-dev ROCm1) since
   # 2026-10-06, like gpt-oss-20b: the split cost 4% (55.4 vs 57.8 tok/s).
-  ["qwen3.5-9b-uncensored:32k"]="-dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.5-9b-uncensored:128k"]="-dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
-  ["qwen3.5-9b-uncensored:256k"]="-dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-9b-uncensored:32k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-9b-uncensored:128k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
+  ["qwen3.5-9b-uncensored:256k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
   # GLM-4.7-Flash — first non-Qwen model, first MLA-attention model (reports
   # as deepseek2 arch, reusing DeepSeek-V2's MLA code path). 30B total/~3B

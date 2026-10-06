@@ -1,170 +1,145 @@
-# Using these models on a real codebase
+# Using these models on a big codebase
 
-The [benchmarks](README.md) show Qwen3.6-35B-A3B at 32K context doing ~44 tok/s
-generation and ~1,975 tok/s prompt processing on the ROCm build, with a
-comfortable VRAM margin. This guide is about what to actually *do* with
-that — because 32K (or even 128K) tokens is nowhere near "paste in the repo,"
-and the naive approach (dump everything you can fit) is usually the wrong one
-even when it technically fits.
+Rewritten 2026-10-06 for the current box: two cards (R9700 + RX 9070 XT,
+48.9 GB, [r9700+rx9070.md](r9700+rx9070.md)), llama.cpp b11434, and Claude Code
+working on every 128k preset ([claude-harness.md](claude-harness.md)). The
+2026-08-09 version was written for one 16 GB card and Qwen3.6 with CPU offload.
+Its numbers no longer apply, but its two central points survive below:
+budget the context and protect the prompt cache.
 
-## Size it up first
+**The one idea:** a codebase does not go *into* the context. The context is
+working memory for one task. The project's memory lives on disk, in its code,
+tests, notes and git history. A big codebase gets written by many short,
+focused sessions that read and update that memory, not by one session that
+holds everything.
 
-Code tokenizes at roughly **8-12 tokens/line** (denser than English prose).
-Rule of thumb: **~10 tokens/line**.
+## Size it up
 
-| Context | ≈ Lines of code | ≈ Files (150-line avg) | Good for |
+Code tokenizes at roughly **10 tokens per line**.
+
+| Context | ≈ Lines | ≈ Files (150 lines) | Left after Claude Code's ~20k prompt |
 |---|---|---|---|
-| 32K | ~3,200 | ~20 files | One task, a handful of related files |
-| 128K | ~12,800 | ~85 files | A module/subsystem, a real refactor |
+| 128K | ~13,000 | ~85 | ~110K, ~70 files |
+| 256K | ~26,000 | ~170 | ~240K, ~160 files |
 
-A "big codebase" is usually thousands of files. Neither tier holds that — so
-the job is picking the *right* few thousand lines, not maximizing how many you
-can cram in.
+A big codebase is thousands of files, so neither tier holds it. The job is
+choosing the few thousand lines a task needs, and arranging the code so that
+number stays small.
 
-## Budget the context, don't just fill it
+## 1. Design the code for small context
 
-Whatever you stuff into the prompt has to share space with the system prompt,
-tool definitions, conversation history, and — critically — **room left over
-for the model's own output**. If you fill the context window with input, the
-model has nowhere to write its answer and generation degrades or gets cut off
-mid-response (`finish_reason: "length"`, as seen in earlier tests).
+This is the lever that matters most, and it is a design choice, not a tooling
+one.
 
-Worked example for Qwen3.6-35B-A3B at 32K (`-ncmoe 16 -ub 1024`):
+* **Modules with narrow interfaces.** Types, signatures and contracts in files
+  that can be read without the implementation behind them.
+* **The target:** any one task needs its own module plus the *interfaces* of
+  its neighbours, usually 5-20K tokens however large the repo.
+* A task that needs 200K tokens of context to understand is a design problem.
+  A bigger window does not fix it.
 
-| Budget item | Tokens |
+## 2. Make the repo the memory
+
+* **`ARCHITECTURE.md`** at the root, short: module map, data flow, invariants.
+  Add one per module where the module has real complexity.
+* **`CLAUDE.md`** (Claude Code) or **`CONVENTIONS.md`** (aider, template in this
+  repo): the rules the model must follow, read every session.
+* **Generate the docs once with map-reduce** (section 6), then keep them updated
+  as part of each task, not as a separate chore.
+* **For multi-step work, a `PLAN.md`** with numbered steps, written by the
+  model. Each step then runs as a **fresh session** that reads the plan, does
+  one step, runs the tests, ticks the step off and commits. The plan and git
+  carry the state between sessions, not the conversation.
+
+## 3. Let the model fetch, don't pre-load
+
+* Use an agent harness with tools (search, read a file or a line range, list a
+  directory, run tests) and let the model pull what it needs.
+  [Claude Code via `claude-local.sh`](claude-harness.md) now works on all 13
+  128k presets. [aider](aider-harness.md) is the alternative: its *repo map*
+  (a ranked symbol index without bodies) is built for exactly this, and its
+  system prompt is far smaller than Claude Code's ~20k.
+* **Tests and the compiler are the ground truth.** A model that can run them
+  does not need to hold the whole program in its head, and its mistakes
+  surface in seconds instead of in review.
+* For a quick scripted task without a harness, retrieve first, then prompt:
+  `rg -l 'handleAuthToken' src/`, plus the matching files and a short repo map.
+
+## 4. Treat 128K/256K as headroom, not a target
+
+**Recall is not the problem.** It has been measured: Qwen3-Coder-Next found 5/5
+facts at every depth up to 241K, including semantic near-miss distractors at
+mid-context ([README § Context quality](README.md#context-quality-measured-not-assumed)).
+The costs of a long context are time and cache, not lost information:
+
+* **Cold prefill.** Qwen3.8 reads ~1,000 tok/s at 128K depth, so a cold 128K
+  context is about **2 minutes** before the first token
+  ([llama-b11434.md](llama-b11434.md)).
+* **Warm turns are cheap.** With the prefix cached, a Claude Code turn costs
+  **3-7 s** on most models, because only the new ~1-4K tokens are processed
+  ([claude-harness.md § Speed](claude-harness.md#speed-the-prompt-cache-now-does-the-work)).
+* **Anything that changes the prefix throws the cache away**: reordering files,
+  editing the system prompt or `CLAUDE.md` mid-session, inserting a file ahead
+  of others, compaction, switching model. Append, never insert.
+
+So keep a session's working context to **roughly 50-75K** even on a 256K
+preset (budget sketch at the end), and when it grows past that, finish the
+step, update `PLAN.md` and start a fresh session.
+Auto-compaction works, but each compaction is a new cold prefix.
+
+Two models do not get the warm-turn benefit. Laguna and Muse showed no prompt
+cache reuse across sessions in the Claude Code speed test (likely their
+sliding-window attention, not yet tested). Laguna prefills fast enough not to
+matter; Muse does not.
+
+## 5. Use two models, by role
+
+| Role | Preset | Why |
+|---|---|---|
+| **Writing code, default** | `gemma4-26B-A4B-vision-128k` | 143 tok/s, 3.8 s warm Claude Code turns, 37/50 on code-quality, reads screenshots |
+| **Hard problems** | `qwen3.8-27B-128k` / `-256k`, or `-q8-128k` | Thinks before it answers (~17 s turns); Q8 is near-lossless |
+| **Reading, summarising, search** | `gemma4-26B-A4B-32k` or `gpt-oss-20b-A3.6B-32k` | 143 / 147 tok/s for map-reduce and "where is X handled" |
+| **Long single-pass reads** | `qwen3.6-35B-A3B-256k` or `gemma4-26B-A4B-256k` | Full 256K with no CPU offload; speed flat with context |
+
+Only one model is resident at a time (`--models-max 1`), but swapping costs
+one cold load, about 10-40 s with `load-mode = dio`. Matching the model to
+each step is worth that.
+
+## 6. Repo-wide questions: map-reduce
+
+For questions no single task covers, such as an architecture review or "how
+does auth flow through the system":
+
+1. **Map:** summarise each file or module on its own, using the fast model at
+   32K. These are small, cheap calls and can be scripted.
+2. **Reduce:** feed the summaries, not the source, into one call on the strong
+   model at 128K for the synthesis.
+
+The expensive call then scales with the size of the summaries, not of the
+repo. This is also how to produce the first `ARCHITECTURE.md` (section 2).
+
+Beyond-native contexts (512K, 1M with YaRN) loaded on the single card in
+August, but they are deliberately not presets: prefill collapses at that size,
+and quality past the trained range is unmeasured. Map-reduce stays cheaper.
+
+## 7. If I were doing it
+
+Use a frontier model for the expensive moments: the initial architecture, the
+plan, and hard cross-cutting bugs. Then let the local models do the volume,
+one `PLAN.md` step at a time, in fresh sessions, with tests after every step.
+The 26-35B local models are good at well-specified local edits. They are
+weakest at the global reasoning that a limited window also makes hard, and
+that is where a frontier model earns its cost.
+
+## Budget sketch: a Claude Code session at 128K
+
+| Item | Tokens |
 |---|---|
-| System prompt + tool schemas | ~1,500 |
-| Repo map (file tree + signatures, no bodies) | ~500 |
-| Retrieved/relevant code | ~18,000 |
-| Conversation history | ~6,000 |
-| **Reserved for model output** (`max_tokens`) | ~4,000 |
-| **Total** | **~30,000 / 32,768** |
+| Claude Code system prompt + tool schemas | ~20,000 |
+| `CLAUDE.md` + `ARCHITECTURE.md` + `PLAN.md` | ~3,000-6,000 |
+| Files read for the task (module + neighbours' interfaces) | ~10,000-30,000 |
+| Conversation, tool output, test runs | ~10,000-20,000 |
+| **Comfortable working total** | **~45,000-75,000** |
+| Headroom left in the 131,072 window | ~55,000-85,000 |
 
-Leave slack the same way the VRAM tuning did — don't run a context budget at
-100%, for the same reason `-ncmoe` wasn't tuned to the exact last free MiB:
-real prompts vary in length and you don't want to discover the ceiling mid-task.
-
-## Two strategies, pick based on task shape
-
-### 1. Retrieval — for well-scoped tasks ("fix this bug," "add this endpoint")
-
-Don't feed the model files "just in case." Find the relevant ones first, then
-feed only those:
-
-```bash
-# find candidate files/symbols before touching the model at all
-rg -l 'handleAuthToken' src/
-rg -n 'class UserSession' src/
-```
-
-Assemble the prompt from: the task description, a short repo map for
-orientation, and the *contents* of only the files that matched. This is cheap,
-deterministic, and keeps token usage proportional to the task, not the repo.
-
-For fuzzier queries where grep won't find the right files (e.g. "where do we
-handle rate limiting," no literal string match), a lightweight embeddings
-index over file/function summaries works better than either grepping harder
-or feeding more files hoping something sticks.
-
-### 2. Agentic / tool-use loop — for open-ended or multi-file tasks
-
-Instead of pre-loading context, give the model tools (`read_file(path)`,
-`grep(pattern)`, `list_dir(path)`) and let it pull in what it decides it needs,
-turn by turn — the same pattern Claude Code itself uses. This scales far better
-than retrieval-then-stuff for tasks where you don't know up front which files
-matter.
-
-**Caveat before building this on Qwen3.6 or Coder-Next:** earlier testing found
-Qwen2.5-Coder-14B's tool-calling was broken — it reasoned about tool calls
-correctly but emitted them as `<tools>...</tools>` plain text instead of the
-structured `tool_calls` API field, a chat-template mismatch. (That model has
-since been deleted; the detail is recorded here because the failure mode
-recurs across models and is easy to misdiagnose as the model being bad at
-tool use.)
-
-**Verify whichever model you pick actually returns proper `tool_calls` with
-`finish_reason: "tool_calls"` via `/v1/chat/completions` before relying on this
-pattern** — if it has the same template issue, the retrieval strategy above is
-the fallback. Serving with `--jinja` makes `llama-server` use the model's own
-chat template and is the usual fix for Qwen tool-calling.
-
-## Exploit prompt caching for repeated context
-
-`llama-server`'s startup log shows a built-in prompt cache (`prompt cache is
-enabled, size limit: 8192 MiB` — visible in `/tmp/llama-server.log`). Keep a
-**stable prefix** — system prompt, repo map, core files referenced every turn —
-identical across requests, and only the *new* part of each prompt (the actual
-question, newly-retrieved files) pays full prompt-processing cost.
-
-**At large contexts this is the single most important thing in this guide.**
-Measured on Qwen3-Coder-Next, cold versus cache-warm:
-
-| Context | Cold prefill | Warm |
-|---|---|---|
-| 128K | ~4.5 min | ~6.5s |
-| 256K | ~12.5 min | ~8.3s |
-
-A 90x gap. Prefill throughput also degrades with depth (552 tok/s at 38K down
-to 322 at 241K), so cost grows superlinearly — doubling context from 119K to
-241K costs 2.8x the time, not 2x.
-
-The practical consequence: **anything that changes the prefix throws away the
-cache and costs you the full cold prefill again.** Reordering files between
-turns, editing the system prompt mid-session, inserting a new file ahead of the
-existing ones — each is a 12-minute mistake at 256K. Append; never insert.
-
-At small contexts the same principle is just a nice speedup (Qwen3.6 @32K does
-1,975 prompt tok/s against 43.9 generation).
-
-## Match context tier to the task
-
-| Task | Context | Why |
-|---|---|---|
-| Single-file edit, quick question | 32K (`-ncmoe 16`, Qwen3.6) | Fastest (43.9 tok/s), plenty of room for one task |
-| Multi-file refactor, "explain this subsystem" | 128K (`-ncmoe 20`, Qwen3.6) | Needs cross-file context; only ~5% slower generation |
-| Serious coding over a large context | 128K-256K (Qwen3-Coder-Next) | Coding specialist; ~25 tok/s but answers without a reasoning preamble |
-| "Summarize/understand the whole repo" | Neither — see map-reduce below | No single context tier holds a real codebase |
-
-## When even 128K isn't enough: map-reduce
-
-For genuinely repo-wide tasks (architecture review, "how does auth flow through
-this whole system"), don't chase a bigger context window — it costs
-disproportionate VRAM/RAM/speed for diminishing returns (see the README's
-context-scaling table: gains shrink and cost grows well before 128K). Instead:
-
-1. **Map:** summarize each file or module independently (small, cheap,
-   parallelizable calls — this is where the fast 20B or 32K Qwen3.6 config earns
-   its keep).
-2. **Reduce:** feed those summaries (not the raw source) into one larger-context
-   call for the actual synthesis/reasoning.
-
-This keeps the expensive large-context call proportional to *summary* size, not
-raw repo size, and is generally cheaper than reaching for a bigger context window.
-
-That said, extreme context is more viable than it first looks — because both
-Qwen models here use **hybrid attention**, where only 1 layer in 4 keeps a KV
-cache (see [README § Why 1M context is possible](README.md#why-1m-context-is-possible-at-all-hybrid-attention)).
-That is what makes 1M fit in 16GB at all; a conventional full-attention coder
-would need ~52GB of KV at the same context.
-
-Both models are verified working at 1,048,576 tokens on this card. **But 1M is
-past their native 262,144, so it is deliberately not a `switch-model.sh`
-preset** — it requires YaRN RoPE scaling, which trades away some short-context
-quality. See [README § If you do want 1M](README.md#if-you-do-want-1m) for the
-hand-rolled command; Qwen3-Coder-Next is the right pick there.
-
-Two reasons the default stops at 256K:
-
-1. **Prompt processing collapses.** Fitting 1M forces `-ub 256`, cutting
-   Coder-Next from ~722 to ~236 tok/s. Generation barely moves (23.8 vs 25.8).
-   Feeding the huge prompt is the slow part, not the reply — so 1M is worst
-   exactly where you'd want it.
-2. **You are outside the trained range.** Retrieval accuracy past the native
-   window is an empirical question, not a given. Inside the native range it has
-   been measured and is clean (see
-   [README § Context quality](README.md#context-quality-measured-not-assumed));
-   past it, nothing has been tested. Probe your actual depth first with
-   `~/llama.cpp/semantic-recall-test.py --depth N`.
-
-Map-reduce stays the better choice for routine large-context work: it keeps the
-model at its faster, natively-supported 128K/256K configs with `-ub 1024`.
+Past ~75K, the next step usually belongs in a new session.

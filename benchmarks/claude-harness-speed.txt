@@ -1,8 +1,8 @@
 # Claude Code harness speed -- what the client actually waits on
 # router : http://127.0.0.1:8090
 # prompt : Write a Python function merge_sort(lst) with type hints and a short docstring. Output only code, no explanation.
-# host   : Linux 7.1.5-1-cachyos, llama.cpp version: 0.1.0-dev (build 10463, commit 7c35571e5)
-# date   : 2026-08-23T23:56:57+08:00
+# host   : Linux 7.2.6-1-cachyos, llama.cpp version: 0.6.0-dev (build 11434, commit 5e03bdd87)
+# date   : 2026-10-06T10:05:17+08:00
 #
 # COLD_s  first turn: router loads the model from disk, then prefills.
 # WARM_s  second identical turn, model resident -- the per-turn wait.
@@ -16,52 +16,19 @@
 
 MODEL                            COLD_s   WARM_s   TTFT_s    GEN_s   IN_tok  OUT_tok
 ------------------------------ -------- -------- -------- -------- -------- --------
-gemma4-26B-A4B-128k                43.7     32.7     28.6      4.1    24410      256
-glm-4.7-flash-30B-A3B-128k        167.6     54.6     39.2     15.5     2655      336
-laguna-33B-A3B-128k               101.7     21.9     21.5      0.4    25996      171
-laguna-33B-A3B-q8-128k            176.9     37.5     36.9      0.6    25997      190
-muse-glimmer-30B-128k             118.0     61.7     58.0      3.7    48378      212
-qwen3-coder-80B-A3B-128k          251.8     56.8     56.3      0.5    27216      145
-qwen3.6-35B-A3B-128k              145.6     22.8     13.1      9.7     1246      507
+gemma4-26B-A4B-128k                12.2      3.5      3.5      0.0     3438      245
+gemma4-26B-A4B-q8-128k             13.6      3.8      3.8      0.0     3510      256
+gemma4-26B-A4B-vision-128k         12.4      3.8      3.8      0.0     3580      270
+glm-4.7-flash-30B-A3B-128k         36.0     17.2     17.2      0.0     2410      509
+gpt-oss-20b-A3.6B-128k             10.0      4.5      4.5      0.0      350      537
+laguna-33B-A3B-128k                10.8      6.2      6.3      0.0    21906      168
+laguna-33B-A3B-q8-128k             12.6      6.7      6.8      0.0    21970      190
+muse-glimmer-30B-128k              43.0     22.6     22.7      0.0    20504      267
+qwen3.5-27B-uncensored-128k        27.9     11.4     11.5      0.0     3793      221
+qwen3.5-9B-uncensored-128k         12.8      6.0      6.1      0.0     3855      249
+qwen3.6-35B-A3B-128k               10.4      3.2      3.3      0.0     1060      179
+qwen3.8-27B-128k                   21.9     17.2     17.3      0.0     3977      774
+qwen3.8-27B-q8-128k                38.5     22.0     22.1      0.0     4039      770
 
 # Read the WARM column: it is the per-turn wait in a live session.
 # TTFT is dominated by prefilling the system prompt, not by the model.
-
-## In-session follow-up turns (the number you actually feel)
-
-WARM_s above is a *fresh session*: two separate `claude -p` invocations. Claude
-Code varies cwd/date/session-id inside the prompt, so the prefixes differ and
-the cache misses. A real conversation shares a long stable prefix. Measured
-with `--continue` in one session:
-
-  model                        turn 1     turn 2 (--continue)
-  laguna-33B-A3B-128k            25.5s          3.1s
-  qwen3.6-35B-A3B-128k           58.6s         31.9s
-
-Laguna drops 8x. Qwen3.6 only halves -- it is a thinking model
-(reasoning-budget 1024) and spends turn 2 generating, not prefilling: it
-emitted 507 output tokens against Laguna's 171 in the table above. So the gap
-is generation, not prompt handling. Treat that as the likely cause rather than
-a measured one; it was not isolated.
-
-## Retracted: "hybrid attention prevents prefix caching"
-
-An earlier reading of this data claimed sliding-window models get no prefix
-reuse, on the grounds that GLM reported cache_read>0 while Laguna reported 0.
-That was wrong, and the controlled test that killed it is worth keeping.
-
-Two byte-identical requests straight to /v1/messages, no client in between:
-
-  model                        1st       2nd (identical)
-  laguna-33B-A3B-128k          65.3s     0.1s   cache_read=48255
-  qwen3.6-35B-A3B-128k         37.2s     0.3s   cache_read=48134
-  glm-4.7-flash-30B-A3B-128k  214.6s     0.4s   cache_read=48129
-
-Prefix caching works on every model tested, including Laguna's hybrid
-SWA -- a 650x speedup. The per-model cache_read differences seen through
-Claude Code came from its multiple internal API calls per invocation, not from
-attention architecture. `usage` in the Claude Code result envelope aggregates
-those calls, so it was never a valid basis for a per-request claim.
-
-The lesson generalises: do not infer server behaviour from a client's usage
-accounting. Measure the server directly.

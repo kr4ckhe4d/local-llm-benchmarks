@@ -38,7 +38,10 @@ pick() {
 run_once() {   # preset -> "ttft_ms api_ms in_tok out_tok" or "ERR <msg>"
   local m="$1" raw js
   raw=$(timeout "$TIMEOUT" "$LAUNCH" "$m" -p "$PROMPT" --output-format json 2>&1)
-  js=${raw#*\{}; js="{$js"
+  # The envelope is the last line that is a JSON object with a session_id.
+  # Since Claude Code 2.1.2xx a "[claude-code:unrecognized_model] {...}" line
+  # precedes it, so "everything from the first {" no longer finds it.
+  js=$(printf '%s\n' "$raw" | grep -E '^\{.*"session_id"' | tail -1)
   # Keep the raw envelope. A derived number nobody can re-derive is a claim.
   mkdir -p "$HERE/raw"; printf '%s' "$js" > "$HERE/raw/${m}.$(date +%s).json"
   python3 - "$js" <<'PY' 2>/dev/null || echo "ERR unparseable"

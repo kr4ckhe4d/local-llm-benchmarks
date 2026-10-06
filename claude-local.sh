@@ -5,7 +5,7 @@
 #
 #   claude-local.sh list                     what the router is serving
 #   claude-local.sh                          default model, interactive
-#   claude-local.sh qwen3-coder-80B-A3B-128k pick a model
+#   claude-local.sh qwen3.8-27B-128k         pick a model
 #   claude-local.sh --chrome                 add Chrome DevTools (text-only)
 #   claude-local.sh -p "fix the bug"         anything after is passed to claude
 #
@@ -13,16 +13,21 @@
 set -uo pipefail
 
 ROUTER="${ROUTER:-http://192.168.4.228:8090}"
-DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-laguna-33B-A3B-q8-128k}"
+# Gemma 4 + vision since 2026-10-06: 3.8 s warm turns, 37/50 on code-quality,
+# and it can read images, so a screenshot no longer kills the session. See
+# claude-harness.md, "Choosing a model".
+DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-gemma4-26B-A4B-vision-128k}"
 
-# Claude Code's system prompt measured 41,796 tokens on 2026-08-23. A preset
-# below this cannot answer at all -- it fails on the first request with
-# "exceeds the available context size". 64k is the smallest safe bucket.
+# Claude Code's system prompt measured 41,796 tokens on 2026-08-23 with the
+# claude.ai connectors attached, 24-27k without, and ~20k on 2.1.290 (2026-10-06;
+# Muse's tokenizer doubles it). A 32k preset has too little left for a real
+# task, so 64k is the smallest bucket offered.
 MIN_CTX=64000
 
 # Only take_screenshot returns an image; a text-only model 500s on image input
-# ("image input is not supported"). Everything else here returns text.
-# take_snapshot is the screenshot replacement -- accessibility tree, as text.
+# ("image input is not supported") and Claude Code retry-loops on it. So it is
+# left out unless the preset has a vision projector (name contains "vision"),
+# which reads screenshots fine. take_snapshot is the text replacement.
 CHROME_SAFE="mcp__chrome-devtools__click,mcp__chrome-devtools__close_page,\
 mcp__chrome-devtools__evaluate_script,mcp__chrome-devtools__fill,\
 mcp__chrome-devtools__fill_form,mcp__chrome-devtools__get_console_message,\
@@ -80,7 +85,7 @@ Environment
   CLAUDE_LOCAL_MODEL   default $DEFAULT_MODEL
 
 Notes
-  * Claude Code's system prompt is ~42k tokens, so 32k presets cannot work.
+  * Claude Code's system prompt is ~20k tokens, so only 64k+ presets are offered.
   * MCP servers are disabled unless --chrome: three Notion connector schemas
     crash llama.cpp's grammar compiler ("failed to parse grammar"), which
     breaks tool calling entirely.
@@ -152,8 +157,13 @@ if [ "$USE_CHROME" -eq 1 ]; then
   cat > "$TMP/mcp.json" <<'JSON'
 {"mcpServers":{"chrome-devtools":{"command":"npx","args":["-y","chrome-devtools-mcp@latest","--isolated"]}}}
 JSON
-  ARGS=(--strict-mcp-config --mcp-config "$TMP/mcp.json" --allowedTools "$CHROME_SAFE")
-  EXTRA_NOTE="  chrome  : on (text-only tools; take_snapshot instead of screenshots)"
+  case "$MODEL" in
+    *vision*) TOOLS="$CHROME_SAFE,mcp__chrome-devtools__take_screenshot"
+              EXTRA_NOTE="  chrome  : on (vision preset: screenshots allowed)" ;;
+    *)        TOOLS="$CHROME_SAFE"
+              EXTRA_NOTE="  chrome  : on (text-only tools; take_snapshot instead of screenshots)" ;;
+  esac
+  ARGS=(--strict-mcp-config --mcp-config "$TMP/mcp.json" --allowedTools "$TOOLS")
 else
   printf '{"mcpServers":{}}' > "$TMP/mcp.json"
   ARGS=(--strict-mcp-config --mcp-config "$TMP/mcp.json")

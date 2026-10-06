@@ -1,14 +1,22 @@
 # Running Claude Code against the local router
 
 Claude Code is the most demanding client anything on this box has served. It
-sends a 24k-42k-token system prompt, 128 tool schemas, and expects the
-Anthropic Messages API rather than the OpenAI one. All of that works — but four
-separate things have to be right, each one fails with an error that does not
-name its cause, and only 7 of the 11 usable presets can serve it at all.
+sends a ~20k-token system prompt, dozens of tool schemas, and expects the
+Anthropic Messages API rather than the OpenAI one. All of that works, but a few
+separate things have to be right, and each one fails with an error that does
+not name its cause.
 
-Everything here was verified 2026-08-23/24 against llama.cpp `b10463`
-(`7c35571e5`), from Claude Code 2.1.231 (Linux, local) and 2.1.241 (macOS,
-over the LAN).
+> **Current state, re-verified 2026-10-06:** llama.cpp b11434 (`5e03bdd87`),
+> two cards (R9700 + RX 9070 XT, [r9700+rx9070.md](r9700+rx9070.md)), Claude
+> Code 2.1.290. **All 13 of the 128k presets drive Claude Code**, against 7 of
+> 11 in August. The dense-Qwen template block is fixed with a patched chat
+> template (below), gpt-oss-20b's grammar failure is gone on this build, and
+> warm turns take **3-7 s on most models**, down from 22-62 s. The default is
+> now **`gemma4-26B-A4B-vision-128k`**, which can also read screenshots.
+>
+> The original findings were verified 2026-08-23/24 against llama.cpp `b10463`
+> (`7c35571e5`) on one 16 GB card, from Claude Code 2.1.231 (Linux) and 2.1.241
+> (macOS, over the LAN). Sections still describing that state say so.
 
 The client-side driver is `claude-local.sh`, which encodes all four fixes. This
 file is why it does what it does.
@@ -58,6 +66,12 @@ unable to answer one request.
 64k with a message that says so, rather than letting the router produce the
 error above.
 
+**2026-10-06:** on Claude Code 2.1.290 the prompt is smaller, **~20k tokens**
+for most models (19,250 Qwen3.6 to 21,449 Qwen3.8, per the first request of the
+compat task below). Muse is still the outlier, its tokenizer roughly doubling
+it. A 32k preset would now accept the first request but leave ~10k for an
+actual task, so the 64k floor stays.
+
 Claude Code also assumes a 200k window for model names it does not recognise,
 which will silently mis-drive auto-compaction. Set it explicitly:
 
@@ -65,7 +79,7 @@ which will silently mis-drive auto-compaction. Set it explicitly:
 CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072
 ```
 
-**Cost note.** Prefilling that prompt is 21.5s of Laguna's 21.9s first turn —
+**Cost note (2026-08, one card).** Prefilling that prompt is 21.5s of Laguna's 21.9s first turn —
 96% of the wait, before a single token appears. It is not paid again on the
 next turn: llama.cpp caches the prefix, and a `--continue` follow-up lands in
 **3.1s**. The full cost returns after compaction, a model switch, or starting a
@@ -113,6 +127,13 @@ no tools whatsoever.
 > in front of the router, capture the request body, then bisect the `tools`
 > array against `/v1/messages` one schema at a time.
 
+**2026-10-06:** Claude Code 2.1.290 now refuses to load the claude.ai connectors
+at all when `ANTHROPIC_AUTH_TOKEN` is set ("claude.ai connectors are disabled
+because ANTHROPIC_API_KEY or another auth source is set"), so the Notion
+schemas no longer reach the router through `claude-local.sh` either way. The
+grammar failure itself was not re-tested. `--strict-mcp-config` stays, because
+it also keeps any *local* MCP servers' schemas out.
+
 ---
 
 ## Gotcha 3: Claude Code has four model slots, not one
@@ -132,12 +153,13 @@ Two fixes, and the server-side one cannot be forgotten:
 to every name. This is committed in `models-preset.ini`:
 
 ```ini
-[laguna-33B-A3B-128k]
-alias = laguna-128k,claude-sonnet-5,claude-opus-5,claude-haiku-4-5-20251001
+[gemma4-26B-A4B-vision-128k]
+alias = gemma4-vision-128k,claude-sonnet-5,claude-opus-5,claude-haiku-4-5-20251001
 ```
 
 Verified: a `/v1/messages` request for `claude-sonnet-5` returns
-`"model":"laguna-33B-A3B-128k"`. Aliases do **not** appear as separate entries
+`"model":"gemma4-26B-A4B-vision-128k"`. (Until 2026-10-06 these aliases sat on
+`laguna-33B-A3B-128k`, the old default. They follow `claude-local.sh`'s default.) Aliases do **not** appear as separate entries
 in `/v1/models`, so the Open WebUI dropdown is unchanged.
 
 **Client.** Pin all four explicitly:
@@ -163,9 +185,18 @@ the session-title generator noting a non-Anthropic name.
 500 image input is not supported
 ```
 
-Every model on this box is text-only. A single image in context produces the
+Every text-only preset fails like this. A single image in context produces the
 above, and Claude Code then **retry-loops** on it (`attempt 5/10`), so one
 screenshot ends the session.
+
+**2026-10-06: the Gemma 4 vision presets do not have this problem.** With
+`gemma4-26B-A4B-vision-128k`, Claude Code's `Read` on `vision-probe.png`
+returned the rendered code `PROBE-770487`, all three shapes and colours, and
+the arithmetic answer, in 2 turns and 12.9 s. The same request on
+`gemma4-26B-A4B-128k` (no projector) still gets the 500 and the retry loop.
+That is why the vision preset is now `claude-local.sh`'s default, and why
+`--chrome` allows `take_screenshot` when the model name contains `vision`. Everything
+below holds for the text-only presets.
 
 Telling the model not to take screenshots does not work — it is an instruction,
 not a constraint, and it cannot un-send a request already in flight. **Remove
@@ -236,7 +267,8 @@ because llama.cpp is not checking anything; the endpoint is open to the whole
 
 ## Verified working
 
-All from the MacBook, over the LAN, against the router:
+All from the MacBook, over the LAN, against the router (2026-08; the file-edit
+loop and image reading were re-verified locally on 2026-10-06, see below):
 
 | Capability | Evidence |
 |---|---|
@@ -251,26 +283,37 @@ slot, which is pinned to the same local model.
 
 ---
 
-## Which models actually work: 7 of 11
+## Which models actually work: 13 of 13
 
-Not every preset can drive Claude Code, and the two failure modes are both
-server-side. Tested 2026-08-24 across every 128k preset:
+`benchmarks/claude-compat.sh` runs one real agentic task per preset, not a chat
+probe. The fixture is a two-file repo where `add()` returns `a - b` and a test
+expects 5. The model must read it, fix the file with `Edit`, run the test with
+`Bash`, and report. Pass means the file on disk is fixed and the test passes
+afterwards. Output is in `benchmarks/claude-compat.txt` and the raw transcripts in
+`benchmarks/raw/compat-*`.
 
-| Model | | Why |
-|---|---|---|
-| `gemma4-26B-A4B-128k` | ✅ | |
-| `glm-4.7-flash-30B-A3B-128k` | ✅ | |
-| `laguna-33B-A3B-128k` | ✅ | |
-| `laguna-33B-A3B-q8-128k` | ✅ | |
-| `muse-glimmer-30B-128k` | ✅ | |
-| `qwen3-coder-80B-A3B-128k` | ✅ | |
-| `qwen3.6-35B-A3B-128k` | ✅ | |
-| `gpt-oss-20b-A3.6B-128k` | ❌ | grammar: template rejects the tool schemas |
-| `qwen3.5-9B-uncensored-128k` | ❌ | chat template: system-after-user |
-| `qwen3.8-27B-128k` | ❌ | chat template: system-after-user |
-| `qwen3.8-27B-xxs-128k` | ❌ | chat template: system-after-user |
+| Preset | Pass | Turns | API s | August |
+|---|---|---|---|---|
+| `gpt-oss-20b-A3.6B-128k` | ✅ | 8 | **9.5** | ❌ grammar |
+| `laguna-33B-A3B-128k` | ✅ | 5 | 11.8 | ✅ |
+| `laguna-33B-A3B-q8-128k` | ✅ | 5 | 14.1 | ✅ |
+| `qwen3.5-9B-uncensored-128k` | ✅ | 5 | 14.3 | ❌ template |
+| `gemma4-26B-A4B-128k` | ✅ | 6 | 15.8 | ✅ |
+| `qwen3.6-35B-A3B-128k` | ✅ | 7 | 16.1 | ✅ |
+| `gemma4-26B-A4B-vision-128k` | ✅ | 7 | 16.4 | not tested |
+| `gemma4-26B-A4B-q8-128k` | ✅ | 7 | 17.8 | not tested |
+| `qwen3.8-27B-128k` | ✅ | 6 | 23.8 | ❌ template |
+| `qwen3.8-27B-q8-128k` | ✅ | 6 | 29.8 | not tested |
+| `qwen3.5-27B-uncensored-128k` | ✅ | 5 | 33.1 | not tested |
+| `glm-4.7-flash-30B-A3B-128k` | ✅ | 5 | 35.0 | ✅ |
+| `muse-glimmer-30B-128k` | ✅ | 6 | 114.9 | ✅ |
 
-**The dense-Qwen family is out, and it takes the best coder with it.**
+Muse is slow here because its tokenizer turns the same prompt into ~106k input
+tokens across the task, five times the others. `qwen3-coder-80B-A3B` from the
+August table is no longer on disk.
+
+### The dense-Qwen fix: a patched chat template
+
 Claude Code sends a `system`-role message *after* the user message:
 
 ```
@@ -278,97 +321,103 @@ messages[0]  role=user     blocks=['text','text']
 messages[1]  role=system   blocks=['text']
 ```
 
-Qwen3.8's Jinja template raises `System message must be at the beginning` on
-that shape. Reproduced minimally — `user` then `system` fails, `user` alone
-passes, and a top-level `system` field in any form passes. Nothing to fix
-client-side; it is the template. That rules out `qwen3.8-27B`, which scores
-best on `code-quality` in this repo.
+Qwen3.8's and Qwen3.5's Jinja templates raise `System message must be at the
+beginning` on that shape (Qwen3.8 line 110). In August this was recorded as
+"nothing to fix client-side", which is true, but it is fixable **server-side**.
+The template is just text, and llama-server takes a replacement:
 
-`gpt-oss-20b` fails differently and earlier: it loads fine, then rejects the
-30 built-in schemas at grammar compilation. Same error string as the Notion
-problem, different cause — llama.cpp derives the tool grammar from the chat
-template, so **grammar compatibility is per model, not just per schema**.
+```
+templates/qwen38-late-system.jinja    (Qwen3.8, all quants)
+templates/qwen35-late-system.jinja    (Qwen3.5-27B and 9B; their templates are identical)
+```
+
+Each is the model's own embedded template with one line changed. Where it
+raised, it now renders the late message as an ordinary ChatML system turn,
+`<|im_start|>system\n…<|im_end|>`. The first system message still renders at
+the top exactly as before. Every Qwen3.8 and Qwen3.5 preset sets
+`chat-template-file`, and so does `switch-model.sh`. Verified by the table
+above. The model reads the late system turn and completes the task.
+
+`gpt-oss-20b`'s August failure was different: it loaded, then rejected the
+built-in tool schemas at grammar compilation. It passes on b11434 with no
+change on this side, so the fix came from upstream.
 
 > A probe that sends tools plus a plain user message is **not** sufficient to
-> establish compatibility — it passed all three Qwen models that then failed in
-> real use. The system-after-user shape has to be in the probe.
+> establish compatibility. In August it passed all three Qwen models that then
+> failed in real use. That is why `claude-compat.sh` drives a real task.
 
-## Speed: prefill is the whole story
+## Speed: the prompt cache now does the work
 
-`benchmarks/claude-speed.sh`, raw envelopes in `benchmarks/raw/`. This is not
-`llama-bench` — it measures what the client waits on, including the ~26k-token
-prompt.
+`benchmarks/claude-speed.sh`, 2026-10-06, b11434 on two cards
+(`benchmarks/claude-harness-speed.txt`, raw envelopes in `benchmarks/raw/`).
+Two separate `claude -p` sessions per preset with a no-tool prompt. COLD
+includes loading the model, and WARM is the second session with the model
+resident. `IN_tok` is what was *not* served from cache.
 
-| Model | Cold s | Warm s | TTFT s | Gen s |
+| Model | Cold s | **Warm s** | IN_tok (uncached) | Aug cold / warm |
 |---|---|---|---|---|
-| `laguna-33B-A3B-128k` | 101.7 | **21.9** | 21.5 | 0.4 |
-| `qwen3.6-35B-A3B-128k` | 145.6 | **22.8** | 13.1 | 9.7 |
-| `gemma4-26B-A4B-128k` | **43.7** | 32.7 | 28.6 | 4.1 |
-| `laguna-33B-A3B-q8-128k` | 176.9 | 37.5 | 36.9 | 0.6 |
-| `glm-4.7-flash-30B-A3B-128k` | 167.6 | 54.6 | 39.2 | 15.5 |
-| `qwen3-coder-80B-A3B-128k` | 251.8 | 56.8 | 56.3 | 0.5 |
-| `muse-glimmer-30B-128k` | 118.0 | 61.7 | 58.0 | 3.7 |
+| `qwen3.6-35B-A3B-128k` | 10.4 | **3.2** | 1,060 | 145.6 / 22.8 |
+| `gemma4-26B-A4B-128k` | 12.2 | **3.5** | 3,438 | 43.7 / 32.7 |
+| `gemma4-26B-A4B-vision-128k` | 12.4 | **3.8** | 3,580 | — |
+| `gemma4-26B-A4B-q8-128k` | 13.6 | **3.8** | 3,510 | — |
+| `gpt-oss-20b-A3.6B-128k` | 10.0 | **4.5** | 350 | — |
+| `qwen3.5-9B-uncensored-128k` | 12.8 | 6.0 | 3,855 | — |
+| `laguna-33B-A3B-128k` | 10.8 | 6.2 | 21,906 | 101.7 / 21.9 |
+| `laguna-33B-A3B-q8-128k` | 12.6 | 6.7 | 21,970 | 176.9 / 37.5 |
+| `qwen3.5-27B-uncensored-128k` | 27.9 | 11.4 | 3,793 | — |
+| `glm-4.7-flash-30B-A3B-128k` | 36.0 | 17.2 | 2,410 | 167.6 / 54.6 |
+| `qwen3.8-27B-128k` | 21.9 | 17.2 | 3,977 | — |
+| `qwen3.8-27B-q8-128k` | 38.5 | 22.0 | 4,039 | — |
+| `muse-glimmer-30B-128k` | 43.0 | 22.6 | 20,504 | 118.0 / 61.7 |
 
-**TTFT is 96-99% of a fresh-session turn.** Generation is a rounding error, so
-the Throughput table in README.md predicts almost nothing about how Claude Code
-feels. Gemma 4 has the cheapest cold start by a factor of four.
-
-**In a continued session it is far better**, because the prefix caches:
-
-| Model | turn 1 | turn 2 (`--continue`) |
-|---|---|---|
-| `laguna-33B-A3B-128k` | 25.5s | **3.1s** |
-| `qwen3.6-35B-A3B-128k` | 58.6s | **31.9s** |
-
-Prefix caching works on every model tested — verified directly, 65.3s → 0.1s
-on a byte-identical repeat. The `Warm s` column above misses it only because
-each measurement is a *separate* `claude -p` session and Claude Code varies
-cwd/date/session-id inside the prompt.
+* **Cross-session prompt caching works now.** In August each `claude -p` session
+  re-prefilled its whole ~26k prompt, because Claude Code varies cwd, date and
+  session id inside it. Now most models report ~17k tokens as
+  `cache_read_input_tokens` and re-process only the ~1-4k that changed. The warm
+  turn is mostly the answer itself.
+* **Laguna and Muse get no cache reads** (`IN_tok` ≈ the whole prompt). Both use
+  sliding-window attention, which is the likely cause, but this was not tested
+  (`--swa-full` would be the test). Laguna is still quick because it prefills
+  ~3,500 tok/s; Muse is not.
+* **Qwen3.8's 17 s is thinking, not prefill.** It emits ~770 output tokens
+  against Qwen3.6's 179, inside the 1,024 reasoning budget. That is a choice
+  per task, not a cost of the harness.
+* The two cards are the other half of the change. Every MoE preset dropped CPU
+  offload ([r9700+rx9070.md](r9700+rx9070.md)), so cold loads and prefill are
+  several times faster.
 
 ## Choosing a model
 
-Claude Code is an agentic loop: it rewards instruction-following and reliable
-tool calls more than raw speed.
+Claude Code is an agentic loop. It rewards reliable tool calls and
+instruction-following more than raw speed, and since every preset now passes,
+the choice is about quality per second.
 
-This is a sharper trade-off than it first looks, because the quality leader is
-disqualified by its chat template and the speed leader is the weakest model.
-
-| | code-quality | turn 2 | note |
+| | code-quality | Warm turn | Use it for |
 |---|---|---|---|
-| `qwen3.8-27B-128k` | **35/50** | — | **cannot run**, template |
-| `qwen3-coder-80B-A3B-128k` | 34/50 | untested | slowest cold start, 251.8s |
-| `qwen3.6-35B-A3B-128k` | untested | 31.9s | thinking model |
-| `laguna-33B-A3B-q8-128k` | 27/50 | untested | +25pts library knowledge |
-| `laguna-33B-A3B-128k` | 27/50 | **3.1s** | fastest by far |
+| **`gemma4-26B-A4B-vision-128k`** (default) | **37/50** | **3.8 s** | Everyday work. Fast, top-tier on the code probe, and can read screenshots |
+| `qwen3.8-27B-128k` | 30-39/50 by quant | 17.2 s | Harder problems where thinking pays. Best fidelity at Q8 |
+| `qwen3.6-35B-A3B-128k` | not measured | **3.2 s** | Fastest warm turn; a reasonable alternative default |
+| `gpt-oss-20b-A3.6B-128k` | not measured | 4.5 s | Quick, small tasks |
+| `laguna-33B-A3B-q8-128k` | 27/50 | 6.7 s | Not recommended: lowest code score, no cache reuse |
 
-**Laguna is a poor default on quality despite being the fastest.** It scored
-27/50 on `code-quality` and last on `cdn-freshness` (see README), and it shows
-here — asked to reply with an exact token it declined and explained what it was
-designed for instead. Correct tool calls, unreliable instruction-following.
-
-But 3.1s per follow-up turn against 31.9s is a tenfold difference in felt
-latency, and that is hard to argue with for interactive work. **Use
-`qwen3-coder-80B-A3B-128k` when the answer matters more than the wait, and
-`laguna-33B-A3B-q8-128k` for everything else** — same coding score as the Q4
-but materially better library knowledge, which is the failure mode most likely
-to waste your time.
-
-Qwen3.6's 31.9s second turn is probably its reasoning budget rather than slow
-prompt handling: it emitted 507 output tokens against Laguna's 171. That was
-not isolated, so treat it as a likely cause, not a measured one.
-
-`laguna-33B-A3B-q8-128k` over the Q4_K_M if Laguna is wanted anyway: identical
-coding score, +25 points of library knowledge, still 30 tok/s.
-
----
+* `code-quality` resolves about 4 checks in 50, and Qwen3.8 alone spans 30-39
+  across quants. Read the column as "Gemma 4 and Qwen3.8 are in the same band,
+  Laguna is below it", not as a strict order.
+* **Gemma 4 vision replaces Laguna Q8 as the default.** In August the choice
+  was between a fast weak model (Laguna, 3.1 s follow-ups, 27/50) and a slow
+  strong one. Gemma now has both the speed and the score. The vision projector
+  costs nothing in speed (3.8 s against the text preset's 3.5) and removes
+  gotcha 4.
+* Switch per task with `claude-local <preset>`. Swapping models costs one cold
+  load, about 10-40 s.
 
 ## `claude-local.sh`
 
 ```bash
 claude-local list                        # what the router is serving
 claude-local                             # default model, interactive
-claude-local qwen3-coder-80B-A3B-128k    # switch model
-claude-local --chrome                    # add Chrome DevTools, text-only
+claude-local qwen3.8-27B-128k            # switch model
+claude-local --chrome                    # add Chrome DevTools (screenshots only on vision presets)
 claude-local -p "fix the bug"            # anything else passes through
 ```
 
