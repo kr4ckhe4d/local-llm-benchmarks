@@ -1,5 +1,9 @@
 # Local LLM Benchmarks — CachyPC
 
+> **Current setup: two GPUs** (Radeon AI PRO R9700 + RX 9070 XT, since
+> 2026-10-05). The two-card measurements, and the presets they set, are in
+> **[r9700+rx9070.md](r9700+rx9070.md)**. This file is the single-card record.
+
 ## Hardware
 
 Every number in this file was measured on this machine. The right-hand column
@@ -24,7 +28,7 @@ is why each spec keeps showing up in the results.
 > **A second card went in on 2026-10-05** — a Radeon AI PRO R9700 (32 GB)
 > beside the 9070 XT, 48.9 GB total, both PCIe 5.0 x8. This file stays the
 > single-card record, and every "16 GB" constraint below is that card's. With
-> two cards, **MoE presets drop CPU offload entirely and gain 40-185%**, flat
+> two cards, **MoE presets drop CPU offload entirely and gain 38-183%**, flat
 > with context (Gemma 4 143 tok/s, Laguna 90, Qwen3.6 74), and **Qwen3.8 runs
 > IQ4_XS + MTP at every context, 71 tok/s, 3x faster at 128K depth**. Every
 > preset was re-fit; the measurements are in
