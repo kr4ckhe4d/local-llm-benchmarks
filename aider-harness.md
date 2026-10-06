@@ -347,7 +347,11 @@ So `--setup` also writes **aliases**, one per preset, taken from the router's
 own short names in `/v1/models`: `gemma4-vision-128k`, `qwen3.8-128k`,
 `qwen3.6-128k`, `glm4.7-flash-200k` and so on. They sit in a marked block at
 the end of `~/.aider.conf.yml` that each run replaces; the rest of the file is
-never touched. `aider-local.sh list` shows every preset.
+never touched. The rule: **the `switch-model` name, a hyphen, and the
+context**, so `switch-model qwen3.6 128k` is `aider --model qwen3.6-128k`.
+The two exceptions are `switch-model`-only entries: `qwen3.8 64k` (the router
+serves it as `qwen3.8-128k`) and the legacy `qwen3.8-mtp`.
+`aider-local.sh list` shows every preset.
 
 **Switching models: restart, or use two commands.**
 
