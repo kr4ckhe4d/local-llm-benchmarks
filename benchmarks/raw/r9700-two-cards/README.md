@@ -38,6 +38,16 @@ What is here instead:
   `sweep-gpt-oss-20b-A3.6B-32k-0.log` and `sweep-qwen3.5-9B-uncensored-32k-0.log`
   hold the R9700-only run; the two-card figures for them are in
   `presets-unmeasured.txt`.
+* **`logs/depth-presets.txt`** (`depth_presets.sh`, 2026-10-07 10:59-11:25,
+  b11434): every MoE 128K preset plus Qwen3.8 IQ4_XS and Q6_K at real 128K
+  depth, each preset exactly as written in `models-preset.ini`, with its
+  server log as `logs/depthp-<preset>.log`. The first attempt that morning is
+  `depth-presets-INVALID.txt` and `depthp-*-INVALID.log`: the script killed
+  its wrapper subshell instead of llama-server, so only its first row is real.
+* **`logs/q6-vs-q8.txt`** (`logs/run-q6.sh`, 2026-10-07 11:25-11:35, b11434):
+  Qwen3.8 IQ4_XS, UD-Q6_K and Q8_0 at 128K and Q6_K at 256K, fit + 700-token
+  probe, server logs `logs/dense-q6cmp-*.log`. A rerun of the 2026-10-06
+  comparison, whose logs went with the scratchpad in a reboot.
 * **`logs/gemma-q8.txt`** (`run-gemma-q8.sh`): Gemma 4 Q8_0 vision fits at
   32K/128K/256K, the probe image end to end at 128K, and a Q4-vs-Q8_0 KLD run
   that came out invalid (`gemma-kld-q4-vs-q8-INVALID.txt`; see "Open" in
