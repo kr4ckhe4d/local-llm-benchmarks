@@ -59,6 +59,10 @@ What is here instead:
   32K/128K/256K, 128K depth, and KLD with Q8_0 as reference (scores in
   `benchmarks/q8ref/qwen3.6-35B-A3B-*`). The first KLD base pass stalled on
   mmap and was rerun with `-lm dio`, noted in the file.
+* **`logs/gemma31b.txt`** (`logs/run-gemma31b.sh`, 2026-10-07 16:15-16:53,
+  b11434): Gemma 4 31B Q6_K with and without MTP, f16 vs q8_0 KV at
+  32K/128K/256K, a vision fit, and 128K depth for both KV types, against the
+  26B-A4B Q4 128k preset. Server logs `gemma31b-*.log`, `sweep-g31-*.log`.
 * **`logs/gemma-q8.txt`** (`run-gemma-q8.sh`): Gemma 4 Q8_0 vision fits at
   32K/128K/256K, the probe image end to end at 128K, and a Q4-vs-Q8_0 KLD run
   that came out invalid (`gemma-kld-q4-vs-q8-INVALID.txt`; see "Open" in

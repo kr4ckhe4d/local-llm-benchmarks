@@ -16,8 +16,9 @@ R9700 (48.9 GB VRAM, both PCIe 5.0 x8), CachyOS, ROCm 7.2, llama.cpp b11434.
 | Model | Setup | Result |
 |---|---|---|
 | Gemma 4 26B-A4B | Q4 + MTP, 128K | **143 tok/s** generation; 53 tok/s with 128K of context filled |
+| Gemma 4 31B (dense) | Q6_K + MTP, 128K | 52 tok/s (19 without MTP); 279 tok/s prefill at 128K depth |
 | Qwen3.6 35B-A3B | UD-Q6_K, 128K | 72 tok/s, only 2% below Q4 for 2.3x lower KLD; **3,170 tok/s prefill** at 128K depth |
-| Qwen3.8 27B (dense) | IQ4_XS + MTP | 71 tok/s, 85% draft acceptance |
+| Qwen3.8 27B (dense) | IQ4_XS + MTP | 71 tok/s, 85% draft acceptance (file since replaced by UD-Q6_K) |
 | Qwen3.8 27B | **UD-Q6_K** + MTP | 57 tok/s; KLD vs BF16 0.0020 (IQ4_XS: 0.0179); as good as Q8_0 in Claude Code, 12% faster |
 | GLM-4.7-Flash 30B-A3B | Q4/Q8, 128K | 75 tok/s in an empty context, but **154 tok/s prefill** at 128K depth (attention-bound; removed) |
 | MoE models generally | second card | CPU expert offload gone: **+38% to +183%** generation |

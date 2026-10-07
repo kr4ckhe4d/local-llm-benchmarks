@@ -62,8 +62,8 @@ declare -A MODEL_FILE=(
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [gemma4-q8]="gemma-4-26B-A4B-it-Q8_0.gguf"
   [gemma4-vision]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
-  [qwen3.8]="Qwen3.8-27B-UD-IQ4_XS-v3.gguf"
-  [qwen3.8-mtp]="Qwen3.8-27B-UD-IQ4_XS-v3.gguf"   # kept for old commands; = qwen3.8
+  [qwen3.8]="Qwen3.8-27B-UD-Q6_K.gguf"
+  [qwen3.8-mtp]="Qwen3.8-27B-UD-Q6_K.gguf"   # kept for old commands; = qwen3.8
   [qwen3.8-q8]="Qwen3.8-27B-Q8_0.gguf"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored-Q8_0.gguf"
@@ -93,8 +93,8 @@ declare -A MODEL_BACKEND=(
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [gemma4-q8]="build"            # Q8_0: ROCm
   [gemma4-vision]="build"        # Q4_K_M + mmproj: ROCm
-  [qwen3.8]="build"              # IQ4_XS v3 + MTP: ROCm
-  [qwen3.8-mtp]="build"          # IQ4_XS v3 + MTP: ROCm
+  [qwen3.8]="build"              # UD-Q6_K + MTP since 2026-10-07: ROCm
+  [qwen3.8-mtp]="build"          # UD-Q6_K + MTP since 2026-10-07: ROCm
   [qwen3.8-q8]="build"           # Q8_0 + MTP: ROCm
   [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
   [qwen3.5-9b-uncensored]="build" # Q8_0: ROCm
@@ -299,8 +299,8 @@ Models:
                                           Q4; Q4 measured close to it, stays default
   gemma4-vision  Gemma 4 +vision  17.0GB  Q4_K_M + 1.19GB mmproj, reads images
                                           32k/128k, MTP included, 143 tok/s
-  qwen3.8        Qwen3.8-27B      13.3GB  DENSE 27B, hybrid attn (64L), thinking
-                                          IQ4_XS + MTP: 71 tok/s, 27 at 128k depth
+  qwen3.8        Qwen3.8-27B      20.5GB  DENSE 27B, hybrid attn (64L), thinking
+                                          UD-Q6_K + MTP: 57 tok/s, 22 at 128k depth
   qwen3.8-mtp    (same as qwen3.8, kept so old commands still work)
   qwen3.8-q8     Qwen3.8-27B Q8_0 27.1GB  near-lossless + MTP: 50 tok/s. 32k/128k
   qwen3.5-uncensored

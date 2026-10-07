@@ -12,15 +12,15 @@
 #   aider-local.sh --init                    drop CONVENTIONS.md + .aider.conf.yml into cwd
 #   aider-local.sh --setup                   point plain `aider` at the router (global config)
 #   aider-local.sh                           default model, interactive
-#   aider-local.sh qwen3.8-27B-128k          pick a model
-#   aider-local.sh qwen3.8-27B-128k --yes-always -m "fix the bug"
+#   aider-local.sh qwen3.8-27B-q6-128k       pick a model
+#   aider-local.sh qwen3.8-27B-q6-128k --yes-always -m "fix the bug"
 #
 # Written for macOS too, so bash 3.2: no associative arrays, no ${x,,}.
 set -uo pipefail
 
 # By mDNS name, not IP -- see claude-local.sh.
 ROUTER="${ROUTER:-http://CachyPC.local:8090}"
-DEFAULT_MODEL="${AIDER_LOCAL_MODEL:-qwen3.8-27B-128k}"
+DEFAULT_MODEL="${AIDER_LOCAL_MODEL:-qwen3.8-27B-q6-128k}"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 

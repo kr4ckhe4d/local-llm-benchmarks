@@ -232,7 +232,7 @@ Proxmox box (`SEARXNG_URL`, default `http://192.168.5.33:8080`; its JSON API is
 enabled), allows its four tools without prompting, and denies `WebSearch` so
 the model reaches for the working one. `--no-search` leaves it off.
 
-Checked on `qwen3.8-27B-q6-128k`: the four tool schemas compile in llama.cpp's
+Checked on `qwen3.8-27B-q6-128k` (now an alias of `qwen3.8-27B-128k`, which runs the same file): the four tool schemas compile in llama.cpp's
 grammar (unlike the Notion connectors), and "what is the newest llama.cpp
 release tag" ran search -> `web_url_read` on the releases page -> `grep` on
 the saved result -> answer (`b11443`), 6 turns, 79 s. The releases page came
@@ -458,12 +458,15 @@ the choice is about quality per second.
 
 | | code-quality | Warm turn | Use it for |
 |---|---|---|---|
-| **`gemma4-26B-A4B-vision-128k`** (default) | **37/50** | **3.8 s** | Everyday work. Fast, top-tier on the code probe, and can read screenshots |
-| `qwen3.8-27B-128k` | 30-39/50 by quant | 17.2 s | Harder problems where thinking pays. Best fidelity at Q8 |
-| `qwen3.8-27B-q6-128k` | not measured | not measured | Q8's quality 12% faster: judged as good as Q8 on a real build (below) |
-| `qwen3.6-35B-A3B-128k` | not measured | **3.2 s** | Fastest warm turn; good on a real build, below Qwen3.8 (UD-Q6_K since 2026-10-07, below) |
-| `gpt-oss-20b-A3.6B-128k` | not measured | 4.5 s | Quick, small tasks |
+| **`gemma4-26B-A4B-q4-vision-128k`** (default) | **37/50** | **3.8 s** | Everyday work. Fast, top-tier on the code probe, and can read screenshots |
+| `qwen3.8-27B-q6-128k` | 30-39/50 by quant | 17.2 s (IQ4_XS) | Best on the real build. UD-Q6_K since 2026-10-07: Q8's quality, 12% faster (below) |
+| `qwen3.6-35B-A3B-q6-128k` | not measured | **3.2 s** | Fastest warm turn; good on a real build, below Qwen3.8 (UD-Q6_K since 2026-10-07, below) |
+| `gpt-oss-20b-A3.6B-mxfp4-128k` | not measured | 4.5 s | Quick, small tasks |
 | `laguna-33B-A3B-q8-128k` | 27/50 | 6.7 s | Not recommended: lowest code score, no cache reuse |
+
+Preset names carry the quant since 2026-10-07 (`-q4-`, `-q6-`, `-q8-`, `-mxfp4-`).
+Older tables in this file use the previous names, which still route as aliases,
+but `claude-local.sh` only accepts the listed names, so use these.
 
 * `code-quality` resolves about 4 checks in 50, and Qwen3.8 alone spans 30-39
   across quants. Read the column as "Gemma 4 and Qwen3.8 are in the same band,

@@ -5,7 +5,7 @@
 #
 #   claude-local.sh list                     what the router is serving
 #   claude-local.sh                          default model, interactive
-#   claude-local.sh qwen3.8-27B-128k         pick a model
+#   claude-local.sh qwen3.8-27B-q6-128k      pick a model
 #   claude-local.sh --chrome                 add Chrome DevTools (text-only)
 #   claude-local.sh -p "fix the bug"         anything after is passed to claude
 #
@@ -19,7 +19,7 @@ ROUTER="${ROUTER:-http://CachyPC.local:8090}"
 # Gemma 4 + vision since 2026-10-06: 3.8 s warm turns, 37/50 on code-quality,
 # and it can read images, so a screenshot no longer kills the session. See
 # claude-harness.md, "Choosing a model".
-DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-gemma4-26B-A4B-vision-128k}"
+DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-gemma4-26B-A4B-q4-vision-128k}"
 
 # SearXNG on the Proxmox box, for web search from local models. Its JSON API
 # (format=json) is enabled; a stock SearXNG answers 403 there.
