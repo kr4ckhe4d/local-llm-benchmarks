@@ -48,6 +48,17 @@ What is here instead:
   Qwen3.8 IQ4_XS, UD-Q6_K and Q8_0 at 128K and Q6_K at 256K, fit + 700-token
   probe, server logs `logs/dense-q6cmp-*.log`. A rerun of the 2026-10-06
   comparison, whose logs went with the scratchpad in a reboot.
+* **`logs/glm-q8.txt`** (`logs/run-glm-q8.sh`, 2026-10-07 12:32-13:12, b11434):
+  GLM-4.7-Flash Q8_0 vs Q4 fit + probe, then `depth_sweep.sh` at 8K-128K with
+  three attention/KV configs and a Qwen3.6 control. The `-fa off` config at
+  ctx 131072 failed to allocate (11 GB score buffer); **`logs/glm-q8-fa-pair.txt`**
+  reran `-fa on`/`-fa off` at ctx 65536, `-ub 512`. Its 64K `-fa off` point was
+  stopped by hand, noted in the file. Server logs `sweep-glm-*.log`, `glmq8-*.log`.
+* **`logs/qwen36-quants.txt`** (`logs/run-qwen36-quants.sh`, 2026-10-07
+  13:55-14:24, b11434): Qwen3.6 UD-Q4_K_M vs UD-Q6_K vs Q8_0, fit + probe at
+  32K/128K/256K, 128K depth, and KLD with Q8_0 as reference (scores in
+  `benchmarks/q8ref/qwen3.6-35B-A3B-*`). The first KLD base pass stalled on
+  mmap and was rerun with `-lm dio`, noted in the file.
 * **`logs/gemma-q8.txt`** (`run-gemma-q8.sh`): Gemma 4 Q8_0 vision fits at
   32K/128K/256K, the probe image end to end at 128K, and a Q4-vs-Q8_0 KLD run
   that came out invalid (`gemma-kld-q4-vs-q8-INVALID.txt`; see "Open" in
