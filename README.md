@@ -1,8 +1,58 @@
-# Local LLM Benchmarks — CachyPC
+# llama.cpp on AMD Radeon RDNA4 with ROCm: measured local LLM benchmarks
+
+Real measurements of local LLMs on consumer AMD GPUs: an **RX 9070 XT (16 GB)**
+and a **Radeon AI PRO R9700 (32 GB)**, both RDNA4 / gfx1201, on llama.cpp with
+ROCm 7.2 under Linux. Throughput, VRAM fit, GGUF quantization quality (KL
+divergence against BF16), MTP speculative decoding, long context at real
+depth, and running coding agents (Claude Code, aider, Cline) against the
+local models. Every figure here was measured on this machine; scripts and raw
+logs are in [`benchmarks/`](benchmarks/).
+
+**Hardware now:** Ryzen 7 9800X3D, 32 GB DDR5-6000, RX 9070 XT + Radeon AI PRO
+R9700 (48.9 GB VRAM, both PCIe 5.0 x8), CachyOS, ROCm 7.2, llama.cpp b11434.
+
+## Headline results (two cards, 2026-10)
+
+| Model | Setup | Result |
+|---|---|---|
+| Gemma 4 26B-A4B | Q4 + MTP, 128K | **143 tok/s** generation; 53 tok/s with 128K of context filled |
+| Qwen3.6 35B-A3B | Q4_K_M, 128K | 74 tok/s; **3,462 tok/s prefill** at 128K depth |
+| Qwen3.8 27B (dense) | IQ4_XS + MTP | 71 tok/s, 85% draft acceptance |
+| Qwen3.8 27B | **UD-Q6_K** + MTP | 57 tok/s; KLD vs BF16 0.0020 (IQ4_XS: 0.0179); as good as Q8_0 in Claude Code, 12% faster |
+| GLM-4.7-Flash 30B-A3B | Q4, 128K | 75 tok/s in an empty context, but **154 tok/s prefill** at 128K depth |
+| MoE models generally | second card | CPU expert offload gone: **+38% to +183%** generation |
+
+Generation is the 700-token probe in an empty context unless it says "depth";
+filled to 128K, every model keeps 20-51% of that rate. Details and caveats are
+in the linked files.
+
+## Where to look
+
+| File | What it answers |
+|---|---|
+| **[r9700+rx9070.md](r9700+rx9070.md)** | What a second GPU (R9700 beside a 9070 XT) changed: every preset re-fit, MoE without CPU offload, dense models with MTP, all models at 128K depth |
+| [claude-harness.md](claude-harness.md) | Running **Claude Code** against local llama.cpp models: what breaks, fixes, which model to pick, SearXNG web search |
+| [aider-harness.md](aider-harness.md) | Running **aider** against the same router |
+| [real-world-testing.md](real-world-testing.md) | Agentic coding through **Cline**: can the models do a job end to end |
+| [big-codebase-guide.md](big-codebase-guide.md) | Using these models on a large codebase |
+| [ddr5-9800x3d.md](ddr5-9800x3d.md) | What moving from DDR4 to DDR5 (5950X to 9800X3D) did to CPU-offloaded MoE |
+| [llama-b11434.md](llama-b11434.md), [llama-a868c3e3c.md](llama-a868c3e3c.md) | llama.cpp version-to-version changes, measured before upgrading |
+| [gsq-rco.md](gsq-rco.md) | ISTA-DASLab GSQ-RCO quants (Qwen3.8-27B and Qwen3.8-Flash-Next) against Unsloth's |
+| [dflash2-qat-q2.md](dflash2-qat-q2.md) | DFlash2 speculative drafter and QAT Q2_0 for Qwen3.8-27B on 16 GB |
+| [turboquant.md](turboquant.md) | TurboQuant 2-4 bit KV-cache quantization |
+| [instella-moe.md](instella-moe.md) | AMD Instella-MoE-16B-A3B |
+| [handover.md](handover.md) | Working notes, including the KLD-vs-BF16 quant study |
+| [`models-preset.ini`](models-preset.ini) | The llama-server router presets, each with the measurements that set it |
+| [`benchmarks/`](benchmarks/) | The scripts (`fit.sh`, `kld-test.sh`, `throughput-test.py`, ...) and raw logs |
+
+---
+
+## Single-card record — CachyPC (RX 9070 XT, 16 GB)
 
 > **Current setup: two GPUs** (Radeon AI PRO R9700 + RX 9070 XT, since
 > 2026-10-05). The two-card measurements, and the presets they set, are in
-> **[r9700+rx9070.md](r9700+rx9070.md)**. This file is the single-card record.
+> **[r9700+rx9070.md](r9700+rx9070.md)**. Everything below is the single-card
+> record and stays as measured.
 
 ## Hardware
 
