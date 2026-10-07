@@ -461,7 +461,7 @@ the choice is about quality per second.
 | **`gemma4-26B-A4B-vision-128k`** (default) | **37/50** | **3.8 s** | Everyday work. Fast, top-tier on the code probe, and can read screenshots |
 | `qwen3.8-27B-128k` | 30-39/50 by quant | 17.2 s | Harder problems where thinking pays. Best fidelity at Q8 |
 | `qwen3.8-27B-q6-128k` | not measured | not measured | Q8's quality 12% faster: judged as good as Q8 on a real build (below) |
-| `qwen3.6-35B-A3B-128k` | not measured | **3.2 s** | Fastest warm turn; a reasonable alternative default |
+| `qwen3.6-35B-A3B-128k` | not measured | **3.2 s** | Fastest warm turn; good on a real build, below Qwen3.8 (UD-Q6_K since 2026-10-07, below) |
 | `gpt-oss-20b-A3.6B-128k` | not measured | 4.5 s | Quick, small tasks |
 | `laguna-33B-A3B-q8-128k` | 27/50 | 6.7 s | Not recommended: lowest code score, no cache reuse |
 
@@ -479,6 +479,11 @@ the choice is about quality per second.
   track. 53m51s wall, 30m13s API, 37.6k output tokens, 1,211 lines. On the same
   brief Gemma 4 Q8 looped in its thinking and Qwen3.8-Flash-Next Q2_0 debugged
   its own typo; IQ4_XS fixed the page but is 9x further from BF16 by KLD.
+* **Qwen3.6 UD-Q6_K, 2026-10-07: good, below Qwen3.8.** Same particle-page
+  brief, after the presets moved from Q4_K_M to UD-Q6_K (r9700+rx9070.md): it
+  got to a good final product, but took a few rounds of back-and-forth to get
+  there, where Qwen3.8 Q6 needed one nudge. The warm-turn figure above is from
+  the Q4 file; Q6 measured 2% slower on generation.
 * Switch per task with `claude-local <preset>`. Swapping models costs one cold
   load, about 10-40 s.
 
