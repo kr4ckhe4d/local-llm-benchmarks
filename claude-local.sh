@@ -21,6 +21,10 @@ ROUTER="${ROUTER:-http://CachyPC.local:8090}"
 # claude-harness.md, "Choosing a model".
 DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-gemma4-26B-A4B-vision-128k}"
 
+# SearXNG on the Proxmox box, for web search from local models. Its JSON API
+# (format=json) is enabled; a stock SearXNG answers 403 there.
+SEARXNG_URL="${SEARXNG_URL:-http://192.168.5.33:8080}"
+
 # Claude Code's system prompt measured 41,796 tokens on 2026-08-23 with the
 # claude.ai connectors attached, 24-27k without, and ~20k on 2.1.290 (2026-10-06;
 # Muse's tokenizer doubles it). A 32k preset has too little left for a real
@@ -80,16 +84,22 @@ Run Claude Code against the local llama.cpp router.
 
 Options
   --chrome        enable Chrome DevTools MCP (text-only tools; no screenshots)
+  --no-search     do not attach SearXNG web search
   --any-ctx       allow presets under ${MIN_CTX} tokens (they will fail; for testing)
   -h, --help      this
 
 Environment
   ROUTER               default $ROUTER
   CLAUDE_LOCAL_MODEL   default $DEFAULT_MODEL
+  SEARXNG_URL          default $SEARXNG_URL
 
 Notes
   * Claude Code's system prompt is ~20k tokens, so only 64k+ presets are offered.
-  * MCP servers are disabled unless --chrome: three Notion connector schemas
+  * On presets without "vision" in the name, Read on image files is denied:
+    one image in context 500s every later request on a text-only model.
+  * Web search goes through SearXNG (mcp-searxng, needs npx); Claude Code's
+    own WebSearch runs on Anthropic's servers and is denied here.
+  * No other MCP servers unless --chrome: three Notion connector schemas
     crash llama.cpp's grammar compiler ("failed to parse grammar"), which
     breaks tool calling entirely.
   * All four model slots (main/sonnet/opus/haiku) are pinned to one model --
@@ -97,7 +107,7 @@ Notes
 EOF
 }
 
-MODEL=""; USE_CHROME=0; ANY_CTX=0; DO_LIST=0
+MODEL=""; USE_CHROME=0; USE_SEARCH=1; ANY_CTX=0; DO_LIST=0
 PASS=()          # everything destined for claude, kept as distinct words
 SAW_FLAG=0       # after the first claude flag, stop treating bare words as a model
 while [ $# -gt 0 ]; do
@@ -105,6 +115,7 @@ while [ $# -gt 0 ]; do
     -h|--help)  usage; exit 0 ;;
     list)       DO_LIST=1; shift ;;
     --chrome)   USE_CHROME=1; shift ;;
+    --no-search) USE_SEARCH=0; shift ;;
     --any-ctx)  ANY_CTX=1; shift ;;
     --)         shift; while [ $# -gt 0 ]; do PASS+=("$1"); shift; done ;;
     -*)         SAW_FLAG=1; PASS+=("$1"); shift ;;
@@ -151,30 +162,67 @@ if [ "$CTX" -lt "$MIN_CTX" ] && [ "$ANY_CTX" -eq 0 ]; then
        Pick a 128k or 256k preset, or pass --any-ctx to try anyway."
 fi
 
-# MCP: nothing at all, or chrome-devtools only. Never the account connectors --
-# see the Notion grammar note in usage().
+# MCP: SearXNG (unless --no-search) and chrome-devtools (with --chrome). Never
+# the account connectors -- see the Notion grammar note in usage().
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/claude-local.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+SERVERS=""; TOOLS=""
+DENY=""          # one --disallowedTools list; a second flag would not merge
+add_server() { SERVERS="${SERVERS:+$SERVERS,}$1"; }
+allow() { TOOLS="${TOOLS:+$TOOLS,}$1"; }
+deny()  { DENY="${DENY:+$DENY,}$1"; }
+
+# Web search through SearXNG, added 2026-10-06. Claude Code's own WebSearch is
+# a server tool that runs on Anthropic's side, so against llama.cpp it has
+# nothing to run on; it is denied whenever SearXNG is attached, so the model
+# reaches for the one that works. mcp-searxng is pinned: its four tool schemas
+# were checked against llama.cpp's grammar compiler at this version.
+if [ "$USE_SEARCH" -eq 1 ] && command -v npx >/dev/null 2>&1; then
+  add_server "\"searxng\":{\"command\":\"npx\",\"args\":[\"-y\",\"mcp-searxng@2.5.0\"],\"env\":{\"SEARXNG_URL\":\"$SEARXNG_URL\"}}"
+  allow "mcp__searxng__searxng_web_search,mcp__searxng__searxng_search_suggestions,mcp__searxng__searxng_instance_info,mcp__searxng__web_url_read"
+  deny "WebSearch"
+  SEARCH_NOTE="  search  : SearXNG at $SEARXNG_URL (--no-search to disable)"
+elif [ "$USE_SEARCH" -eq 1 ]; then
+  SEARCH_NOTE="  search  : off -- SearXNG needs npx (install Node)"
+else
+  SEARCH_NOTE="  search  : off (--no-search)"
+fi
+
 if [ "$USE_CHROME" -eq 1 ]; then
   command -v npx >/dev/null 2>&1 || die "--chrome needs npx (install Node)"
-  cat > "$TMP/mcp.json" <<'JSON'
-{"mcpServers":{"chrome-devtools":{"command":"npx","args":["-y","chrome-devtools-mcp@latest","--isolated"]}}}
-JSON
+  add_server '"chrome-devtools":{"command":"npx","args":["-y","chrome-devtools-mcp@latest","--isolated"]}'
+  allow "$CHROME_SAFE"
   case "$MODEL" in
-    *vision*) TOOLS="$CHROME_SAFE,mcp__chrome-devtools__take_screenshot"
+    *vision*) allow "mcp__chrome-devtools__take_screenshot"
               EXTRA_NOTE="  chrome  : on (vision preset: screenshots allowed)" ;;
-    *)        TOOLS="$CHROME_SAFE"
-              EXTRA_NOTE="  chrome  : on (text-only tools; take_snapshot instead of screenshots)" ;;
+    *)        EXTRA_NOTE="  chrome  : on (text-only tools; take_snapshot instead of screenshots)" ;;
   esac
-  ARGS=(--strict-mcp-config --mcp-config "$TMP/mcp.json" --allowedTools "$TOOLS")
 else
-  printf '{"mcpServers":{}}' > "$TMP/mcp.json"
-  ARGS=(--strict-mcp-config --mcp-config "$TMP/mcp.json")
   EXTRA_NOTE="  chrome  : off (--chrome to enable)"
 fi
 
-printf '  router  : %s\n  model   : %s\n  context : %s tokens\n%s\n\n' \
-  "$ROUTER" "$MODEL" "$CTX" "$EXTRA_NOTE"
+printf '{"mcpServers":{%s}}' "$SERVERS" > "$TMP/mcp.json"
+ARGS=(--strict-mcp-config --mcp-config "$TMP/mcp.json")
+[ -n "$TOOLS" ] && ARGS+=(--allowedTools "$TOOLS")
+
+# Read sends an image too when pointed at one, and on a text-only preset that
+# is the same 500 and retry loop as a screenshot (claude-harness.md, Gotcha 4).
+# On 2026-10-06 Qwen3.8 read its own WebGL screenshot mid-task and the session
+# was dead: the image stays in context, so every later request fails as well.
+# Deny the image files outright rather than ask the model not to. The leading
+# // makes the pattern absolute; a bare **/*.png only covers the working
+# directory, and that screenshot was in /tmp.
+case "$MODEL" in
+  *vision*) IMG_NOTE="  images  : allowed (vision preset)" ;;
+  *)        for ext in png jpg jpeg gif webp bmp PNG JPG JPEG GIF WEBP BMP; do
+              deny "Read(//**/*.$ext)"
+            done
+            IMG_NOTE="  images  : Read on image files denied (text-only preset)" ;;
+esac
+[ -n "$DENY" ] && ARGS+=(--disallowedTools "$DENY")
+
+printf '  router  : %s\n  model   : %s\n  context : %s tokens\n%s\n%s\n%s\n\n' \
+  "$ROUTER" "$MODEL" "$CTX" "$SEARCH_NOTE" "$EXTRA_NOTE" "$IMG_NOTE"
 
 # All four slots on one model. Unset slots fall back to real Anthropic names
 # and 400 with "model 'claude-sonnet-5' not found".

@@ -212,7 +212,32 @@ tree as text — which is the thing a text-only model can actually reason about.
 With `evaluate_script` alongside it, that covers most of what screenshots are
 normally used for.
 
-Note that `Read` will also send an image if pointed at a PNG. Same failure.
+`Read` will also send an image if pointed at a PNG, with the same failure. On
+2026-10-06 Qwen3.8 read its own WebGL screenshot from `/tmp` mid-task and the
+session was dead. Since then `claude-local.sh` passes `--disallowedTools` with
+`Read(//**/*.png)` and the other image extensions for every preset whose name
+lacks `vision`. The leading `//` makes the pattern absolute; `**/*.png` alone
+covers only the working directory. Checked against a mock server: the denied
+`Read` comes back as a tool error and no image is sent, a `.txt` read still
+works, and a `vision` name still sends the image.
+
+---
+
+## Web search through SearXNG
+
+Claude Code's built-in `WebSearch` runs on Anthropic's servers, so against
+llama.cpp it has nothing to run on. Since 2026-10-06 `claude-local.sh`
+attaches `mcp-searxng@2.5.0` (npx) pointed at the SearXNG instance on the
+Proxmox box (`SEARXNG_URL`, default `http://192.168.5.33:8080`; its JSON API is
+enabled), allows its four tools without prompting, and denies `WebSearch` so
+the model reaches for the working one. `--no-search` leaves it off.
+
+Checked on `qwen3.8-27B-q6-128k`: the four tool schemas compile in llama.cpp's
+grammar (unlike the Notion connectors), and "what is the newest llama.cpp
+release tag" ran search -> `web_url_read` on the releases page -> `grep` on
+the saved result -> answer (`b11443`), 6 turns, 79 s. The releases page came
+back at 89k characters, over Claude Code's tool-result limit; Claude Code saved
+it to a file and the model grepped it, which worked.
 
 ---
 
@@ -435,6 +460,7 @@ the choice is about quality per second.
 |---|---|---|---|
 | **`gemma4-26B-A4B-vision-128k`** (default) | **37/50** | **3.8 s** | Everyday work. Fast, top-tier on the code probe, and can read screenshots |
 | `qwen3.8-27B-128k` | 30-39/50 by quant | 17.2 s | Harder problems where thinking pays. Best fidelity at Q8 |
+| `qwen3.8-27B-q6-128k` | not measured | not measured | Q8's quality 12% faster: judged as good as Q8 on a real build (below) |
 | `qwen3.6-35B-A3B-128k` | not measured | **3.2 s** | Fastest warm turn; a reasonable alternative default |
 | `gpt-oss-20b-A3.6B-128k` | not measured | 4.5 s | Quick, small tasks |
 | `laguna-33B-A3B-q8-128k` | 27/50 | 6.7 s | Not recommended: lowest code score, no cache reuse |
@@ -447,6 +473,12 @@ the choice is about quality per second.
   strong one. Gemma now has both the speed and the score. The vision projector
   costs nothing in speed (3.8 s against the text preset's 3.5) and removes
   gotcha 4.
+* **Qwen3.8 Q6_K, 2026-10-07: as good as Q8.** One real session, the WebGL
+  landing page brief: the frontend worked well, and the only detour was the
+  model building its own test harness, which one interruption put back on
+  track. 53m51s wall, 30m13s API, 37.6k output tokens, 1,211 lines. On the same
+  brief Gemma 4 Q8 looped in its thinking and Qwen3.8-Flash-Next Q2_0 debugged
+  its own typo; IQ4_XS fixed the page but is 9x further from BF16 by KLD.
 * Switch per task with `claude-local <preset>`. Swapping models costs one cold
   load, about 10-40 s.
 
