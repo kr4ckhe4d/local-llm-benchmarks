@@ -79,6 +79,14 @@ in `scripts/` during generation; the agent must not be left to improvise it.
   23 KB cost ~6K tokens per turn.
 - **State in files, `/clear` instead of `/compact`.** Compaction loses detail;
   a fresh session reading PROGRESS.md does not.
+- **The session limit lives in the tool output.** In the smoke-fix phase KAT
+  fixed four notes in one 26-minute session and stopped at 7% before
+  auto-compact: the CLAUDE.md rule counted "tasks", and fixes were notes.
+  `progress.mjs start` now resets a counter, every `done` and `resolve` counts,
+  and from the second item the script prints `!!! SESSION LIMIT REACHED ... STOP
+  NOW` where the model reads it. Smoke runs go through `test-runner` so their
+  output stays out of the main chat. Add `progress/.session.json` to the
+  project's `.gitignore`.
 - **A hard stop, not advice.** "Do one or two tasks per session" was read as a
   suggestion: KAT ran ~10 tasks in one session until Claude Code showed 14% left
   before auto-compact. The rule is now a hard stop after two tasks with a fixed

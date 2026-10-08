@@ -62,13 +62,14 @@ Context is limited and compaction loses detail, so state lives in files, not in 
   ```
 - **Who records what:** the `implementer` subagent runs `done` for its task. The main chat never runs `done`
   and never edits `PLAN.md` or `PROGRESS.md`; it only reads them. If `check` fails, run the command it names.
-- **At session start:** run `node scripts/progress.mjs`, read the task named as Next in `PLAN.md`, and handle
-  any open note that blocks it. Do not re-explore the whole repo.
-- **HARD STOP after two completed tasks.** When the second task of this session is done (its subagent has
-  returned and recorded it with `done`), STOP. Do not start a third task, not even a small one. Your final
-  message is: what was done, what is next, and "Run `/clear`, then say: read PROGRESS.md and continue."
-  Stop earlier, after one task, if the session has needed many retries or long investigations. Never rely on
-  `/compact` or auto-compaction; the files are the memory.
+- **At session start:** run `node scripts/progress.mjs start` (it resets the session counter and prints Next
+  and the open notes), read the task named as Next in `PLAN.md`, and handle any open note that blocks it.
+  Do not re-explore the whole repo.
+- **HARD STOP: two items per session.** Every `done` (a task) and every `resolve` (a note or fix) counts as
+  one item, tasks and smoke fixes alike. When `progress.mjs` prints `!!! SESSION LIMIT REACHED`, STOP: do not
+  start another task, fix, or note. Your final message is: what was done, what is next, and "Run `/clear`, then
+  say: read PROGRESS.md and continue." Stop earlier, after one item, if it needed many retries or long
+  investigations. Never rely on `/compact` or auto-compaction; the files are the memory.
 
 ## Final verification: when all PLAN.md tasks are done
 
@@ -80,8 +81,9 @@ Static checks can all pass while the page throws on load or leaves content invis
 `node scripts/progress.mjs` prints "Next: all tasks done" (or Next says all tasks are done), the
 project is **not finished** until the runtime smoke test is clean:
 
-1. `npm run build 2>&1 | tail -20`, then `node scripts/smoke.mjs 2>&1 | tail -80`.
-   It loads `dist/` in headless Chrome at desktop and phone size, with reduced motion and with
+1. Ask the **`test-runner`** agent for the smoke check (it builds, runs `node scripts/smoke.mjs`, and replies
+   with the unique problems in 15 lines or fewer), so the long output stays out of the main chat.
+   The smoke test loads `dist/` in headless Chrome at desktop and phone size, with reduced motion and with
    JavaScript off, and prints each unique problem once, as text. Exit code 0 means clean.
 2. Record every problem as a note: `node scripts/progress.mjs note "smoke: <the FAIL line>"`.
 3. Fix them through the `implementer`, one note per run, in this order:
@@ -97,8 +99,8 @@ project is **not finished** until the runtime smoke test is clean:
    `node scripts/progress.mjs resolve <n> --reason "fixed in <file>: <what changed>"`.
 5. Never weaken or skip `scripts/smoke.mjs` to make it pass. If you believe a finding is wrong, leave
    the note open and tell the user why.
-6. The HARD STOP still applies: two fixes per session, then `/clear`. Done means `smoke.mjs` exits 0,
-   every smoke note is resolved, and `progress.mjs check` passes.
+6. The HARD STOP applies here too: each `resolve` counts, so two fixes per session, then `/clear`. Done
+   means `smoke.mjs` exits 0, every smoke note is resolved, and `progress.mjs check` passes.
 
 ## Subagents: keep the main chat small
 

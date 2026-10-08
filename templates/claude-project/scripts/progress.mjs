@@ -7,6 +7,14 @@
 // PROGRESS.md is regenerated from PLAN.md and progress/ on every call, and
 // "Next" is computed from PLAN.md, so it cannot go stale.
 //
+// It also enforces the session limit. A rule in CLAUDE.md ("stop after two
+// items") was ignored when the items were smoke fixes rather than PLAN tasks,
+// and the session ran to 7% before auto-compact. Now `start` resets a counter,
+// each `done` and `resolve` adds one, and from the limit on the script prints
+// a STOP message in the tool output, where the model reads it at the moment
+// it matters.
+//
+//   node scripts/progress.mjs start                session start: reset the session counter, print Next + notes
 //   node scripts/progress.mjs                      regenerate PROGRESS.md, print Next + open notes
 //   node scripts/progress.mjs done <id> --summary "..." --files "a.ts, b.css" \
 //        [--decisions "..."] [--open "..."]        record a finished task, tick PLAN.md
@@ -29,6 +37,8 @@ const DECISIONS = path.join(DIR, 'decisions.md');
 const NOTES = path.join(DIR, 'notes.md');
 const RESOLVED = path.join(DIR, 'resolved.md');
 const RESOLVED_SHOWN = 3; // recently closed notes shown in PROGRESS.md
+const SESSION = path.join(DIR, '.session.json');
+const SESSION_LIMIT = 2; // done + resolve calls per session before STOP
 const LOG_SHOWN = 6; // log entries shown in PROGRESS.md; the rest stay in progress/
 const TASK_RE = /^- \[( |x)\] (\d+(?:\.\d+)+) (.*)$/;
 
@@ -106,6 +116,22 @@ function render() {
 
 const write = () => fs.writeFileSync(OUT, render());
 
+function sessionTick(what) {
+  let st = { items: [] };
+  try { st = JSON.parse(read(SESSION)) || st; } catch { /* fresh */ }
+  st.items = [...(st.items || []), what];
+  fs.mkdirSync(DIR, { recursive: true });
+  fs.writeFileSync(SESSION, JSON.stringify(st));
+  if (st.items.length >= SESSION_LIMIT) {
+    console.log([
+      '',
+      `!!! SESSION LIMIT REACHED: ${st.items.length} items recorded this session (${st.items.join(', ')}).`,
+      '!!! STOP NOW. Do not start another task, fix, or note in this session.',
+      '!!! End your reply with exactly: Run /clear, then say: read PROGRESS.md and continue.',
+    ].join('\n'));
+  }
+}
+
 function parseFlags(args) {
   const flags = {}, rest = [];
   for (let i = 0; i < args.length; i++) {
@@ -148,6 +174,7 @@ function cmdDone(args) {
   write();
   const next = planTasks().find((t) => !t.done);
   console.log(`recorded ${id}; PLAN.md ticked; PROGRESS.md regenerated. Next: ${next ? `${next.id} ${next.title}` : 'none'}`);
+  sessionTick(`task ${id}`);
 }
 
 function appendBullet(file, text) {
@@ -175,6 +202,7 @@ function cmdResolve(args) {
   fs.writeFileSync(RESOLVED, (body && !body.endsWith('\n') ? body + '\n' : body) + `- ${note} => RESOLVED ${today()}: ${reason}\n`);
   write();
   console.log(`resolved note ${n}: ${reason}`);
+  sessionTick(`note ${n}`);
 }
 
 function cmdCheck() {
@@ -201,6 +229,11 @@ function cmdCheck() {
 
 const [cmd, ...args] = process.argv.slice(2);
 switch (cmd) {
+  case 'start':
+    fs.mkdirSync(DIR, { recursive: true });
+    fs.writeFileSync(SESSION, JSON.stringify({ items: [] }));
+    console.log(`Session started: limit ${SESSION_LIMIT} items (done + resolve), then /clear.`);
+  // falls through to show
   case undefined:
   case 'show': {
     write();
@@ -214,5 +247,5 @@ switch (cmd) {
   case 'note': appendBullet(NOTES, args.join(' ')); console.log('note added'); break;
   case 'resolve': cmdResolve(args); break;
   case 'check': cmdCheck(); break;
-  default: die(`unknown command "${cmd}" (show | done | decision | note | resolve | check)`);
+  default: die(`unknown command "${cmd}" (start | show | done | decision | note | resolve | check)`);
 }

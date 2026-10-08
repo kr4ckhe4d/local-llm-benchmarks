@@ -16,6 +16,11 @@ Run, in order, each with its output trimmed:
 
 Then run `node scripts/progress.mjs check` and report PASS or FAIL with its message.
 
+When asked for the **smoke check** (final verification), instead run
+`npm run build 2>&1 | tail -20` and then `node scripts/smoke.mjs 2>&1 | tail -80`, and reply with the
+exit status and the unique problems: each `FAIL` line shortened to one line, at most 12, then
+"+N more" if there are more. Do not fix anything.
+
 If something fails, read only the lines needed to identify the cause (grep the file and
 read a small range around the error).
 
