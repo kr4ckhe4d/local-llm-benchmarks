@@ -487,6 +487,19 @@ but `claude-local.sh` only accepts the listed names, so use these.
   got to a good final product, but took a few rounds of back-and-forth to get
   there, where Qwen3.8 Q6 needed one nudge. The warm-turn figure above is from
   the Q4 file; Q6 measured 2% slower on generation.
+* **KAT-Coder-V2.5 Q6, 2026-10-08: process worked, result not worth the hours.**
+  A 25-task build of the Orbit scroll page (templates/claude-project/ workflow:
+  subagents, progress.mjs, final smoke test) over ~4 hours of sessions. It
+  finished every task with typecheck, lint, 70 tests and the build green, then
+  found and fixed its own runtime bugs from smoke.mjs (a startup exception that
+  left the page blank, frame-name 404s, a 1.08:1 Buy button). The page still
+  "looks alright but not good": every product `<img>` was left with `src=""`
+  (no request, so no 404, and alt text counts as visible) and the image
+  sequence ran on abstract placeholder frames. A text-only model cannot make
+  the product art the brief depended on, and nothing in the loop could see
+  the page to judge layout. Lessons for the template: give asset-heavy briefs
+  real assets or an explicit placeholder-art task, and fail the smoke test on
+  missing images.
 * Switch per task with `claude-local <preset>`. Swapping models costs one cold
   load, about 10-40 s.
 

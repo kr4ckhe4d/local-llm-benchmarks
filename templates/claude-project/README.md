@@ -41,6 +41,14 @@ Given the user's description of what to build:
    hard constraints table, commands, the docs index ("read X when doing Y"),
    then the template's fixed sections unchanged, then the project's "Do not"
    list. Keep it under ~8 KB; anything longer belongs in docs/.
+3b. **Check the brief for assets the model cannot make.** Product photos,
+   illustrations, video, image sequences, audio, fonts: a text-only local model
+   cannot produce them, and on the Orbit page it left every `<img>` with
+   `src=""`. Ask the user for the assets up front, or add an explicit early
+   PLAN task that generates labelled placeholder art (SVG or simple generated
+   images) at the right sizes, and say in CLAUDE.md that real assets replace
+   them later. A page built around missing product imagery will look empty
+   however correct the code is.
 4. **Write PLAN.md**: tasks small enough for one implementer run (one module,
    one controller, one section). Group into phases. Tag each with the docs
    section it needs. Task 1.1 is always the scaffold, with the safe-scaffold
@@ -111,6 +119,9 @@ in `scripts/` during generation; the agent must not be left to improvise it.
   button. Nothing in the loop ever loaded the page. CLAUDE.md now has a final
   verification phase: `smoke.mjs` must exit 0, with each finding fixed through
   a note.
+- **Checks prove correctness, not quality.** The Orbit page passed every check
+  and still looked unfinished. Nothing in a text-only loop can judge layout;
+  plan a human look (or a vision-preset review) before calling a UI done.
 - **No images for text-only presets.** `claude-local.sh` blocks image Reads on
   non-vision presets; the template tells the model to check output by DOM or
   pixel scripts and leave visual checks to the human.

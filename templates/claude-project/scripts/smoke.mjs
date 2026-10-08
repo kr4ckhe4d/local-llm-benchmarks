@@ -26,6 +26,8 @@
 //   FAIL  a position:fixed element drawn far below its CSS top (it should be
 //         at its top, or moved off screen upwards)
 //   FAIL  horizontal overflow (page wider than the viewport)
+//   FAIL  an on-screen <img> with no src, or one that failed to load (an empty
+//         src makes no request, so it never shows up as a 404)
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -164,6 +166,13 @@ const AUDIT = `(() => {
     const size = parseFloat(cs.fontSize), bold = parseInt(cs.fontWeight, 10) >= 700;
     const need = size >= 24 || (bold && size >= 18.66) ? 3 : 4.5;
     if (ratio < need) out.push('CONTRAST ' + label(el) + ' ' + ratio.toFixed(2) + ':1 (needs ' + need + ':1; color ' + cs.color + ' on ' + 'rgb(' + bg.slice(0, 3).map(Math.round).join(', ') + '))');
+  }
+  for (const img of document.querySelectorAll('img')) {
+    const r = img.getBoundingClientRect();
+    if (r.bottom <= 0 || r.top >= vh || getComputedStyle(img).display === 'none' || img.closest('[aria-hidden="true"]')) continue;
+    const src = (img.getAttribute('src') || '').trim();
+    if (!src && !img.getAttribute('srcset')) out.push('IMAGE ' + label(img) + ' "' + (img.alt || '') + '" has no src (renders as a broken image)');
+    else if (img.complete && img.naturalWidth === 0) out.push('IMAGE ' + label(img) + ' "' + (img.alt || '') + '" failed to load: ' + (img.currentSrc || src));
   }
   for (const el of document.querySelectorAll('body *')) {
     const cs = getComputedStyle(el); if (cs.position !== 'fixed' || cs.display === 'none') continue;
