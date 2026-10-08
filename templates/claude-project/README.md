@@ -14,7 +14,7 @@ stalled (claude-harness.md).
 | `docs/<topic>.md` | The detailed spec, split by topic, read only when a task needs it | under ~8 KB each |
 | `PLAN.md` | Ordered tasks, each one subagent run, tagged with the docs to read | |
 | `scripts/progress.mjs` | **The only writer** of PLAN.md ticks, `progress/` and PROGRESS.md (`done`, `note`, `resolve`, `decision`, `check`) | copied as is |
-| `scripts/smoke.mjs` | Runtime smoke test for web projects: a static build (`dist/`) or a running server (`--url`, `--paths` for several routes); headless Chrome at desktop/phone, reduced motion, no JS; prints each unique problem once as text (exceptions, 404s, hidden content, contrast, fixed/overflow) | copied as is (web projects) |
+| `scripts/smoke.mjs` | Runtime smoke test for web projects: a static build (`dist/`) or a running server (`--url`, `--paths` for several routes); headless Chrome at desktop/phone, reduced motion, no JS; prints each unique problem once as text: exceptions, 404s, hidden content, contrast, missing images, text changed by scripts, and layout heuristics (empty bands, text at the edge, touching/overlapping blocks, off-center blocks, over-wide text, broken hidden-text classes, phone overflow); `--shots <dir>` saves a PNG per audit point | copied as is (web projects) |
 | `progress/` | One file per finished task (written once), plus `decisions.md` and `notes.md` | |
 | `PROGRESS.md` | **Generated** view: Next (computed from PLAN.md), open notes, decisions, recent log | stays short |
 | `.claude/agents/implementer.md` | Does one PLAN task, replies in 15 lines | |
@@ -119,6 +119,13 @@ in `scripts/` during generation; the agent must not be left to improvise it.
   button. Nothing in the loop ever loaded the page. CLAUDE.md now has a final
   verification phase: `smoke.mjs` must exit 0, with each finding fixed through
   a note.
+- **Layout is partly measurable.** After the Orbit build, the user's complaints
+  were empty space and unaligned text: a blank half-screen hero, headings at
+  x=0, a visually-hidden heading that rendered beside its paragraph, cramped
+  buttons, a 113-character subhead, counters stuck at 0, and a 495px layout on
+  a 390px phone. smoke.mjs now measures all of these (24 findings on that
+  build; zero on a well-built control page). They are heuristics: they catch
+  broken layout, they do not make a page good.
 - **Checks prove correctness, not quality.** The Orbit page passed every check
   and still looked unfinished. Nothing in a text-only loop can judge layout;
   plan a human look (or a vision-preset review) before calling a UI done.

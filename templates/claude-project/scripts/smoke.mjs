@@ -11,6 +11,8 @@
 //   node scripts/smoke.mjs --dir build --wait 1200     another output folder, longer settle time
 //   node scripts/smoke.mjs --url http://127.0.0.1:5173 --paths /,/pricing,/login
 //                                                      a running dev/preview/SSR server, several routes
+//   node scripts/smoke.mjs --shots /tmp/shots          also save a PNG at every audit point
+//                                                      (for a human or a vision model to look at)
 //   CHROME_BIN=/path/to/chrome node scripts/smoke.mjs  pick the browser
 //
 // With --url nothing is served by this script: start the app first (in the
@@ -28,6 +30,11 @@
 //   FAIL  horizontal overflow (page wider than the viewport)
 //   FAIL  an on-screen <img> with no src, or one that failed to load (an empty
 //         src makes no request, so it never shows up as a 404)
+//   FAIL  layout (heuristics): EMPTY band over half the screen, text at the
+//         viewport EDGE, blocks TOUCHING (<12px) or OVERLAPping on one line,
+//         a block OFF-CENTER in a centered surface, LINE LENGTH over ~95 chars,
+//         a VISUALLY-HIDDEN-classed element that renders, and TEXT that differs
+//         from the page's HTML after animations settle (a stuck counter)
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -43,6 +50,8 @@ const DIST = path.resolve(opt('dir', 'dist'));
 const URL_ARG = opt('url', null);
 const PATHS = opt('paths', '/').split(',').map((p) => p.trim()).filter(Boolean);
 const WAIT = Number(opt('wait', 1200));
+const SHOTS = opt('shots', null);
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 const MAX_LINES = 60;
 // Unique problems across all scenarios: key -> { scenarios, places, items }.
 const found = new Map();
@@ -184,6 +193,131 @@ const AUDIT = `(() => {
   return out;
 })()`;
 
+// Layout audit: runs in the page, returns [key, detail] pairs for the part of
+// the page on screen. Heuristics for what a text-only model cannot see:
+// blank bands, text against the viewport edge, blocks touching or overlapping
+// on one line, a block hanging off-center in a centered section, and body
+// text too wide to read. Keys carry no pixel values so findings dedupe across
+// viewports; the numbers go in the detail.
+const LAYOUT = `(() => {
+  const res = [];
+  const vh = innerHeight, vw = innerWidth;
+  const atBottom = scrollY + vh >= document.documentElement.scrollHeight - 2;
+  const label = (el) => { const t = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || '').trim().replace(/\\s+/g, ' ');
+    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className && typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/)[0] : '') + (t ? ' "' + t.slice(0, 40) + '"' : ''); };
+  const isFixed = (el) => { for (let e = el; e && e !== document.body; e = e.parentElement) if (getComputedStyle(e).position === 'fixed') return true; return false; };
+  const shown = (el, cs) => { if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    let o = 1; for (let e = el; e; e = e.parentElement) o *= parseFloat(getComputedStyle(e).opacity); return o >= 0.1; };
+  const hasText = (el) => [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+  const leafText = (el, cs) => {
+    if (!(el.innerText || '').trim()) return false;
+    for (const c of el.children) { const d = getComputedStyle(c).display;
+      if (d !== 'inline' && d !== 'none' && (c.innerText || '').trim()) return false; }
+    return cs.display !== 'inline' || hasText(el);
+  };
+  const textRect = (el) => { const rg = document.createRange(); rg.selectNodeContents(el); const rs = [...rg.getClientRects()].filter((q) => q.width > 0 && q.height > 0);
+    if (!rs.length) return null;
+    const left = Math.min(...rs.map((q) => q.left)), right = Math.max(...rs.map((q) => q.right));
+    const top = Math.min(...rs.map((q) => q.top)), bottom = Math.max(...rs.map((q) => q.bottom));
+    return { left, right, top, bottom, width: right - left, height: bottom - top }; };
+  const inView = (r) => r.width >= 1 && r.height >= 1 && r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
+  const bodyBg = getComputedStyle(document.body).backgroundColor;
+  const blankCanvas = (c) => { try { const t = document.createElement('canvas'); t.width = 16; t.height = 16;
+      const x = t.getContext('2d'); x.drawImage(c, 0, 0, 16, 16); const d = x.getImageData(0, 0, 16, 16).data;
+      let lo = 1e9, hi = -1, alpha = 0; for (let i = 0; i < d.length; i += 4) { const v = d[i] + d[i + 1] + d[i + 2]; lo = Math.min(lo, v); hi = Math.max(hi, v); alpha = Math.max(alpha, d[i + 3]); }
+      return alpha === 0 || hi - lo < 24; } catch (e) { return false; } };
+  const ink = [], blocks = [], media = [];
+  for (const el of document.querySelectorAll('body *')) {
+    const r = el.getBoundingClientRect(); if (!inView(r)) continue;
+    const cs = getComputedStyle(el); if (!shown(el, cs) || isFixed(el)) continue;
+    const tag = el.tagName.toUpperCase(); let isInk = false;
+    if (hasText(el)) isInk = true;
+    else if (tag === 'IMG') isInk = el.complete && el.naturalWidth > 0;
+    else if (tag === 'CANVAS') isInk = !blankCanvas(el);
+    else if (tag === 'VIDEO' || tag === 'SVG' || tag === 'IFRAME') isInk = true;
+    else if (r.width * r.height < vw * vh * 0.6) {
+      const bg = cs.backgroundColor;
+      if ((bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== bodyBg) || cs.backgroundImage !== 'none' || parseFloat(cs.borderTopWidth) > 0) isInk = true;
+    }
+    if (isInk) ink.push([Math.max(0, r.top), Math.min(vh, r.bottom)]);
+    if ((tag === 'IMG' || tag === 'CANVAS' || tag === 'VIDEO' || tag === 'SVG') && !el.parentElement.closest('svg')) media.push({ el, r, cs });
+    const ctrl = tag === 'A' || tag === 'BUTTON';
+    const inCtrl = !ctrl && el.parentElement && el.parentElement.closest('a,button');
+    if (!inCtrl && (ctrl ? (el.innerText || '').trim() : leafText(el, cs)) && !el.closest('[aria-hidden="true"]')) {
+      const tr = textRect(el) || r;
+      blocks.push({ el, r: ctrl ? r : tr, box: r, cs, ctrl, inline: cs.display === 'inline' || cs.display === 'inline-block' || cs.display === 'inline-flex' });
+    }
+    if (/(^|\s|-)(visually-hidden|sr-only|screen-reader-text)(\s|$)/.test(typeof el.className === 'string' ? el.className : '') && r.width > 2 && r.height > 2)
+      res.push(['VISUALLY-HIDDEN ' + label(el) + ' has a hidden-text class but renders visibly (the class has no effect)', Math.round(r.width) + 'x' + Math.round(r.height) + 'px at ' + vw + 'px wide']);
+  }
+  const step = 4, rows = new Uint8Array(Math.ceil(vh / step));
+  for (const [a, b] of ink) for (let y = Math.floor(a / step); y < Math.ceil(b / step) && y < rows.length; y++) rows[y] = 1;
+  let best = 0, bestAt = 0, run = 0, runAt = 0;
+  for (let i = 0; i <= rows.length; i++) {
+    if (i < rows.length && !rows[i]) { if (!run) runAt = i; run++; }
+    else { if (run > best) { best = run; bestAt = runAt; } run = 0; }
+  }
+  const gap = best * step;
+  if (gap >= vh * 0.5 && !(atBottom && (bestAt + best) * step >= vh - step))
+    res.push(['EMPTY a blank band over half the screen tall (no visible text, image, or drawn canvas)', Math.round(gap / vh * 100) + '% of a ' + vw + 'x' + vh + ' screen from y=' + bestAt * step]);
+  for (const b of blocks) if (b.r.left < 8 || b.r.right > vw - 8)
+    res.push(['EDGE ' + label(b.el) + ' touches the viewport edge', 'left ' + Math.round(b.r.left) + 'px, right ' + Math.round(vw - b.r.right) + 'px at ' + vw + 'px wide']);
+  for (let i = 0; i < blocks.length; i++) for (let j = i + 1; j < blocks.length; j++) {
+    const a = blocks[i], b = blocks[j];
+    if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+    if (a.el.parentElement === b.el.parentElement && a.el.tagName === b.el.tagName && !a.ctrl) continue;
+    const vo = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+    if (vo < 0.4 * Math.min(a.r.height, b.r.height)) continue;
+    const ho = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+    const gx = Math.max(b.r.left - a.r.right, a.r.left - b.r.right);
+    if (ho > 2) res.push(['OVERLAP ' + label(a.el) + ' and ' + label(b.el) + ' overlap', Math.round(ho) + 'px overlap at ' + vw + 'px wide']);
+    else if (gx < 12) res.push(['TOUCHING ' + label(a.el) + ' and ' + label(b.el) + ' sit on one line less than 12px apart', Math.round(gx) + 'px gap at ' + vw + 'px wide']);
+  }
+  const surfaceOf = (el, sec) => { for (let e = el.parentElement; e && e !== sec; e = e.parentElement) {
+      const bg = getComputedStyle(e).backgroundColor; const m = bg.match(/rgba?\(([^)]+)\)/);
+      const a = m ? (m[1].split(/[ ,/]+/).filter(Boolean).map(Number)[3] ?? 1) : 0;
+      if (a > 0.5 && bg !== bodyBg) return e; } return sec; };
+  const groups = new Map();
+  for (const sec of document.querySelectorAll('section')) {
+    if (!inView(sec.getBoundingClientRect())) continue;
+    for (const x of blocks.filter((b) => !b.inline && !b.ctrl && sec.contains(b.el)).concat(media.filter((m) => sec.contains(m.el)))) {
+      const surf = surfaceOf(x.el, sec); if (!groups.has(surf)) groups.set(surf, { sec, items: [] }); groups.get(surf).items.push(x);
+    }
+  }
+  for (const [surf, g] of groups) {
+    const sec = g.sec, sr = surf.getBoundingClientRect();
+    const cx = sr.left + sr.width / 2;
+    const items = g.items.filter((x) => x.r.right - x.r.left < sr.width * 0.8);
+    if (items.length < 3) continue;
+    const off = items.map((x) => (x.r.left + x.r.right) / 2 - cx);
+    const centred = off.filter((o) => Math.abs(o) <= 12).length;
+    if (centred / items.length < 0.6) continue;
+    items.forEach((x, k) => { if (Math.abs(off[k]) > 40)
+      res.push(['OFF-CENTER ' + label(x.el) + ' in centered section #' + (sec.id || '?'), Math.round(off[k]) + 'px from center at ' + vw + 'px wide']); });
+  }
+  for (const b of blocks) {
+    const tag = b.el.tagName;
+    if (b.inline || !(tag === 'P' || tag === 'LI' || tag === 'DD' || tag === 'BLOCKQUOTE')) continue;
+    const fs = parseFloat(b.cs.fontSize); if (fs >= 24 || (b.el.innerText || '').length < 100) continue;
+    const cpl = Math.round(b.box.width / (0.5 * fs));
+    if (cpl > 95) res.push(['LINE LENGTH ' + label(b.el) + ' is too wide to read comfortably (aim for 75 characters per line or fewer)', 'about ' + cpl + ' characters per line at ' + vw + 'px wide']);
+  }
+  if (typeof SOURCE_HTML === 'string' && SOURCE_HTML) {
+    const src = new DOMParser().parseFromString(SOURCE_HTML, 'text/html');
+    const pathOf = (el) => { const p = []; for (let e = el; e && e !== document.body; e = e.parentElement) {
+        const same = [...e.parentElement.children].filter((c) => c.tagName === e.tagName); p.unshift([e.tagName, same.indexOf(e)]); } return p; };
+    const find = (p) => { let e = src.body; for (const [t, i] of p) { if (!e) return null; e = [...e.children].filter((c) => c.tagName === t)[i]; } return e; };
+    const norm = (t) => (t || '').replace(/\s+/g, ' ').trim();
+    for (const b of blocks) {
+      const s = find(pathOf(b.el)); if (!s) continue;
+      const before = norm(s.textContent), now = norm(b.el.textContent);
+      if (before && now !== before && before.length < 200)
+        res.push(['TEXT ' + label(b.el) + ' reads "' + now.slice(0, 40) + '" after animations settle, but the HTML says "' + before.slice(0, 40) + '"', 'at ' + vw + 'px wide']);
+    }
+  }
+  return res;
+})()`;
+
 async function scenario(name, { width, height, mobile = false, reducedMotion = false, noJs = false }, route) {
   const where = (place) => (PATHS.length > 1 ? `${route} ${place}` : place);
   let count = 0;
@@ -200,7 +334,8 @@ async function scenario(name, { width, height, mobile = false, reducedMotion = f
       add('EXCEPTION ' + (d.exception?.description || d.text).split('\n')[0] + (d.url ? ` (${d.url.replace(BASE, '')}:${d.lineNumber + 1})` : ''));
     } else if (msg.method === 'Runtime.consoleAPICalled' && p.type === 'error') {
       add('CONSOLE.ERROR ' + p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 200));
-    } else if (msg.method === 'Network.responseReceived' && p.response.status >= 400) {
+    } else if (msg.method === 'Network.responseReceived' && p.response.status >= 400 && new URL(p.response.url).pathname !== '/favicon.ico') {
+      // (Chrome requests /favicon.ico by itself when a page declares no icon; that is not the page's request.)
       add(`HTTP ${p.response.status} for requests`, null, p.response.url.replace(BASE, '/'));
     } else if (msg.method === 'Network.loadingFailed' && !p.canceled) {
       add(`REQUEST FAILED ${p.errorText}`);
@@ -211,12 +346,31 @@ async function scenario(name, { width, height, mobile = false, reducedMotion = f
   await s('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
   if (reducedMotion) await s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   if (noJs) await s('Emulation.setScriptExecutionDisabled', { value: true });
-  await s('Page.navigate', { url: new URL(route.replace(/^\//, ''), BASE).href });
+  const pageUrl = new URL(route.replace(/^\//, ''), BASE).href;
+  let sourceHtml = '';
+  try { sourceHtml = await (await fetch(pageUrl)).text(); } catch { /* TEXT check skipped */ }
+  await s('Page.navigate', { url: pageUrl });
   for (let i = 0; i < 100 && !loaded; i++) await sleep(100);
   if (!loaded) add('LOAD page did not fire load within 10 s');
   await sleep(WAIT);
-  const evaluate = async (expr) => (await s('Runtime.evaluate', { expression: expr, returnByValue: true })).result.value;
-  const audit = async (place) => ((await evaluate(AUDIT)) || []).forEach((x) => add(x, where(place)));
+  // An exception inside an audit must not read as "no problems found".
+  const evaluate = async (expr) => {
+    const r = await s('Runtime.evaluate', { expression: expr, returnByValue: true });
+    if (r.exceptionDetails) add('SMOKE-ERROR an audit script failed in the page (smoke.mjs bug, not the site): ' +
+      (r.exceptionDetails.exception?.description || r.exceptionDetails.text).split('\n')[0]);
+    return r.result.value;
+  };
+  const audit = async (place) => {
+    if (SHOTS) {
+      const { data } = await s('Page.captureScreenshot', { format: 'png' });
+      const file = `${name}-${where(place)}`.replace(/[^a-z0-9.%-]+/gi, '_').toLowerCase() + '.png';
+      fs.writeFileSync(path.join(SHOTS, file), Buffer.from(data, 'base64'));
+    }
+    ((await evaluate(AUDIT)) || []).forEach((x) => add(x, where(place)));
+    ((await evaluate(`{ const SOURCE_HTML = ${JSON.stringify(noJs ? '' : sourceHtml)};\n${LAYOUT} }`)) || []).forEach(([k, d]) => add(k, where(place), d));
+  };
+  const lw = await evaluate('innerWidth');
+  if (mobile && lw > width + 1) add(`OVERFLOW the page lays out wider than the ${width}px phone screen (some content does not shrink, so the browser widens the page)`, 'top', `${lw}px layout width`);
   await audit('top');
   const ids = (await evaluate(`[...document.querySelectorAll('section')].map((s, i) => s.id || ('section ' + (i + 1)))`)) || [];
   for (let i = 0; i < ids.length; i++) {
