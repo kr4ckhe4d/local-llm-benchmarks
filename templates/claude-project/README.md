@@ -53,6 +53,10 @@ Given the user's description of what to build:
   23 KB cost ~6K tokens per turn.
 - **State in files, `/clear` instead of `/compact`.** Compaction loses detail;
   a fresh session reading PROGRESS.md does not.
+- **A hard stop, not advice.** "Do one or two tasks per session" was read as a
+  suggestion: KAT ran ~10 tasks in one session until Claude Code showed 14% left
+  before auto-compact. The rule is now a hard stop after two tasks with a fixed
+  final message telling the user to `/clear`.
 - **Subagents with short replies.** File reads and tool output stay out of the
   main context. 15-line replies, never whole files or diffs.
 - **One request at a time.** The router serves one slot (`parallel = 1`), so
