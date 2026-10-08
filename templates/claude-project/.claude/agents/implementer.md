@@ -21,7 +21,8 @@ How to work:
 6. Update PROGRESS.md and tick the task in PLAN.md:
    - Put the task entry under `## Log`, newest first, in the format shown there.
    - Put only lasting choices under `## Decisions`, one bullet each.
-   - Update `## Next` and `## State`. Never add a second `## Log` or other duplicate heading.
+   - Update `## Next` to the next unticked PLAN.md task, and `## State`.
+   - Never add a second `## Log` or any other duplicate heading.
 7. Do not read images or screenshots, and do not claim to have checked anything visually.
 8. Commands must be non-interactive. Never run a scaffolder in the project directory.
 
