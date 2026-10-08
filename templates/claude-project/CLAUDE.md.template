@@ -70,6 +70,32 @@ Context is limited and compaction loses detail, so state lives in files, not in 
   Stop earlier, after one task, if the session has needed many retries or long investigations. Never rely on
   `/compact` or auto-compaction; the files are the memory.
 
+## Final verification: when all PLAN.md tasks are done
+
+Static checks can all pass while the page throws on load or leaves content invisible. When
+`node scripts/progress.mjs` prints "Next: all tasks done" (or Next says all tasks are done), the
+project is **not finished** until the runtime smoke test is clean:
+
+1. `npm run build 2>&1 | tail -20`, then `node scripts/smoke.mjs 2>&1 | tail -80`.
+   It loads `dist/` in headless Chrome at desktop and phone size, with reduced motion and with
+   JavaScript off, and prints each unique problem once, as text. Exit code 0 means clean.
+2. Record every problem as a note: `node scripts/progress.mjs note "smoke: <the FAIL line>"`.
+3. Fix them through the `implementer`, one note per run, in this order:
+   - `EXCEPTION` and `CONSOLE.ERROR` first. An exception at startup often causes the other failures
+     (controllers never mount, so content stays hidden).
+   - `HTTP 404`: a path or file-name mismatch (e.g. frame numbering or zero padding). Fix the code or
+     the asset names so they agree; do not delete the request.
+   - `HIDDEN`: text still invisible after its section was in view. Initial hidden states must be
+     undone by the controller, and content must stay visible if a controller fails.
+   - `CONTRAST`: change the colour tokens, not individual elements.
+   - `FIXED`, `OVERFLOW`: layout bugs at that viewport.
+4. After each fix, rebuild and re-run the smoke test. Close the note only when that problem is gone:
+   `node scripts/progress.mjs resolve <n> --reason "fixed in <file>: <what changed>"`.
+5. Never weaken or skip `scripts/smoke.mjs` to make it pass. If you believe a finding is wrong, leave
+   the note open and tell the user why.
+6. The HARD STOP still applies: two fixes per session, then `/clear`. Done means `smoke.mjs` exits 0,
+   every smoke note is resolved, and `progress.mjs check` passes.
+
 ## Subagents: keep the main chat small
 
 The main chat plans, delegates, and integrates. Heavy work happens in subagents, whose file reads and tool output never enter the main context.

@@ -14,6 +14,7 @@ stalled (claude-harness.md).
 | `docs/<topic>.md` | The detailed spec, split by topic, read only when a task needs it | under ~8 KB each |
 | `PLAN.md` | Ordered tasks, each one subagent run, tagged with the docs to read | |
 | `scripts/progress.mjs` | **The only writer** of PLAN.md ticks, `progress/` and PROGRESS.md (`done`, `note`, `resolve`, `decision`, `check`) | copied as is |
+| `scripts/smoke.mjs` | Runtime smoke test for a built static site: headless Chrome at desktop/phone, reduced motion, no JS; prints each unique problem once as text (exceptions, 404s, hidden content, contrast, fixed/overflow) | copied as is (web projects) |
 | `progress/` | One file per finished task (written once), plus `decisions.md` and `notes.md` | |
 | `PROGRESS.md` | **Generated** view: Next (computed from PLAN.md), open notes, decisions, recent log | stays short |
 | `.claude/agents/implementer.md` | Does one PLAN task, replies in 15 lines | |
@@ -74,6 +75,13 @@ Given the user's description of what to build:
   single-slot model; it timed out and denied actions in the Gemma session.
 - **Non-interactive commands only, and never scaffold in place.**
   `npm create vite .` in a non-empty directory offers to delete files.
+- **A runtime check before "done".** KAT finished all 25 tasks with typecheck,
+  lint, 70 tests and the build green, and the page still threw on every load
+  (a bad `requestIdleCallback` argument), left the hero and feature grid at
+  opacity 0, requested frames by the wrong file names, and had a 1.08:1 Buy
+  button. Nothing in the loop ever loaded the page. CLAUDE.md now has a final
+  verification phase: `smoke.mjs` must exit 0, with each finding fixed through
+  a note.
 - **No images for text-only presets.** `claude-local.sh` blocks image Reads on
   non-vision presets; the template tells the model to check output by DOM or
   pixel scripts and leave visual checks to the human.
