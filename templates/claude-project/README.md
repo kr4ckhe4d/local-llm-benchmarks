@@ -83,4 +83,7 @@ Given the user's description of what to build:
   main chat and subagent both edited PLAN.md. Rules did not stop it; taking the
   pen away did. `scripts/progress.mjs` is the only writer, Next is computed from
   PLAN.md, only the implementer records tasks, and `progress.mjs check` (run by
-  test-runner) fails on any drift.
+  test-runner) fails on any drift. `resolve` requires `--reason`: KAT closed a
+  review note (a `setTimeout` the spec forbids) without changing the code or
+  saying why; now the reason is kept in progress/resolved.md and shown in
+  PROGRESS.md.

@@ -12,11 +12,12 @@
 //        [--decisions "..."] [--open "..."]        record a finished task, tick PLAN.md
 //   node scripts/progress.mjs decision "<text>"    add a lasting decision
 //   node scripts/progress.mjs note "<text>"        add an open note (review item, follow-up)
-//   node scripts/progress.mjs resolve <n>          remove open note number <n>
+//   node scripts/progress.mjs resolve <n> --reason "..."   close open note <n>; the reason is kept
 //   node scripts/progress.mjs check                exit 1 if PLAN.md / progress/ / PROGRESS.md disagree
 //
 // Files: PLAN.md (task list, ticks), progress/<id>.md (one per finished task,
-// written once), progress/decisions.md, progress/notes.md, PROGRESS.md (generated).
+// written once), progress/decisions.md, progress/notes.md, progress/resolved.md
+// (closed notes with the reason), PROGRESS.md (generated).
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -26,6 +27,8 @@ const DIR = path.join(ROOT, 'progress');
 const OUT = path.join(ROOT, 'PROGRESS.md');
 const DECISIONS = path.join(DIR, 'decisions.md');
 const NOTES = path.join(DIR, 'notes.md');
+const RESOLVED = path.join(DIR, 'resolved.md');
+const RESOLVED_SHOWN = 3; // recently closed notes shown in PROGRESS.md
 const LOG_SHOWN = 6; // log entries shown in PROGRESS.md; the rest stay in progress/
 const TASK_RE = /^- \[( |x)\] (\d+(?:\.\d+)+) (.*)$/;
 
@@ -69,6 +72,7 @@ function render() {
   const next = tasks.find((t) => !t.done);
   const notes = bullets(NOTES);
   const decisions = bullets(DECISIONS);
+  const resolved = bullets(RESOLVED);
   const log = logEntries();
   const lines = [
     '# Progress',
@@ -86,6 +90,10 @@ function render() {
     '## Open notes',
     ...(notes.length ? notes.map((n, i) => `${i + 1}. ${n}`) : ['None.']),
     '',
+    ...(resolved.length
+      ? [`## Recently resolved (newest ${Math.min(RESOLVED_SHOWN, resolved.length)} of ${resolved.length}; all in progress/resolved.md)`,
+         ...resolved.slice(-RESOLVED_SHOWN).reverse().map((r) => `- ${r}`), '']
+      : []),
     '## Decisions',
     ...(decisions.length ? decisions.map((d) => `- ${d}`) : ['None yet.']),
     '',
@@ -151,14 +159,22 @@ function appendBullet(file, text) {
   write();
 }
 
-function cmdResolve(n) {
+// A note may only be closed with a reason, so a review item cannot vanish
+// silently: the reason goes to progress/resolved.md and shows in PROGRESS.md.
+function cmdResolve(args) {
+  const { flags, rest } = parseFlags(args);
+  const n = rest[0];
+  const reason = oneLine(flags.reason);
+  if (!n || !reason) die('usage: resolve <n> --reason "<fixed in X | accepted because Y | no longer applies because Z>"');
   const notes = bullets(NOTES);
   const i = Number(n) - 1;
   if (!Number.isInteger(i) || i < 0 || i >= notes.length) die(`no open note ${n} (there are ${notes.length})`);
-  notes.splice(i, 1);
+  const [note] = notes.splice(i, 1);
   fs.writeFileSync(NOTES, notes.map((x) => `- ${x}\n`).join(''));
+  const body = read(RESOLVED);
+  fs.writeFileSync(RESOLVED, (body && !body.endsWith('\n') ? body + '\n' : body) + `- ${note} => RESOLVED ${today()}: ${reason}\n`);
   write();
-  console.log(`resolved note ${n}`);
+  console.log(`resolved note ${n}: ${reason}`);
 }
 
 function cmdCheck() {
@@ -196,7 +212,7 @@ switch (cmd) {
   case 'done': cmdDone(args); break;
   case 'decision': appendBullet(DECISIONS, args.join(' ')); console.log('decision recorded'); break;
   case 'note': appendBullet(NOTES, args.join(' ')); console.log('note added'); break;
-  case 'resolve': cmdResolve(args[0]); break;
+  case 'resolve': cmdResolve(args); break;
   case 'check': cmdCheck(); break;
   default: die(`unknown command "${cmd}" (show | done | decision | note | resolve | check)`);
 }
