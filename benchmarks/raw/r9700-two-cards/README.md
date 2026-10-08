@@ -63,6 +63,10 @@ What is here instead:
   b11434): Gemma 4 31B Q6_K with and without MTP, f16 vs q8_0 KV at
   32K/128K/256K, a vision fit, and 128K depth for both KV types, against the
   26B-A4B Q4 128k preset. Server logs `gemma31b-*.log`, `sweep-g31-*.log`.
+* **`logs/kat.txt`** (`logs/run-kat.sh`, 2026-10-08 10:30-10:34, b11434):
+  KAT-Coder-V2.5-Dev Q6_K fit + probe at 32K/128K/256K and 128K depth, with
+  Qwen3.6 UD-Q6_K 128K as the same-session before. Server logs `kat-*.log`,
+  `sweep-kat-*.log`.
 * **`logs/gemma-q8.txt`** (`run-gemma-q8.sh`): Gemma 4 Q8_0 vision fits at
   32K/128K/256K, the probe image end to end at 128K, and a Q4-vs-Q8_0 KLD run
   that came out invalid (`gemma-kld-q4-vs-q8-INVALID.txt`; see "Open" in
