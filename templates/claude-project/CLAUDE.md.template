@@ -47,11 +47,25 @@ that range). Do not re-read it every turn.
 Context is limited and compaction loses detail, so state lives in files, not in the chat.
 
 - `PLAN.md` is the ordered task list. Each task is small enough for one subagent run.
-- `PROGRESS.md` records what is done, decisions made, open problems, and the next task.
-- **At session start:** read `PROGRESS.md`, then the relevant part of `PLAN.md`. Do not re-explore the whole repo.
-- **After each task:** update `PROGRESS.md` (a few lines: done, files touched, decisions, next) and tick the task in `PLAN.md`.
+- `PROGRESS.md` is **generated** by `scripts/progress.mjs` from `PLAN.md` and `progress/`. It shows the next
+  task, open notes, decisions and the recent log. **Never edit `PROGRESS.md`, `PLAN.md` ticks, or `progress/`
+  by hand.** The script is the only writer:
+
+  ```bash
+  node scripts/progress.mjs                                   # regenerate, print Next and open notes
+  node scripts/progress.mjs done <id> --summary "<one line>" --files "<a.ts, b.css>" \
+       --decisions "<one line or omit>" --open "<one line or omit>"   # task finished: ticks PLAN.md
+  node scripts/progress.mjs note "<text>"                     # follow-up or review item
+  node scripts/progress.mjs resolve <n>                       # an open note is dealt with
+  node scripts/progress.mjs decision "<text>"                 # lasting choice later tasks must respect
+  node scripts/progress.mjs check                             # fails if anything has drifted
+  ```
+- **Who records what:** the `implementer` subagent runs `done` for its task. The main chat never runs `done`
+  and never edits `PLAN.md` or `PROGRESS.md`; it only reads them. If `check` fails, run the command it names.
+- **At session start:** run `node scripts/progress.mjs`, read the task named as Next in `PLAN.md`, and handle
+  any open note that blocks it. Do not re-explore the whole repo.
 - **HARD STOP after two completed tasks.** When the second task of this session is done (its subagent has
-  returned and `PROGRESS.md` is updated), STOP. Do not start a third task, not even a small one. Your final
+  returned and recorded it with `done`), STOP. Do not start a third task, not even a small one. Your final
   message is: what was done, what is next, and "Run `/clear`, then say: read PROGRESS.md and continue."
   Stop earlier, after one task, if the session has needed many retries or long investigations. Never rely on
   `/compact` or auto-compaction; the files are the memory.
@@ -61,7 +75,7 @@ Context is limited and compaction loses detail, so state lives in files, not in 
 The main chat plans, delegates, and integrates. Heavy work happens in subagents, whose file reads and tool output never enter the main context.
 
 - Use the **`implementer`** agent for each `PLAN.md` task: give it the task, the files involved, and which `docs/` sections apply.
-- Use the **`test-runner`** agent to run {{CHECK_NAMES: e.g. typecheck, lint, test, build}} and report failures.
+- Use the **`test-runner`** agent (it also runs `progress.mjs check`) to run {{CHECK_NAMES: e.g. typecheck, lint, test, build}} and report failures.
 - Subagents reply in **15 lines or fewer**: files changed, checks run and their result, open issues. They never paste whole files or diffs back.
 - Run subagents one at a time. This box serves one request at a time, so parallel subagents only queue.
 - Do the work yourself, without a subagent, when it is a one-line fix or a question about a file already in context.
@@ -85,7 +99,7 @@ Definition of done for any task:
 - {{CHECK_NAMES}} all pass (run through `test-runner`)
 {{EXTRA_DONE_ITEMS: project-specific bars, e.g. accessibility, no new deps, perf budget}}
 - `docs/` updated if architecture, interfaces, or the catalogue changed
-- `PROGRESS.md` updated; the human is told what to check by hand, if anything
+- Recorded with `node scripts/progress.mjs done <id> ...` and `progress.mjs check` passes; the human is told what to check by hand, if anything
 
 ## Do not
 

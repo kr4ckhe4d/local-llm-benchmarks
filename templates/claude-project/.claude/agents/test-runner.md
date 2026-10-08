@@ -14,6 +14,8 @@ Run, in order, each with its output trimmed:
 - `npm run test 2>&1 | tail -60`
 - `npm run build 2>&1 | tail -30`}}
 
+Then run `node scripts/progress.mjs check` and report PASS or FAIL with its message.
+
 If something fails, read only the lines needed to identify the cause (grep the file and
 read a small range around the error).
 

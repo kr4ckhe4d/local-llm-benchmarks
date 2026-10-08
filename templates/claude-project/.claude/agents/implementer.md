@@ -18,17 +18,18 @@ How to work:
    {{FAST_CHECKS: e.g. `npm run typecheck 2>&1 | tail -30` and `npm run lint 2>&1 | tail -30`;
    `npm run test 2>&1 | tail -40` if you touched tested code}}
 5. If you changed architecture, interfaces, or the catalogue, update the matching docs/ file.
-6. Update PROGRESS.md and tick the task in PLAN.md:
-   - Put the task entry under `## Log`, newest first, in the format shown there.
-   - Put only lasting choices under `## Decisions`, one bullet each.
-   - Update `## Next` to the next unticked PLAN.md task, and `## State`.
-   - Never add a second `## Log` or any other duplicate heading.
+6. Record the task with the script; never edit PLAN.md, PROGRESS.md or progress/ by hand:
+   `node scripts/progress.mjs done <id> --summary "<one line>" --files "<comma list>" --decisions "<one line or omit>" --open "<one line or omit>"`
+   e.g. `node scripts/progress.mjs done 3.4 --summary "text-scrub controller" --files "src/animations/text-scrub.ts, src/main.ts"`
+   Use `node scripts/progress.mjs decision "..."` for a lasting choice and `note "..."` for a follow-up.
+   If the script prints an error, fix the arguments and run it again; do not work around it.
 7. Do not read images or screenshots, and do not claim to have checked anything visually.
 8. Commands must be non-interactive. Never run a scaffolder in the project directory.
 
 Reply in 15 lines or fewer:
 - Task: one line
 - Files changed: list
+- Recorded: `done` output line
 - Checks: result per check, one line each
 - Open issues or decisions the main chat must know about
 - What the human should check by hand, if anything

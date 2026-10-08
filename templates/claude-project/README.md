@@ -13,13 +13,16 @@ stalled (claude-harness.md).
 | `CLAUDE.md` | Loaded on every turn **and by every subagent**: constraints, commands, the working protocol, a spec index | under ~8 KB |
 | `docs/<topic>.md` | The detailed spec, split by topic, read only when a task needs it | under ~8 KB each |
 | `PLAN.md` | Ordered tasks, each one subagent run, tagged with the docs to read | |
-| `PROGRESS.md` | Memory between sessions: next task, state, log, decisions | stays short |
+| `scripts/progress.mjs` | **The only writer** of PLAN.md ticks, `progress/` and PROGRESS.md (`done`, `note`, `resolve`, `decision`, `check`) | copied as is |
+| `progress/` | One file per finished task (written once), plus `decisions.md` and `notes.md` | |
+| `PROGRESS.md` | **Generated** view: Next (computed from PLAN.md), open notes, decisions, recent log | stays short |
 | `.claude/agents/implementer.md` | Does one PLAN task, replies in 15 lines | |
 | `.claude/agents/test-runner.md` | Runs the checks, reports pass/fail only | |
 
-`CLAUDE.md.template`, `PLAN.md.template` and `PROGRESS.md.template` have
-`{{PLACEHOLDERS}}`. The two agent files are generic and only need the check
-commands filled in.
+`CLAUDE.md.template` and `PLAN.md.template` have `{{PLACEHOLDERS}}`. The two
+agent files are generic and only need the check commands filled in.
+`scripts/progress.mjs` is copied unchanged; PLAN.md task lines must keep the
+`- [ ] <id> <title>` form it parses.
 
 ## How to generate from a feature brief
 
@@ -41,7 +44,8 @@ Given the user's description of what to build:
    one controller, one section). Group into phases. Tag each with the docs
    section it needs. Task 1.1 is always the scaffold, with the safe-scaffold
    instructions from the template (never into a non-empty directory).
-5. **Write PROGRESS.md** from the template with "Next: 1.1".
+5. **Copy `scripts/progress.mjs`, create an empty `progress/`, and run
+   `node scripts/progress.mjs`** to generate PROGRESS.md (Next: 1.1).
 6. **Copy the two agents**, filling in the check commands.
 7. Tell the user to start with
    `claude-local.sh <preset>` then "read PROGRESS.md and start the next task",
@@ -74,6 +78,9 @@ Given the user's description of what to build:
   non-vision presets; the template tells the model to check output by DOM or
   pixel scripts and leave visual checks to the human.
 - **Trim command output** (`| tail -40`) and grep before reading.
-- **Where PROGRESS.md entries go** is spelled out in the implementer agent;
-  without it KAT appended a second `## Log` and filed a log entry under
-  Decisions.
+- **No hand-edited status files.** KAT, editing PROGRESS.md by hand, appended
+  six `## Log` headings and a stale second `## Next` (1.5 while on 3.4), and the
+  main chat and subagent both edited PLAN.md. Rules did not stop it; taking the
+  pen away did. `scripts/progress.mjs` is the only writer, Next is computed from
+  PLAN.md, only the implementer records tasks, and `progress.mjs check` (run by
+  test-runner) fails on any drift.
