@@ -14,7 +14,7 @@ stalled (claude-harness.md).
 | `docs/<topic>.md` | The detailed spec, split by topic, read only when a task needs it | under ~8 KB each |
 | `PLAN.md` | Ordered tasks, each one subagent run, tagged with the docs to read | |
 | `scripts/progress.mjs` | **The only writer** of PLAN.md ticks, `progress/` and PROGRESS.md (`done`, `note`, `resolve`, `decision`, `check`) | copied as is |
-| `scripts/smoke.mjs` | Runtime smoke test for a built static site: headless Chrome at desktop/phone, reduced motion, no JS; prints each unique problem once as text (exceptions, 404s, hidden content, contrast, fixed/overflow) | copied as is (web projects) |
+| `scripts/smoke.mjs` | Runtime smoke test for web projects: a static build (`dist/`) or a running server (`--url`, `--paths` for several routes); headless Chrome at desktop/phone, reduced motion, no JS; prints each unique problem once as text (exceptions, 404s, hidden content, contrast, fixed/overflow) | copied as is (web projects) |
 | `progress/` | One file per finished task (written once), plus `decisions.md` and `notes.md` | |
 | `PROGRESS.md` | **Generated** view: Next (computed from PLAN.md), open notes, decisions, recent log | stays short |
 | `.claude/agents/implementer.md` | Does one PLAN task, replies in 15 lines | |
@@ -51,6 +51,27 @@ Given the user's description of what to build:
 7. Tell the user to start with
    `claude-local.sh <preset>` then "read PROGRESS.md and start the next task",
    and to keep Claude Code out of auto mode.
+
+## Final runtime check: required for every project
+
+Every generated CLAUDE.md has a "Final verification" phase: when PLAN.md is
+all ticked, something must actually run the built project, and its findings
+go through notes and the implementer until it is clean. `CLAUDE.md.template`
+writes that phase for web projects; for other stacks, replace its steps 1 and
+3 with the matching recipe below (same note / fix / re-run / resolve loop).
+
+| Project | Final check |
+|---|---|
+| Web, static build | `npm run build && node scripts/smoke.mjs` |
+| Web, needs a server (SSR, API + UI, dev/preview) | Start it in the background, wait for the port, `node scripts/smoke.mjs --url http://127.0.0.1:<port> --paths /,/<route>,...`, then stop it |
+| API / service | Start it in the background; a small `scripts/smoke-api.*` hits the health route and each main endpoint with sample payloads, checks status codes and response shape, and greps the service log for errors; stop it |
+| CLI tool | Build it, run it in a temp dir on sample inputs and one bad input; check exit codes, output, and that the bad input gives a clean error, not a stack trace |
+| Library / package | Build and pack it (`npm pack`, a wheel), install that artifact into a fresh temp project, import it and call the public API: catches export and packaging mistakes unit tests miss |
+| Game / desktop app | Run it headless or for a scripted number of frames if the engine allows; fail on errors in the log |
+
+Each recipe must print problems as text, one line per unique problem, and exit
+non-zero on failure, so a text-only model can act on it. Write it as a script
+in `scripts/` during generation; the agent must not be left to improvise it.
 
 ## Lessons built into the template (do not drop them)
 

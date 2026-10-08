@@ -7,9 +7,14 @@
 // protocol and reports problems as text. No dependencies: Node's built-in
 // http server and WebSocket, and the system Chrome.
 //
-//   npm run build && node scripts/smoke.mjs            exit 1 if any FAIL
-//   node scripts/smoke.mjs --dir dist --wait 1200      options
+//   npm run build && node scripts/smoke.mjs            static build in dist/, exit 1 if any FAIL
+//   node scripts/smoke.mjs --dir build --wait 1200     another output folder, longer settle time
+//   node scripts/smoke.mjs --url http://127.0.0.1:5173 --paths /,/pricing,/login
+//                                                      a running dev/preview/SSR server, several routes
 //   CHROME_BIN=/path/to/chrome node scripts/smoke.mjs  pick the browser
+//
+// With --url nothing is served by this script: start the app first (in the
+// background, non-interactively) and stop it afterwards.
 //
 // Scenarios: desktop 1440x900, phone 390x844, desktop with reduced motion,
 // desktop with JavaScript disabled. In each, every <section> is scrolled into
@@ -33,6 +38,8 @@ const opt = (name, dflt) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : dflt;
 };
 const DIST = path.resolve(opt('dir', 'dist'));
+const URL_ARG = opt('url', null);
+const PATHS = opt('paths', '/').split(',').map((p) => p.trim()).filter(Boolean);
 const WAIT = Number(opt('wait', 1200));
 const MAX_LINES = 60;
 // Unique problems across all scenarios: key -> { scenarios, places, items }.
@@ -43,8 +50,8 @@ const record = (key, scenario, place, item) => {
   f.scenarios.add(scenario); if (place) f.places.add(place); if (item) f.items.add(item);
 };
 
-if (!fs.existsSync(path.join(DIST, 'index.html'))) {
-  console.error(`smoke: ${DIST}/index.html not found. Run \`npm run build\` first.`);
+if (!URL_ARG && !fs.existsSync(path.join(DIST, 'index.html'))) {
+  console.error(`smoke: ${DIST}/index.html not found. Run \`npm run build\` first, or pass --url for a running server.`);
   process.exit(2);
 }
 
@@ -53,7 +60,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon',
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.woff2': 'font/woff2', '.woff': 'font/woff', '.txt': 'text/plain' };
-const server = http.createServer((req, res) => {
+const server = URL_ARG ? null : http.createServer((req, res) => {
   const url = decodeURIComponent((req.url || '/').split('?')[0]);
   let file = path.join(DIST, url);
   if (!file.startsWith(DIST)) { res.writeHead(403).end(); return; }
@@ -62,8 +69,17 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);
 });
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const BASE = `http://127.0.0.1:${server.address().port}/`;
+let BASE;
+if (server) {
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  BASE = `http://127.0.0.1:${server.address().port}/`;
+} else {
+  BASE = URL_ARG.endsWith('/') ? URL_ARG : URL_ARG + '/';
+  try { await fetch(BASE); } catch (e) {
+    console.error(`smoke: cannot reach ${BASE} (${e.cause?.code || e.message}); is the app running?`);
+    process.exit(2);
+  }
+}
 
 // ---------------------------------------------------------------- chrome
 function findChrome() {
@@ -82,7 +98,7 @@ const chrome = spawn(findChrome(), [
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 const cleanup = () => {
   try { chrome.kill('SIGKILL'); } catch { /* gone */ }
-  try { server.close(); } catch { /* closed */ }
+  try { server?.close(); } catch { /* closed */ }
   try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* best effort */ }
 };
 process.on('exit', cleanup);
@@ -159,7 +175,8 @@ const AUDIT = `(() => {
   return out;
 })()`;
 
-async function scenario(name, { width, height, mobile = false, reducedMotion = false, noJs = false }) {
+async function scenario(name, { width, height, mobile = false, reducedMotion = false, noJs = false }, route) {
+  const where = (place) => (PATHS.length > 1 ? `${route} ${place}` : place);
   let count = 0;
   const add = (key, place, item) => { count++; record(key, name, place, item); };
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
@@ -185,12 +202,12 @@ async function scenario(name, { width, height, mobile = false, reducedMotion = f
   await s('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
   if (reducedMotion) await s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   if (noJs) await s('Emulation.setScriptExecutionDisabled', { value: true });
-  await s('Page.navigate', { url: BASE });
+  await s('Page.navigate', { url: new URL(route.replace(/^\//, ''), BASE).href });
   for (let i = 0; i < 100 && !loaded; i++) await sleep(100);
   if (!loaded) add('LOAD page did not fire load within 10 s');
   await sleep(WAIT);
   const evaluate = async (expr) => (await s('Runtime.evaluate', { expression: expr, returnByValue: true })).result.value;
-  const audit = async (where) => ((await evaluate(AUDIT)) || []).forEach((x) => add(x, where));
+  const audit = async (place) => ((await evaluate(AUDIT)) || []).forEach((x) => add(x, where(place)));
   await audit('top');
   const ids = (await evaluate(`[...document.querySelectorAll('section')].map((s, i) => s.id || ('section ' + (i + 1)))`)) || [];
   for (let i = 0; i < ids.length; i++) {
@@ -216,8 +233,10 @@ const scenarios = [
   ['desktop, JavaScript disabled', { width: 1440, height: 900, noJs: true }],
 ];
 for (const [name, cfg] of scenarios) {
-  const n = await scenario(name, cfg);
-  console.log(`== ${name}: ${n ? `${n} finding(s)` : 'clean'}`);
+  for (const route of PATHS) {
+    const n = await scenario(name, cfg, route);
+    console.log(`== ${name}${PATHS.length > 1 ? `, ${route}` : ''}: ${n ? `${n} finding(s)` : 'clean'}`);
+  }
 }
 const list = (set, max) => { const a = [...set]; return a.slice(0, max).join(', ') + (a.length > max ? `, +${a.length - max} more` : ''); };
 let lines = 0;
