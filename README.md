@@ -39,6 +39,7 @@ in the linked files.
 | [ddr5-9800x3d.md](ddr5-9800x3d.md) | What moving from DDR4 to DDR5 (5950X to 9800X3D) did to CPU-offloaded MoE |
 | [llama-b11434.md](llama-b11434.md), [llama-a868c3e3c.md](llama-a868c3e3c.md) | llama.cpp version-to-version changes, measured before upgrading |
 | [gsq-rco.md](gsq-rco.md) | ISTA-DASLab GSQ-RCO quants (Qwen3.8-27B and Qwen3.8-Flash-Next) against Unsloth's |
+| [strata.md](strata.md) | Qwen3.8-Flash-Next on the Strata engine: 112-116 tok/s with every expert on the two cards |
 | [dflash2-qat-q2.md](dflash2-qat-q2.md) | DFlash2 speculative drafter and QAT Q2_0 for Qwen3.8-27B on 16 GB |
 | [turboquant.md](turboquant.md) | TurboQuant 2-4 bit KV-cache quantization |
 | [instella-moe.md](instella-moe.md) | AMD Instella-MoE-16B-A3B |

@@ -500,6 +500,13 @@ but `claude-local.sh` only accepts the listed names, so use these.
   the page to judge layout. Lessons for the template: give asset-heavy briefs
   real assets or an explicit placeholder-art task, and fail the smoke test on
   missing images.
+* **Qwen3.8-Flash-Next Q2_0 on Strata, 2026-10-10: fast, still below Qwen3.8
+  Q8.** Not a router preset: Strata is its own server
+  ([strata.md](strata.md)), reached with `ANTHROPIC_BASE_URL` on port 8095 and
+  an API key. Tool calls and a Claude Code one-shot worked; 112-116 tok/s
+  generation and 1,864 tok/s prefill, but hands-on output was worse than
+  Qwen3.8-27B Q8_0, as under llama.cpp. Needs `--context 131072`: setup's
+  default 64K refuses Claude Code's first request.
 * Switch per task with `claude-local <preset>`. Swapping models costs one cold
   load, about 10-40 s.
 

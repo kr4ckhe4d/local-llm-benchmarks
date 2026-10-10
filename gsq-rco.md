@@ -13,6 +13,8 @@ under MTP. The only thing it buys is VRAM headroom.
 The sibling repo `Qwen3.8-Flash-Next-GSQ-RCO-GGUF` did not fit the single card.
 With the R9700 its Q2_0 does, and it was tried on 2026-10-06; see
 [Qwen3.8-Flash-Next](#qwen38-flash-next-gsq-rco-q2_0) below. Also not adopted.
+The same Q2_0 on the Strata engine (2026-10-10) ran about twice as fast and
+was still not adopted; see [strata.md](strata.md).
 
 ---
 

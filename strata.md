@@ -1,0 +1,67 @@
+# Strata — Qwen3.8-Flash-Next on its own engine
+
+[Strata](https://github.com/Niko1221/Strata) is a separate inference engine
+built only for Qwen3.8-Flash-Next (parts of ggml, its own expert cache, MTP
+draft layer and server). It keeps the hottest experts on the GPUs, the rest
+in RAM, and the per-layer n-gram table on the SSD. It serves OpenAI and
+Anthropic APIs, so Claude Code talks to it directly.
+
+Tried 2026-10-10 on the two cards (R9700 + 9070 XT), Strata 0.1.41 (commit
+`fb58e0d`), engine compiled by `setup.sh` against the system ROCm 7.2.4.
+
+## Q2_0 — fast, same quality as before
+
+**Verdict: not kept.** Same `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`
+Q2_0 file as the [llama.cpp run of 2026-10-06](gsq-rco.md#qwen38-flash-next-gsq-rco-q2_0).
+Strata fixed the speed, not the weights: in hands-on use the output was still
+worse than Qwen3.8-27B Q8_0. Model and pack deleted; IQ3_XXS is next.
+
+Setup line (the box's 30 GB of RAM puts it in Strata's low-RAM mode):
+
+```bash
+./setup.sh --yes --backend hip --family qwen --model Q2_0 --gpus 1,0 \
+  --context 131072 --port 8095 --data-dir /mnt/fast/strata-data --no-start
+```
+
+`--gpus 1,0` is the R9700 first: setup numbers the 9070 XT as GPU 0.
+
+| | |
+|---|---|
+| Disk | 66 GB download + 38 GB AVX-512 expert pack + 6.5 GB MTP layer |
+| Load | ~30 s warm |
+| Layer split | auto, K=33: layers 0-32 on the R9700, 33-47 on the 9070 XT |
+| Experts on the cards | 24,576 of 24,576 profiled pairs at 64K; 24,420 at 128K |
+| VRAM | 31.1 / 32.6 GB and 16.2 / 16.3 GB |
+| RAM | ~7 GB used; KV streaming off (setup: not enough RAM) |
+| Generation | **112-116 tok/s**, MTP drafts accepted 75-94% (81-97 on a few turns) |
+| Prefill | **1,864 tok/s** on a 34.7K prompt; 1,369 tok/s on 5.3K |
+| Follow-up turns | prefix reused, new tokens only, under 0.4 s |
+
+Generation is about twice the fastest Qwen3.8 preset (IQ4_XS + MTP, 71 tok/s).
+The publisher's scores explain the quality: 89.07 task average for Q2_0
+against 93.12 for BF16, LiveCodeBench v6 81 against 87.
+
+### Claude Code
+
+A Messages API tool-call probe returned a correct `tool_use` in 1.8 s. A
+Claude Code one-shot (write `fib.py`, run it) was correct in 32 s wall, 18.6 s
+of it reading the 34.7K-token first prompt.
+
+Launch it the way `claude-local.sh` does: `--strict-mcp-config` with no account
+MCP servers, all four model slots set to one name (Strata ignores the name),
+`ANTHROPIC_BASE_URL=http://<box>:8095`, `ANTHROPIC_AUTH_TOKEN=<key>`.
+
+### Gotchas
+
+1. **Setup's default context is 64K**, which Claude Code cannot use: its first
+   request (~50K with the account MCP servers) plus the default 32K
+   `max_tokens` is refused (`requests are never truncated`). Set `--context
+   131072`. At 128K the cards still hold ~100% of the experts.
+2. **Port.** Strata's default 8080 is taken on this box, and the router's
+   8090 was free only because the router was down when setup ran. When it came
+   back, Strata's `server.py` exited at once, and a `/health` poll got the
+   router's `{"status":"ok"}`. Use 8095 and check for `"service": "strata"`.
+3. **LAN access needs a key.** `--host 0.0.0.0 --api-key <key>`; the web app
+   then asks for it under About > Settings. Without the key: 401.
+4. **Thinking defaults to high.** The web chat and `reasoning_effort` can set
+   it lower; note which level a quality comparison used.
