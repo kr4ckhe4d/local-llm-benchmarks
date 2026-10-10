@@ -16,6 +16,12 @@ Q2_0 file as the [llama.cpp run of 2026-10-06](gsq-rco.md#qwen38-flash-next-gsq-
 Strata fixed the speed, not the weights: in hands-on use the output was still
 worse than Qwen3.8-27B Q8_0. Model and pack deleted; IQ3_XXS is next.
 
+The hands-on test was Strata's web chat at its defaults: thinking High,
+temperature 0.6, top-p 0.95, top-k 20, no max tokens. Prompt: "create me an
+animated svg of a cat walking on a fence". It thought for 141.8 s and wrote
+13,324 tokens in 155 s (86.5 tok/s, 99.8% VRAM hit rate). So the gap to Q8 is
+not a thinking budget being cut short, as it might have been on 2026-10-06.
+
 Setup line (the box's 30 GB of RAM puts it in Strata's low-RAM mode):
 
 ```bash
@@ -33,7 +39,7 @@ Setup line (the box's 30 GB of RAM puts it in Strata's low-RAM mode):
 | Experts on the cards | 24,576 of 24,576 profiled pairs at 64K; 24,420 at 128K |
 | VRAM | 31.1 / 32.6 GB and 16.2 / 16.3 GB |
 | RAM | ~7 GB used; KV streaming off (setup: not enough RAM) |
-| Generation | **112-116 tok/s**, MTP drafts accepted 75-94% (81-97 on a few turns) |
+| Generation | **112-116 tok/s** on short answers, MTP drafts accepted 75-94%; 86.5 tok/s over a 13K-token answer |
 | Prefill | **1,864 tok/s** on a 34.7K prompt; 1,369 tok/s on 5.3K |
 | Follow-up turns | prefix reused, new tokens only, under 0.4 s |
 
@@ -63,5 +69,7 @@ MCP servers, all four model slots set to one name (Strata ignores the name),
    router's `{"status":"ok"}`. Use 8095 and check for `"service": "strata"`.
 3. **LAN access needs a key.** `--host 0.0.0.0 --api-key <key>`; the web app
    then asks for it under About > Settings. Without the key: 401.
-4. **Thinking defaults to high.** The web chat and `reasoning_effort` can set
-   it lower; note which level a quality comparison used.
+4. **Thinking defaults to High** ("thorough"). The web chat's Sampling panel
+   and `reasoning_effort` can set it lower; note which level a quality
+   comparison used. The panel's settings apply to API clients only with "Use
+   for other apps too" on.
