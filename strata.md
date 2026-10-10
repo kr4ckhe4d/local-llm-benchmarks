@@ -38,6 +38,47 @@ IQ3_XXS costs 6-12% of the speed for the quality jump. Strata's NVIDIA table
 had it at two thirds of Q2_0. Here the two cards hold nearly all of its
 experts, so the CPU barely works.
 
+### 200K context
+
+`--context 204800` (setup's 200K step, inside the trained 262,144, no rope
+scaling): the cards still hold 21,713 pairs, ~99.6% of the routed mass, and
+the short code answer runs 96.3 tok/s against 102.1 at 128K. KV is int8, about
+0.9 GB per 64K tokens. 256K should fit too; 384K/512K are experimental.
+
+## Beside the router
+
+The llama.cpp router cannot hold Strata: it only spawns `llama-server`
+children and talks to them over a command pipe. So Strata runs next to it on
+port 8095, and the two take turns on the cards (Strata IQ3_XXS fills ~32 + ~16
+GB; nothing else fits beside it):
+
+* **Strata to router:** `"idle_unload_s": 900` in `strata-iq3_xxs.json`
+  unloads Strata after 15 idle minutes, the same as the router's
+  `--sleep-idle-seconds`.
+* **Router to Strata:** `"before_load":
+  ".../strata-before-load.sh"` unloads every loaded router model before Strata
+  loads again, and waits for them to exit.
+* **Claude Code:** `claude-local.sh strata` uses Strata's URL, key and
+  `/health` context. Any router preset first asks Strata to unload
+  (`POST /v1/unload` with the key). The key goes in
+  `~/.config/strata/api-key` on the laptop, or `STRATA_API_KEY`.
+* **Open WebUI:** add a second OpenAI connection, `http://CachyPC.local:8095/v1`
+  with the key. Open WebUI cannot unload Strata before a router model, so a
+  router model picked there while Strata is loaded will not fit: unload
+  Strata from its web page first, or wait out the idle timer.
+
+`setup.sh --setup` keeps both keys (`carry_over` keeps top-level keys it does
+not write).
+
+Claude Code through `claude-local.sh strata`: a one-shot (write `fib.py`, run
+it) was correct in 24 s, reading the 21K-token first prompt at 1,358 tok/s;
+later turns reused it and wrote at 80-99 tok/s.
+
+Testing it from a Claude Code session on the box itself gave `401 missing or
+wrong API key`: the nested `claude` inherits the desktop app's sign-in, which
+takes precedence over `ANTHROPIC_AUTH_TOKEN`. Under `env -i` it worked; a
+plain terminal is fine.
+
 ## Q2_0 — fast, same quality as before
 
 **Verdict: not kept.** Same `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`

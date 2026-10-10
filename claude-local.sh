@@ -25,6 +25,13 @@ DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-gemma4-26B-A4B-q4-vision-128k}"
 # (format=json) is enabled; a stock SearXNG answers 403 there.
 SEARXNG_URL="${SEARXNG_URL:-http://192.168.5.33:8080}"
 
+# Strata (Qwen3.8-Flash-Next IQ3_XXS) runs beside the router, not in it: the
+# router can only spawn llama-server. `claude-local.sh strata` talks to it
+# directly. It needs an API key because it listens on the LAN; copy it from
+# ~/code/Strata/.strata-api-key on the box. See strata.md.
+STRATA="${STRATA:-http://CachyPC.local:8095}"
+STRATA_KEY_FILE="${STRATA_KEY_FILE:-$HOME/.config/strata/api-key}"
+
 # Claude Code's system prompt measured 41,796 tokens on 2026-08-23 with the
 # claude.ai connectors attached, 24-27k without, and ~20k on 2.1.290 (2026-10-06;
 # Muse's tokenizer doubles it). A 32k preset has too little left for a real
@@ -75,12 +82,35 @@ usable() {
 }
 listable() { [ "$ANY_CTX" -eq 1 ] && models || usable; }
 
+strata_key() {
+  [ -n "${STRATA_API_KEY:-}" ] && { printf '%s' "$STRATA_API_KEY"; return; }
+  [ -r "$STRATA_KEY_FILE" ] && tr -d ' \n' < "$STRATA_KEY_FILE"
+}
+
+# /health needs no key: {"max_context": 204800, "loaded": true, "service": "strata", ...}
+strata_health() { curl -sS --max-time 8 "$STRATA/health" 2>/dev/null; }
+strata_ctx() {
+  strata_health | python3 -c 'import sys,json;print(json.load(sys.stdin).get("max_context",0))' 2>/dev/null || echo 0
+}
+
+# Strata and a router model do not fit the cards together. Before a router
+# model, ask Strata to give the VRAM back (it reloads on its next request, and
+# its before_load hook unloads the router model then).
+strata_unload() {
+  key=$(strata_key); [ -n "$key" ] || return 0
+  strata_health | grep -q '"loaded": *true' || return 0
+  curl -sS --max-time 30 -o /dev/null -X POST -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $key" -d '{}' "$STRATA/v1/unload" 2>/dev/null \
+    && echo "  strata  : unloaded to free the cards for $MODEL"
+}
+
 usage() {
   cat <<EOF
 Run Claude Code against the local llama.cpp router.
 
   claude-local.sh list                 models the router is serving
   claude-local.sh [model] [claude args...]
+  claude-local.sh strata [claude args...]   Qwen3.8-Flash-Next on Strata (port 8095)
 
 Options
   --chrome        enable Chrome DevTools MCP (text-only tools; no screenshots)
@@ -92,6 +122,8 @@ Environment
   ROUTER               default $ROUTER
   CLAUDE_LOCAL_MODEL   default $DEFAULT_MODEL
   SEARXNG_URL          default $SEARXNG_URL
+  STRATA               default $STRATA
+  STRATA_API_KEY       Strata's key; else read from $STRATA_KEY_FILE
 
 Notes
   * Claude Code's system prompt is ~20k tokens, so only 64k+ presets are offered.
@@ -143,20 +175,35 @@ if [ "$DO_LIST" -eq 1 ]; then
     [ "$hidden" -gt 0 ] && printf '\n  %s preset(s) under %s tokens hidden -- too small for Claude Code (--any-ctx to show)\n' \
       "$hidden" "$MIN_CTX"
   fi
+  sctx=$(strata_ctx)
+  [ "$sctx" -gt 0 ] && printf '\nBeside the router, on %s:\n  %-34s %6s tok\n' "$STRATA" strata "$sctx"
   exit 0
 fi
 
 [ -n "$MODEL" ] || MODEL="$DEFAULT_MODEL"
-command -v claude >/dev/null 2>&1 || die "claude not on PATH (try: export PATH=\"\$HOME/.local/bin:\$PATH\")"
-reachable || die "router unreachable at $ROUTER -- is switch-model.sh router running on the GPU box?"
 
-models | grep -qx "$MODEL" || {
-  printf 'error: "%s" is not served by the router.\n\n' "$MODEL" >&2
-  printf 'Available:\n' >&2; listable | sed 's/^/  /' >&2
-  exit 1
-}
+# Strata replaces the router for this session: its own URL, key and context.
+BASE="$ROUTER"; TOKEN="${ANTHROPIC_AUTH_TOKEN:-local}"
+if [ "$MODEL" = "strata" ]; then
+  command -v claude >/dev/null 2>&1 || die "claude not on PATH (try: export PATH=\"\$HOME/.local/bin:\$PATH\")"
+  strata_health | grep -q '"service": *"strata"' || die "Strata unreachable at $STRATA -- is run-iq3_xxs.sh running on the GPU box?"
+  TOKEN=$(strata_key)
+  [ -n "$TOKEN" ] || die "no Strata API key: set STRATA_API_KEY or put it in $STRATA_KEY_FILE"
+  BASE="$STRATA"
+  CTX=$(strata_ctx)
+else
+  command -v claude >/dev/null 2>&1 || die "claude not on PATH (try: export PATH=\"\$HOME/.local/bin:\$PATH\")"
+  reachable || die "router unreachable at $ROUTER -- is switch-model.sh router running on the GPU box?"
 
-CTX=$(ctx_of "$MODEL")
+  models | grep -qx "$MODEL" || {
+    printf 'error: "%s" is not served by the router.\n\n' "$MODEL" >&2
+    printf 'Available:\n' >&2; listable | sed 's/^/  /' >&2
+    exit 1
+  }
+
+  CTX=$(ctx_of "$MODEL")
+  strata_unload
+fi
 if [ "$CTX" -lt "$MIN_CTX" ] && [ "$ANY_CTX" -eq 0 ]; then
   die "$MODEL has only $CTX tokens; Claude Code's system prompt alone is ~42k.
        Pick a 128k or 256k preset, or pass --any-ctx to try anyway."
@@ -221,13 +268,13 @@ case "$MODEL" in
 esac
 [ -n "$DENY" ] && ARGS+=(--disallowedTools "$DENY")
 
-printf '  router  : %s\n  model   : %s\n  context : %s tokens\n%s\n%s\n%s\n\n' \
-  "$ROUTER" "$MODEL" "$CTX" "$SEARCH_NOTE" "$EXTRA_NOTE" "$IMG_NOTE"
+printf '  server  : %s\n  model   : %s\n  context : %s tokens\n%s\n%s\n%s\n\n' \
+  "$BASE" "$MODEL" "$CTX" "$SEARCH_NOTE" "$EXTRA_NOTE" "$IMG_NOTE"
 
 # All four slots on one model. Unset slots fall back to real Anthropic names
 # and 400 with "model 'claude-sonnet-5' not found".
-ANTHROPIC_BASE_URL="$ROUTER" \
-ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-local}" \
+ANTHROPIC_BASE_URL="$BASE" \
+ANTHROPIC_AUTH_TOKEN="$TOKEN" \
 ANTHROPIC_MODEL="$MODEL" \
 ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL" \
 ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL" \
