@@ -9,12 +9,41 @@ Anthropic APIs, so Claude Code talks to it directly.
 Tried 2026-10-10 on the two cards (R9700 + 9070 XT), Strata 0.1.41 (commit
 `fb58e0d`), engine compiled by `setup.sh` against the system ROCm 7.2.4.
 
+## IQ3_XXS — the one to use
+
+**Verdict: kept.** Same prompt and settings as the Q2_0 test below, and the
+output was "day and night, heaps better": a ginger cat crossing a farm fence
+with a two-joint walk cycle, stride matched to the fence speed, and five
+parallax layers. It also took far longer: 462 s of thinking, 53,815 tokens
+in 661 s.
+
+```bash
+./setup.sh --setup --yes --backend hip --family qwen --model IQ3_XXS --gpus 1,0 \
+  --context 131072 --port 8095 --host 0.0.0.0 --api-key <key> \
+  --data-dir /mnt/fast/strata-data --no-start
+```
+
+| | Q2_0 | IQ3_XXS |
+|---|---|---|
+| Disk | 66 GB + 38 GB pack | 71 GB + 42 GB low-RAM experts file |
+| Experts on the cards (128K) | 24,420 of 24,576 pairs | 22,143 of 24,576, ~99.7% of the routed mass; 35.0 GB |
+| VRAM hit rate per request | 99.5-99.8% | 97.1-98.7% |
+| VRAM (R9700 / 9070 XT) | 31.1 / 16.2 GB | 31.9 / 16.1 GB |
+| RAM used | ~7 GB | ~11-12 GB |
+| Short code answer, thinking off | 115.8 tok/s | 102.1 tok/s |
+| Long answer, thinking High | 86.5 tok/s over 13K tokens | 81.4 tok/s over 54K tokens |
+| MTP drafts accepted (short answer) | 87% | 82% |
+
+IQ3_XXS costs 6-12% of the speed for the quality jump. Strata's NVIDIA table
+had it at two thirds of Q2_0. Here the two cards hold nearly all of its
+experts, so the CPU barely works.
+
 ## Q2_0 — fast, same quality as before
 
 **Verdict: not kept.** Same `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`
 Q2_0 file as the [llama.cpp run of 2026-10-06](gsq-rco.md#qwen38-flash-next-gsq-rco-q2_0).
 Strata fixed the speed, not the weights: in hands-on use the output was still
-worse than Qwen3.8-27B Q8_0. Model and pack deleted; IQ3_XXS is next.
+worse than Qwen3.8-27B Q8_0. Model and pack deleted for IQ3_XXS (above).
 
 The hands-on test was Strata's web chat at its defaults: thinking High,
 temperature 0.6, top-p 0.95, top-k 20, no max tokens. Prompt: "create me an

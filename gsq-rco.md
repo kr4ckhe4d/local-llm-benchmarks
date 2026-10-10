@@ -14,7 +14,8 @@ The sibling repo `Qwen3.8-Flash-Next-GSQ-RCO-GGUF` did not fit the single card.
 With the R9700 its Q2_0 does, and it was tried on 2026-10-06; see
 [Qwen3.8-Flash-Next](#qwen38-flash-next-gsq-rco-q2_0) below. Also not adopted.
 The same Q2_0 on the Strata engine (2026-10-10) ran about twice as fast and
-was still not adopted; see [strata.md](strata.md).
+was still not adopted. IQ3_XXS on Strata was, at 81-102 tok/s; see
+[strata.md](strata.md).
 
 ---
 
