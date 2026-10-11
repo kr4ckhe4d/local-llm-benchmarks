@@ -62,6 +62,13 @@ GB; nothing else fits beside it):
   `/health` context. Any router preset first asks Strata to unload
   (`POST /v1/unload` with the key). The key goes in
   `~/.config/strata/api-key` on the laptop, or `STRATA_API_KEY`.
+* **Pi:** `pi-local.sh strata`, or `pi-local.sh <preset>` for the router, the
+  same unload rules as `claude-local.sh`. It writes two providers into Pi's
+  `~/.pi/agent/models.json`, `cachypc` (every router preset of 32K or more)
+  and `strata` (key as `!cat ~/.config/strata/api-key`, never the literal),
+  and leaves the file's other providers alone. Pi's own llama.cpp provider was
+  not used: it lists router models only after an interactive `/login`. Pi's
+  system prompt is ~2.5K tokens, so its first turn reads in under 3 s.
 * **Open WebUI:** add a second OpenAI connection, `http://CachyPC.local:8095/v1`
   with the key. Open WebUI cannot unload Strata before a router model, so a
   router model picked there while Strata is loaded will not fit: unload

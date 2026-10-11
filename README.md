@@ -34,6 +34,7 @@ in the linked files.
 | **[r9700+rx9070.md](r9700+rx9070.md)** | What a second GPU (R9700 beside a 9070 XT) changed: every preset re-fit, MoE without CPU offload, dense models with MTP, all models at 128K depth |
 | [claude-harness.md](claude-harness.md) | Running **Claude Code** against local llama.cpp models: what breaks, fixes, which model to pick, SearXNG web search |
 | [aider-harness.md](aider-harness.md) | Running **aider** against the same router |
+| [`pi-local.sh`](pi-local.sh) | Running the **Pi** coding agent against the router or Strata (the `claude-local.sh` counterpart) |
 | [real-world-testing.md](real-world-testing.md) | Agentic coding through **Cline**: can the models do a job end to end |
 | [big-codebase-guide.md](big-codebase-guide.md) | Using these models on a large codebase |
 | [ddr5-9800x3d.md](ddr5-9800x3d.md) | What moving from DDR4 to DDR5 (5950X to 9800X3D) did to CPU-offloaded MoE |
