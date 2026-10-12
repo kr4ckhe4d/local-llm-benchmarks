@@ -276,7 +276,9 @@ declare -A YARN=(
 usage() {
   cat <<USAGE
 Usage: $(basename "$0") router            serve ALL presets, switchable from the
-                                          Open WebUI dropdown (recommended)
+                                          Open WebUI dropdown (recommended);
+                                          also starts Strata on :8095, unloaded
+       $(basename "$0") strata            start only Strata (if it is not up)
        $(basename "$0") <model> <context>  pin one model, per-model backend
        $(basename "$0") stop      free the GPU completely (SIGTERM, then SIGKILL)
        $(basename "$0") start     relaunch whatever was running last
@@ -439,6 +441,39 @@ import json, sys
 for m in json.load(sys.stdin)["data"]:
     print("     ", m["id"], "" if m.get("status", {}).get("value") != "loaded" else "[loaded]")
 ' 2>/dev/null || echo "     (could not list — see $LOG)"
+  start_strata
+}
+
+# Strata (Qwen3.8-Flash-Next, strata.md) is its own server on 8095: the router
+# can only spawn llama-server. It starts with the router but lazily
+# ("lazy_load": true in its config), so the cards stay free until its first
+# request; its before_load hook then unloads the router model, and it unloads
+# itself after 15 idle minutes. 'stop' leaves it alone.
+STRATA_DIR="$HOME/code/Strata"
+STRATA_RUN="$STRATA_DIR/run-iq3_xxs.sh"
+STRATA_PORT=8095
+
+strata_up() {
+  curl -s --max-time 3 "http://localhost:${STRATA_PORT}/health" 2>/dev/null | grep -q '"service": *"strata"'
+}
+
+start_strata() {
+  if [[ ! -x "$STRATA_RUN" ]]; then
+    echo "==> Strata: $STRATA_RUN not found, skipped"; return 0
+  fi
+  if strata_up; then
+    echo "==> Strata already up on :${STRATA_PORT}"; return 0
+  fi
+  (cd "$STRATA_DIR" && nohup "$STRATA_RUN" > "$STRATA_DIR/strata-server.out" 2>&1 < /dev/null &)
+  for _ in $(seq 1 20); do
+    strata_up && break
+    sleep 3
+  done
+  if strata_up; then
+    echo "==> Strata live at http://$(hostname).local:${STRATA_PORT} (loads on its first request)"
+  else
+    echo "WARNING: Strata did not come up. Check $STRATA_DIR/strata-server.out" >&2
+  fi
 }
 
 start_last() {
@@ -620,6 +655,7 @@ case "${1:-}" in
   stop) stop_server ;;
   start) start_last ;;
   router) start_router ;;
+  strata) start_strata ;;
   *)
     if [[ $# -lt 2 ]]; then usage; exit 1; fi
     switch_model "$1" "$2"

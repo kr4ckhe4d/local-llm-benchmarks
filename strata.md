@@ -74,7 +74,11 @@ GB; nothing else fits beside it):
   router model picked there while Strata is loaded will not fit: unload
   Strata from its web page first, or wait out the idle timer.
 
-`setup.sh --setup` keeps both keys (`carry_over` keeps top-level keys it does
+`switch-model.sh router` starts Strata too (`switch-model.sh strata` starts it
+alone), with `"lazy_load": true`: the API is up at once and the model loads on
+the first request, so a reboot plus that one command restores both.
+
+`setup.sh --setup` keeps these keys (`carry_over` keeps top-level keys it does
 not write).
 
 Claude Code through `claude-local.sh strata`: a one-shot (write `fib.py`, run
