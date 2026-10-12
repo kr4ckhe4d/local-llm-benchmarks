@@ -38,6 +38,14 @@ IQ3_XXS costs 6-12% of the speed for the quality jump. Strata's NVIDIA table
 had it at two thirds of Q2_0. Here the two cards hold nearly all of its
 experts, so the CPU barely works.
 
+### Tuned, 2026-10-12
+
+`--pipeline-windows 2` plus `STRATA_STAGE_TRIM=1` (`"layer_split": "33"`):
+generation 80.7 -> **94.8 tok/s** (+17.5%; code 125-143, prose 73-78), prompt
+reading 1,700 -> 1,653 tok/s on a 29K prompt. Seven other settings measured;
+see [benchmarks/strata-tuning/](benchmarks/strata-tuning/README.md). A
+`setup.sh --setup` run drops the args entry and the explicit split: re-apply.
+
 ### 200K context
 
 `--context 204800` (setup's 200K step, inside the trained 262,144, no rope
