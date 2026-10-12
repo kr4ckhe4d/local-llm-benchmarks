@@ -57,8 +57,6 @@ SLEEP_IDLE="${SLEEP_IDLE:-900}"
 declare -A MODEL_FILE=(
   [gpt-oss-20b]="gpt-oss-20b-mxfp4.gguf"
   [qwen3.6]="Qwen3.6-35B-A3B-UD-Q6_K.gguf"
-  [laguna]="Laguna-XS-2.1-Q4_K_M.gguf"
-  [laguna-q8]="Laguna-XS-2.1-Q8_0.gguf"
   [gemma4]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
   [gemma4-q8]="gemma-4-26B-A4B-it-Q8_0.gguf"
   [gemma4-vision]="gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
@@ -72,8 +70,6 @@ declare -A MODEL_FILE=(
 declare -A MODEL_LABEL=(
   [gpt-oss-20b]="GPT-OSS-20B"
   [qwen3.6]="Qwen3.6-35B-A3B"
-  [laguna]="Laguna XS.2"
-  [laguna-q8]="Laguna XS.2 Q8_0"
   [gemma4]="Gemma 4-26B-A4B"
   [gemma4-q8]="Gemma 4-26B-A4B Q8_0"
   [gemma4-vision]="Gemma 4-26B-A4B +vision"
@@ -88,8 +84,6 @@ declare -A MODEL_LABEL=(
 declare -A MODEL_BACKEND=(
   [gpt-oss-20b]="build"          # was build-vulkan; see README — Vulkan retired
   [qwen3.6]="build"              # UD-Q6_K since 2026-10-07: ROCm
-  [laguna]="build"               # Q4_K_M: `laguna` arch, ROCm
-  [laguna-q8]="build"            # Q8_0: near-lossless, 65-85% experts on CPU
   [gemma4]="build"               # Q4_K_M: ROCm 1.7x pp, and wins tg too
   [gemma4-q8]="build"            # Q8_0: ROCm
   [gemma4-vision]="build"        # Q4_K_M + mmproj: ROCm
@@ -127,7 +121,7 @@ declare -A CTX_TOKENS=(
 # tightest -ncmoe found. Combos not listed were either not tested or exceed
 # that model's supported context.
 # TWO CARDS since 2026-10-05 (9070 XT + R9700, 48.9 GB, auto layer split).
-# -ncmoe is gone from every MoE config below except laguna-q8:256k (2): the
+# -ncmoe is gone from every MoE config below: the
 # experts now fit in VRAM, which is worth +40% to +185% generation. Comments
 # below that explain a particular -ncmoe value, or a feature dropped "for
 # VRAM", describe the single 16 GB card. models-preset.ini holds the measured
@@ -147,22 +141,6 @@ declare -A CONFIG=(
   ["qwen3.6:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 1.5 --reasoning-budget 4096"
   ["qwen3.6:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 1.5 --reasoning-budget 4096"
   ["qwen3.6:256k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 1.5 --reasoning-budget 4096"
-
-  # Laguna XS.2 (Poolside) — hybrid attention, 40 layers, 10 full (period 4) +
-  # 30 SWA(512), 8 KV heads x 128 (4x Qwen3.6's). Thinking defaults off in the
-  # template but the server does not honour that on its own — must pass
-  # enable_thinking:false or it burns the whole token budget on reasoning.
-  ["laguna:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-  ["laguna:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-  ["laguna:256k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-
-  # Laguna XS.2 at Q8_0 -- 33GB, near-lossless. Identical code-quality to
-  # Q4_K_M (27/50 both) but +25 points on cdn-freshness. 30.2 tok/s vs 47.
-  # Higher -ncmoe than Q4_K_M because the file is 1.8x larger; the payoff is
-  # a roomier long-context fit (1,348 MiB free at 256K vs Q4_K_M's 490).
-  ["laguna-q8:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-  ["laguna-q8:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
-  ["laguna-q8:256k"]="-ncmoe 2 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --chat-template-kwargs {\"enable_thinking\":false}"
 
   # Gemma 4 — RE-TUNED for ROCm. The old Vulkan values (5/8/16) do not load.
   # Every Gemma config carries --reasoning-budget 1024 --repeat-penalty 1.05,
@@ -290,11 +268,6 @@ Models:
                                           147 tok/s, pinned to the R9700 alone
   qwen3.6        Qwen3.6-35B-A3B  27.3GB  MoE 35B / 3B active, hybrid attn (40L)
                                           74 tok/s at every context, no offload
-  laguna         Laguna XS.2      18.9GB  MoE 33B / 3B active, hybrid attn (40L)
-                                          90 tok/s, but the least accurate coder
-                                          here — 27/50 code-quality
-  laguna-q8      Laguna XS.2 Q8_0 33.2GB  same model, near-lossless. Same coding
-                                          score, +25pts library knowledge, 80 tok/s
   gemma4         Gemma 4-26B-A4B  15.8GB  MoE 25.2B / 3.8B active (30L)
                                           +MTP drafter: 143 tok/s, fastest here
   gemma4-q8      Gemma 4 Q8_0     26.9GB  same model, flat Q8. 132 tok/s, 8% off
@@ -346,7 +319,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 laguna laguna-q8 gemma4 gemma4-q8 gemma4-vision qwen3.8 qwen3.8-mtp qwen3.8-q8 qwen3.5-uncensored qwen3.5-9b-uncensored; do
+  for model in gpt-oss-20b qwen3.6 gemma4 gemma4-q8 gemma4-vision qwen3.8 qwen3.8-mtp qwen3.8-q8 qwen3.5-uncensored qwen3.5-9b-uncensored; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"
@@ -602,8 +575,8 @@ switch_model() {
 
   echo "==> Waiting for health check..."
   local ok=0 st
-  # Laguna XS.2 Q8_0 is 35.6GB — the largest left on disk — and can take a
-  # couple of minutes to load cold off the SATA SSD.
+  # A large file (Qwen3.8-27B Q8_0, 29 GB, the largest left) can take a
+  # couple of minutes to load cold.
   for _ in $(seq 1 80); do
     # DFlash always emits "[spec] failed to measure draft model memory: failed
     # to create llama_context" during its memory-fitting probe, and the log

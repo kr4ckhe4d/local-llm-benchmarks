@@ -754,7 +754,7 @@ tok/s at depth).
 
 `qwen3.8-32k-mtp` is therefore a **second** preset beside `qwen3.8-32k`, not a
 replacement: speed option against fidelity option, the way `laguna` and
-`laguna-q8` sit side by side.
+`laguna-q8` sat side by side before Laguna was removed.
 
 That beats Muse Glimmer's DFlash (1.64x) and puts this model's follow-up
 latency level with GLM-4.7-Flash's 1.1-1.2s.
@@ -1131,6 +1131,10 @@ and Nemotron it needs no `--reasoning-budget`. The GGUF embeds no sampling
 defaults.
 
 ### Laguna XS.2 (Poolside) — 18.9GB, MoE 33B/~3B active, agentic coding, `laguna` arch
+
+> **Removed 2026-10-12** (presets and both files): the least accurate coder here
+> (27/50 code-quality, both quants), and Gemma 4 and Qwen3.6 took its place as
+> the fast MoE. The measurements below stay as the record.
 
 Poolside's own local-scale model, released 2026-07-21. **Every Laguna is MoE** —
 there is no dense variant — and three sizes exist:
