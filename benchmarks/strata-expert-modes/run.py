@@ -147,8 +147,26 @@ def evaluate():
             print(f"eval {arm:8s} on {d:8s}: hit {hit:6.1%}  {tps:5.1f} tok/s", flush=True)
 
 
+def adapt():
+    """Reactive switching: Strata's default adaptive tier on. Start from one domain's profile, then serve the
+    other domain's test prompts, then the first's again, and read how fast the hit rate follows."""
+    runs = {"code-then-writing": ("code", ["writing", "code"]), "writing-then-code": ("writing", ["code", "writing"])}
+    results = {}
+    for name, (start, seq) in runs.items():
+        p = serve(config(f"adapt-{name}", [], profile=HERE / f"profile-{start}.bin"))
+        log = WORK / f"adapt-{name}.log"
+        try:
+            ask("Say OK.")
+            results[name] = [{"domain": d, **measure(log, q)} for d in seq for q in PROMPTS[d]["test"]]
+        finally:
+            stop(p)
+        (HERE / "results-adapt.json").write_text(json.dumps(results, indent=1))
+        print(name, " ".join(f"{x['domain'][0]}:{x['hits'] / x['lookups']:.0%}/{x['tok_s']:.0f}" for x in results[name]),
+              flush=True)
+
+
 if __name__ == "__main__":
     WORK.mkdir(exist_ok=True)
     steps = sys.argv[1:] or ["trace", "build", "eval"]
     for s in steps:
-        {"trace": trace, "build": build, "eval": evaluate}[s]()
+        {"trace": trace, "build": build, "eval": evaluate, "adapt": adapt}[s]()

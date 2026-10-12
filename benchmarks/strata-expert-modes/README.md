@@ -4,7 +4,7 @@ Can a model's expert cache be switched per task, a "coder" or "writer" mode,
 instead of one general ranking? Measured 2026-10-12 on Qwen3.8-Flash-Next
 IQ3_XXS under Strata 0.1.41 ([strata.md](../../strata.md)), 32K context.
 
-**Verdict: yes, by a wide margin, when the cache cannot hold every expert.** A
+**Verdict: yes as a starting point, when the cache cannot hold every expert; per-request switching adds little on top of Strata's adaptive tier.** A
 profile built from the task's own routing put 96-99% of expert lookups in
 VRAM, against 48-73% for Strata's shipped general profile, and generated
 24-42% faster. The wrong profile costs 5-17% against the general one.
@@ -65,11 +65,38 @@ Decode VRAM hit rate / generation tok/s, 6 prompts each (~2,100-2,400 tokens).
 * Per-prompt spread is small (±5-10% within an arm); one run per arm.
 * SSD reads stayed under 1 GB per arm: the misses came from RAM.
 
+## Per-request switching: the adaptive tier already does most of it
+
+`run.py adapt`: Strata's defaults (adaptive tier on: up to 96 swaps every 4
+windows, RAM to VRAM with no file reads). Start from one domain's profile,
+serve the other domain's 6 test prompts, then the first's. Hit rate / tok/s
+per request:
+
+| | 1st | 2nd | 3rd | 4th | 5th | 6th |
+|---|---|---|---|---|---|---|
+| code cache, writing prompts | 94% / 68 | 98% / 72 | 99% / 81 | 97% / 79 | 99% / 83 | 99% / 78 |
+| then code prompts | 87% / 97 | 95% / 107 | 97% / 111 | 96% / 109 | 96% / 97 | 97% / 117 |
+| writing cache, code prompts | 87% / 90 | 95% / 107 | 97% / 109 | 96% / 108 | 96% / 97 | 97% / 113 |
+| then writing prompts | 94% / 72 | 98% / 74 | 99% / 76 | 96% / 79 | 99% / 83 | 99% / 77 |
+
+Within the **first** 400-token request after a domain change the hit rate is
+back to 87-94% (51-54% with the cache frozen), and by the second it matches
+the domain's own profile. The only loss is that first request: 68-72 tok/s
+against ~80 on writing, 90-97 against ~116 on code.
+
+A switch moves 2,900-5,500 of the 15,764 cached experts (5-10 GB, 1-2 s over
+PCIe; `profile-*.bin` top-15,764 sets compared). An explicit `MODE <profile>`
+command would fit Strata's design: the adaptive tier picks its swaps from
+per-expert routing counts (`a_usage` in `src/program/generate.cpp`), so
+overwriting those with a mode's profile and running rounds back to back
+between requests would reuse the existing exchange code. On this setup it
+would gain only on the first request after a change, ~15-25% speed for a few
+seconds. **Not built.** It matters more where adaptation lags: smaller
+caches, short requests, and a cold start (a mode seed against the shipped
+profile is the static table above).
+
 ## Not tested
 
-* **Adaptation on.** Strata's default adaptive tier moves a conversation's
-  experts into VRAM as it goes, which closes part of the gap over a long
-  session. The static arms show the seed's whole effect, the upper bound.
 * **Mixed work.** An agent session is code plus English plus tool JSON.
   A blended profile, or switching per request, was not tried.
 * **Smaller caches.** At 24% (a 16 GB card) the effect should be larger, but
