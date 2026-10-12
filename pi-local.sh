@@ -22,7 +22,7 @@ set -uo pipefail
 ROUTER="${ROUTER:-http://CachyPC.local:8090}"
 STRATA="${STRATA:-http://CachyPC.local:8095}"
 STRATA_KEY_FILE="${STRATA_KEY_FILE:-$HOME/.config/strata/api-key}"
-DEFAULT_MODEL="${PI_LOCAL_MODEL:-gemma4-26B-A4B-q4-vision-128k}"
+DEFAULT_MODEL="${PI_LOCAL_MODEL:-qwen3.8-27B-q6-128k}"
 PI_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 PI_BIN="${PI_BIN:-pi}"
 

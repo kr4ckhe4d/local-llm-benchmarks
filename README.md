@@ -15,7 +15,7 @@ R9700 (48.9 GB VRAM, both PCIe 5.0 x8), CachyOS, ROCm 7.2, llama.cpp b11434.
 
 | Model | Setup | Result |
 |---|---|---|
-| Gemma 4 26B-A4B | Q4 + MTP, 128K | **143 tok/s** generation; 53 tok/s with 128K of context filled |
+| Gemma 4 26B-A4B | Q4 + MTP, 128K | **143 tok/s** generation; 53 tok/s with 128K of context filled (removed 2026-10-12) |
 | Gemma 4 31B (dense) | Q6_K + MTP, 128K | 52 tok/s (19 without MTP); 279 tok/s prefill at 128K depth |
 | Qwen3.6 35B-A3B | UD-Q6_K, 128K | 72 tok/s, only 2% below Q4 for 2.3x lower KLD; **3,170 tok/s prefill** at 128K depth |
 | Qwen3.8 27B (dense) | IQ4_XS + MTP | 71 tok/s, 85% draft acceptance (file since replaced by UD-Q6_K) |

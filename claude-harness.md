@@ -458,11 +458,13 @@ the choice is about quality per second.
 
 | | code-quality | Warm turn | Use it for |
 |---|---|---|---|
-| **`gemma4-26B-A4B-q4-vision-128k`** (default) | **37/50** | **3.8 s** | Everyday work. Fast, top-tier on the code probe, and can read screenshots |
-| `qwen3.8-27B-q6-128k` | 30-39/50 by quant | 17.2 s (IQ4_XS) | Best on the real build. UD-Q6_K since 2026-10-07: Q8's quality, 12% faster (below) |
+| **`qwen3.8-27B-q6-128k`** (default since 2026-10-12) | 30-39/50 by quant | 17.2 s (IQ4_XS) | Best on the real build. UD-Q6_K since 2026-10-07: Q8's quality, 12% faster (below) |
+| `strata` (`claude-local strata`) | not measured | — | Qwen3.8-Flash-Next IQ3_XXS beside the router, ~95 tok/s ([strata.md](strata.md)) |
+| `gemma4-31B-q6-vision-128k` | not measured | — | The preset that reads screenshots |
+| ~~`gemma4-26B-A4B-q4-vision-128k`~~ | 37/50 | 3.8 s | Removed 2026-10-12 (the default until then) |
 | `qwen3.6-35B-A3B-q6-128k` | not measured | **3.2 s** | Fastest warm turn; good on a real build, below Qwen3.8 (UD-Q6_K since 2026-10-07, below) |
 | `gpt-oss-20b-A3.6B-mxfp4-128k` | not measured | 4.5 s | Quick, small tasks |
-| `laguna-33B-A3B-q8-128k` | 27/50 | 6.7 s | Not recommended: lowest code score, no cache reuse |
+| ~~`laguna-33B-A3B-q8-128k`~~ | 27/50 | 6.7 s | Removed 2026-10-12: lowest code score, no cache reuse |
 
 Preset names carry the quant since 2026-10-07 (`-q4-`, `-q6-`, `-q8-`, `-mxfp4-`).
 Older tables in this file use the previous names, which still route as aliases,
@@ -488,6 +490,7 @@ but `claude-local.sh` only accepts the listed names, so use these.
   there, where Qwen3.8 Q6 needed one nudge. The warm-turn figure above is from
   the Q4 file; Q6 measured 2% slower on generation.
 * **KAT-Coder-V2.5 Q6, 2026-10-08: process worked, result not worth the hours.**
+  (Removed 2026-10-12, presets and file, with Gemma 4 26B.)
   A 25-task build of the Orbit scroll page (templates/claude-project/ workflow:
   subagents, progress.mjs, final smoke test) over ~4 hours of sessions. It
   finished every task with typecheck, lint, 70 tests and the build green, then

@@ -16,10 +16,11 @@ set -uo pipefail
 # power cut on 2026-10-06 it came back as .94 instead of .228. macOS resolves
 # .local natively; the box runs avahi.
 ROUTER="${ROUTER:-http://CachyPC.local:8090}"
-# Gemma 4 + vision since 2026-10-06: 3.8 s warm turns, 37/50 on code-quality,
-# and it can read images, so a screenshot no longer kills the session. See
+# Qwen3.8-27B Q6 since 2026-10-12, when Gemma 4 26B was removed: as good as Q8
+# under Claude Code and 12% faster. Text-only, so Read on images is denied
+# below; gemma4-31B-q6-vision-128k is the preset that reads screenshots. See
 # claude-harness.md, "Choosing a model".
-DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-gemma4-26B-A4B-q4-vision-128k}"
+DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-qwen3.8-27B-q6-128k}"
 
 # SearXNG on the Proxmox box, for web search from local models. Its JSON API
 # (format=json) is enabled; a stock SearXNG answers 403 there.
