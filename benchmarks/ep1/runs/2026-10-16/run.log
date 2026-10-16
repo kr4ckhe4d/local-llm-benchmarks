@@ -1,0 +1,207 @@
+stopping the router: switch-model.sh stop
+stopping Strata (pid 5131)
+
+===== devices =====
+
+$ /home/nipuna/llama.cpp/build/bin/llama-server --list-devices
+  Available devices:
+    ROCm0: AMD Radeon RX 9070 XT (16304 MiB, 16208 MiB free)
+    ROCm1: AMD Radeon AI PRO R9700 (32624 MiB, 32558 MiB free)
+    ROCm2: AMD Ryzen 7 9800X3D 8-Core Processor (15562 MiB, 15558 MiB free)
+
+===== gptoss =====
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/gptoss-rocm0.txt gpt-oss-20b-A3.6B-mxfp4-32k
+  ######## gpt-oss-20b-A3.6B-mxfp4-32k  (ctx 32768, as written + --device ROCm0)
+    fit OK   ctx=32768  model=12187  peak=12859  free=36069  (total=48928, base=672, loaded=12799, gtt+6)  flags: --load-mode dio --device ROCm1 --device ROCm0
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=12187 peak=12802 free=3502  | tightest: 9070XT 3502 free
+    probe: tg 134.98 (runs 134.56, 134.99, 134.98) | pp warm  226.6 | n 700
+  => gptoss-rocm0: fit OK, tg 134.98, accept None, free R9700 32567 / 9070 XT 3502
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/gptoss-rocm1.txt gpt-oss-20b-A3.6B-mxfp4-32k
+  ######## gpt-oss-20b-A3.6B-mxfp4-32k  (ctx 32768, as written + --device ROCm1)
+    fit OK   ctx=32768  model=12187  peak=12861  free=36067  (total=48928, base=674, loaded=12801, gtt+6)  flags: --load-mode dio --device ROCm1 --device ROCm1
+        per-card:  R9700 model=12187 peak=12244 free=20380  9070XT model=0 peak=617 free=15687  | tightest: 9070XT 15687 free
+    probe: tg 142.37 (runs 142.09, 142.37, 142.37) | pp warm  238.2 | n 700
+  => gptoss-rocm1: fit OK, tg 142.37, accept None, free R9700 20380 / 9070 XT 15687
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/gptoss-both.txt gpt-oss-20b-A3.6B-mxfp4-32k
+  ######## gpt-oss-20b-A3.6B-mxfp4-32k  (ctx 32768, as written + --device ROCm0,ROCm1)
+    fit OK   ctx=32768  model=12926  peak=13600  free=35328  (total=48928, base=674, loaded=13480, gtt+1)  flags: --load-mode dio --device ROCm1 --device ROCm0,ROCm1
+        per-card:  R9700 model=8157 peak=8214 free=24410  9070XT model=4769 peak=5386 free=10918  | tightest: 9070XT 10918 free
+    probe: tg 128.40 (runs 128.34, 128.72, 128.40) | pp warm  231.9 | n 700
+  => gptoss-both: fit OK, tg 128.4, accept None, free R9700 24410 / 9070 XT 10918
+
+===== q36 =====
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 0
+  FAIL  ctx=32768  --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 0
+  0.00.418.680 E ggml_backend_buft_alloc_buffer_n_default: failed to allocate ROCm0 buffer of size 28756986368
+  0.00.433.616 E llama_model_load: error loading model: unable to allocate ROCm0 buffer
+  0.00.433.921 E srv  llama_server: exiting due to model loading error
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 40
+  ctx=32768  model=3483  peak=4157  free=44771  (total=48928, base=674, loaded=4059, gtt+4)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 40
+        per-card:  R9700 model=48 peak=105 free=32519  9070XT model=3439 peak=4056 free=12248  | tightest: 9070XT 12248 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 20
+  SPILL ctx=32768  loaded=16324  post=16351  free_at_load=32604  gtt+270  (total=48928, base=659)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 20
+        -> host-memory spill, NOT a fit. Judge by free_at_load=32604, not by peak.
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 30
+  ctx=32768  model=9835  peak=10171  free=38757  (total=48928, base=336, loaded=10073, gtt+6)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 30
+        per-card:  R9700 model=1 peak=58 free=32566  9070XT model=9834 peak=10113 free=6191  | tightest: 9070XT 6191 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 25
+  ctx=32768  model=13003  peak=13339  free=35589  (total=48928, base=336, loaded=13220, gtt+10)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 25
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=13003 peak=13282 free=3022  | tightest: 9070XT 3022 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 23
+  ctx=32768  model=14242  peak=14601  free=34327  (total=48928, base=359, loaded=14503, gtt+2)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 23
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=14242 peak=14544 free=1760  | tightest: 9070XT 1760 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 22
+  ctx=32768  model=14883  peak=15242  free=33686  (total=48928, base=359, loaded=15143, gtt+10)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 22
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=14883 peak=15185 free=1119  | tightest: 9070XT 1119 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 21
+  ctx=32768  model=15503  peak=15872  free=33056  (total=48928, base=369, loaded=15773, gtt+6)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 21
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=15503 peak=15815 free=489  | tightest: 9070XT 489 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 32768 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 22
+  ctx=32768  model=14873  peak=15242  free=33686  (total=48928, base=369, loaded=15143, gtt+6)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 22
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=14873 peak=15185 free=1119  | tightest: 9070XT 1119 free
+  => Qwen3.6 UD-Q6_K 32768 on the 9070 XT alone: --n-cpu-moe 22 (1119 MiB free)
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q36-32k-rocm0-offload.txt qwen3.6-35B-A3B-q6-32k
+  ######## qwen3.6-35B-A3B-q6-32k  (ctx 32768, as written + --device ROCm0 --n-cpu-moe 22)
+    fit OK   ctx=32768  model=14873  peak=15242  free=33686  (total=48928, base=369, loaded=15143, gtt+8)  flags: --load-mode dio --ubatch-size 1024 --batch-size 2048 --flash-attn on --cache-type-k q8_0
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=14873 peak=15185 free=1119  | tightest: 9070XT 1119 free
+    probe: tg  44.58 (runs 44.51, 44.58, 44.61) | pp warm   85.1 | n 700
+  => q36-32k-rocm0-offload: fit OK, tg 44.58, accept None, free R9700 32567 / 9070 XT 1119
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q36-32k-both-offload.txt qwen3.6-35B-A3B-q6-32k
+  ######## qwen3.6-35B-A3B-q6-32k  (ctx 32768, as written + --n-cpu-moe 22)
+    fit OK   ctx=32768  model=15513  peak=15882  free=33046  (total=48928, base=369, loaded=15686, gtt+4)  flags: --load-mode dio --ubatch-size 1024 --batch-size 2048 --flash-attn on --cache-type-k q8_0
+        per-card:  R9700 model=13948 peak=14005 free=18619  9070XT model=1565 peak=1877 free=14427  | tightest: 9070XT 14427 free
+    probe: tg  44.09 (runs 44.09, 43.97, 44.20) | pp warm   80.5 | n 700
+  => q36-32k-both-offload: fit OK, tg 44.09, accept None, free R9700 18619 / 9070 XT 14427
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q36-32k-rocm1.txt qwen3.6-35B-A3B-q6-32k
+  ######## qwen3.6-35B-A3B-q6-32k  (ctx 32768, as written + --device ROCm1)
+    fit OK   ctx=32768  model=28478  peak=28895  free=20033  (total=48928, base=417, loaded=28797, gtt+6)  flags: --load-mode dio --ubatch-size 1024 --batch-size 2048 --flash-attn on --cache-type-k q8_0
+        per-card:  R9700 model=28478 peak=28535 free=4089  9070XT model=0 peak=360 free=15944  | tightest: R9700 4089 free
+    probe: tg  78.44 (runs 78.44, 78.58, 78.41) | pp warm  140.3 | n 700
+  => q36-32k-rocm1: fit OK, tg 78.44, accept None, free R9700 4089 / 9070 XT 15944
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q36-32k-both.txt qwen3.6-35B-A3B-q6-32k
+  ######## qwen3.6-35B-A3B-q6-32k  (ctx 32768, as written)
+    fit OK   ctx=32768  model=29622  peak=30043  free=18885  (total=48928, base=421, loaded=29847, gtt+4)  flags: --load-mode dio --ubatch-size 1024 --batch-size 2048 --flash-attn on --cache-type-k q8_0
+        per-card:  R9700 model=19207 peak=19264 free=13360  9070XT model=10415 peak=10779 free=5525  | tightest: 9070XT 5525 free
+    probe: tg  71.72 (runs 71.66, 71.72, 71.72) | pp warm  119.9 | n 700
+  => q36-32k-both: fit OK, tg 71.72, accept None, free R9700 13360 / 9070 XT 5525
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 131072 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 0
+  FAIL  ctx=131072  --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 0
+  0.00.416.465 E ggml_backend_buft_alloc_buffer_n_default: failed to allocate ROCm0 buffer of size 28756986368
+  0.00.430.907 E llama_model_load: error loading model: unable to allocate ROCm0 buffer
+  0.00.431.211 E srv  llama_server: exiting due to model loading error
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 131072 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 40
+  ctx=131072  model=4646  peak=5065  free=43863  (total=48928, base=419, loaded=4967, gtt+4)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 40
+        per-card:  R9700 model=12 peak=69 free=32555  9070XT model=4634 peak=4996 free=11308  | tightest: 9070XT 11308 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 131072 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 20
+  FAIL  ctx=131072  --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 20
+  0.05.941.609 E ggml_backend_buft_alloc_buffer_n_default: failed to allocate ROCm0 buffer of size 1426063360
+  0.05.942.389 E llama_init_from_model: failed to initialize the context: failed to allocate buffer for kv cache
+  0.05.942.630 E srv  llama_server: exiting due to model loading error
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 131072 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 30
+  ctx=131072  model=11107  peak=11526  free=37402  (total=48928, base=419, loaded=11428, gtt+10)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 30
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=11107 peak=11469 free=4835  | tightest: 9070XT 4835 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 131072 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 25
+  ctx=131072  model=14257  peak=14676  free=34252  (total=48928, base=419, loaded=14577, gtt+2)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 25
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=14257 peak=14619 free=1685  | tightest: 9070XT 1685 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 131072 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 23
+  ctx=131072  model=15517  peak=15936  free=32992  (total=48928, base=419, loaded=15837, gtt+20)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 23
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=15517 peak=15879 free=425  | tightest: 9070XT 425 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 131072 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 24
+  ctx=131072  model=14887  peak=15306  free=33622  (total=48928, base=419, loaded=15208, gtt-6)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 24
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=14887 peak=15249 free=1055  | tightest: 9070XT 1055 free
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/fit.sh 131072 --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 24
+  ctx=131072  model=14887  peak=15306  free=33622  (total=48928, base=419, loaded=15207, gtt+4)  flags: --load-mode dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --device ROCm0 --n-cpu-moe 24
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=14887 peak=15249 free=1055  | tightest: 9070XT 1055 free
+  => Qwen3.6 UD-Q6_K 131072 on the 9070 XT alone: --n-cpu-moe 24 (1055 MiB free)
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q36-128k-rocm0-offload.txt qwen3.6-35B-A3B-q6-128k
+  ######## qwen3.6-35B-A3B-q6-128k  (ctx 131072, as written + --device ROCm0 --n-cpu-moe 24)
+    fit OK   ctx=131072  model=14887  peak=15306  free=33622  (total=48928, base=419, loaded=15208, gtt+6)  flags: --load-mode dio --ubatch-size 1024 --batch-size 2048 --flash-attn on --cache-type-k q8_
+        per-card:  R9700 model=0 peak=57 free=32567  9070XT model=14887 peak=15249 free=1055  | tightest: 9070XT 1055 free
+    probe: tg  43.36 (runs 43.19, 43.42, 43.36) | pp warm   81.7 | n 700
+  => q36-128k-rocm0-offload: fit OK, tg 43.36, accept None, free R9700 32567 / 9070 XT 1055
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q36-128k-both-offload.txt qwen3.6-35B-A3B-q6-128k
+  ######## qwen3.6-35B-A3B-q6-128k  (ctx 131072, as written + --n-cpu-moe 24)
+    fit OK   ctx=131072  model=15872  peak=16291  free=32637  (total=48928, base=419, loaded=16093, gtt+20)  flags: --load-mode dio --ubatch-size 1024 --batch-size 2048 --flash-attn on --cache-type-k q8
+        per-card:  R9700 model=13747 peak=13804 free=18820  9070XT model=2125 peak=2487 free=13817  | tightest: 9070XT 13817 free
+    probe: tg  42.87 (runs 42.87, 42.61, 42.99) | pp warm   78.2 | n 700
+  => q36-128k-both-offload: fit OK, tg 42.87, accept None, free R9700 18820 / 9070 XT 13817
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q36-128k-rocm1.txt qwen3.6-35B-A3B-q6-128k
+  ######## qwen3.6-35B-A3B-q6-128k  (ctx 131072, as written + --device ROCm1)
+    fit OK   ctx=131072  model=29842  peak=30261  free=18667  (total=48928, base=419, loaded=30163, gtt+6)  flags: --load-mode dio --ubatch-size 1024 --batch-size 2048 --flash-attn on --cache-type-k q8_
+        per-card:  R9700 model=29842 peak=29899 free=2725  9070XT model=0 peak=362 free=15942  | tightest: R9700 2725 free
+    probe: tg  78.44 (runs 78.39, 78.48, 78.44) | pp warm  140.3 | n 700
+  => q36-128k-rocm1: fit OK, tg 78.44, accept None, free R9700 2725 / 9070 XT 15942
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q36-128k-both.txt qwen3.6-35B-A3B-q6-128k
+  ######## qwen3.6-35B-A3B-q6-128k  (ctx 131072, as written)
+    fit OK   ctx=131072  model=32498  peak=32917  free=16011  (total=48928, base=419, loaded=32721, gtt+6)  flags: --load-mode dio --ubatch-size 1024 --batch-size 2048 --flash-attn on --cache-type-k q8_
+        per-card:  R9700 model=20849 peak=20906 free=11718  9070XT model=11649 peak=12011 free=4293  | tightest: 9070XT 4293 free
+    probe: tg  71.75 (runs 71.70, 71.75, 71.76) | pp warm  127.7 | n 700
+  => q36-128k-both: fit OK, tg 71.75, accept None, free R9700 11718 / 9070 XT 4293
+
+===== q38 =====
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q38-both-mtp.txt qwen3.8-27B-q6-128k
+  ######## qwen3.8-27B-q6-128k  (ctx 131072, as written)
+    fit OK   ctx=131072  model=29240  peak=29659  free=19269  (total=48928, base=419, loaded=29475, gtt+8)  flags: --load-mode dio --chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/q
+        per-card:  R9700 model=20106 peak=20163 free=12461  9070XT model=9134 peak=9496 free=6808  | tightest: 9070XT 6808 free
+    probe: tg  56.30 (runs 56.34, 56.26, 56.30) | pp warm   48.6 | n 700
+  => q38-both-mtp: fit OK, tg 56.3, accept 0.84175, free R9700 12461 / 9070 XT 6808
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q38-rocm1-mtp.txt qwen3.8-27B-q6-128k
+  ######## qwen3.8-27B-q6-128k  (ctx 131072, as written + --device ROCm1)
+    fit OK   ctx=131072  model=26762  peak=27181  free=21747  (total=48928, base=419, loaded=27050, gtt+6)  flags: --load-mode dio --chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/q
+        per-card:  R9700 model=26762 peak=26819 free=5805  9070XT model=0 peak=362 free=15942  | tightest: R9700 5805 free
+    probe: tg  55.78 (runs 55.95, 55.78, 55.61) | pp warm   53.0 | n 700
+  => q38-rocm1-mtp: fit OK, tg 55.78, accept 0.84175, free R9700 5805 / 9070 XT 15942
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q38-rocm1-nomtp.txt qwen3.8-27B-q6-128k
+  ######## qwen3.8-27B-q6-128k  (ctx 131072, as written + --device ROCm1 --spec-type none)
+    fit OK   ctx=131072  model=26682  peak=27247  free=21681  (total=48928, base=565, loaded=27116, gtt+12)  flags: --load-mode dio --chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/
+        per-card:  R9700 model=26762 peak=26819 free=5805  9070XT model=0 peak=508 free=15796  | tightest: R9700 5805 free
+    probe: tg  55.79 (runs 55.93, 55.79, 55.63) | pp warm   53.2 | n 700
+  => q38-rocm1-nomtp: fit OK, tg 55.79, accept 0.84175, free R9700 5805 / 9070 XT 15796
+
+$ python3 /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/preset_probe.py /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/q38-rocm0-mtp.txt qwen3.8-27B-q6-128k
+  ######## qwen3.8-27B-q6-128k  (ctx 131072, as written + --device ROCm0)
+    fit NO   FAIL  ctx=131072  --load-mode dio --chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen38-late-system.jinja --ubatch-size 512 --batch-size 2048 --flash-attn on --cache-
+    probe: LOAD FAILED
+  => q38-rocm0-mtp: fit NO, tg None, accept None, free R9700 None / 9070 XT None
+
+===== depth =====
+
+$ /home/nipuna/code/local-llm-benchmarks/benchmarks/raw/r9700-two-cards/depth_presets.sh qwen3.6-35B-A3B-q6-128k qwen3.8-27B-q6-128k
+  qwen3.6-35B-A3B-q6-128k            prompt 128025 tok @  3194.2 tok/s | tg  36.91 tok/s (140 tok)
+      VRAM peak per card:  R9700 20906/32624  9070XT 12071/16304 MiB
+  qwen3.8-27B-q6-128k                prompt 128025 tok @   761.4 tok/s | tg  21.93 tok/s (122 tok) | draft 50.7%
+      VRAM peak per card:  R9700 20165/32624  9070XT 9585/16304 MiB
+
+results: /home/nipuna/code/local-llm-benchmarks/benchmarks/ep1/runs/2026-10-16/results.md
+servers were stopped; restart them with: switch-model.sh router

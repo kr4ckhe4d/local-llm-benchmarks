@@ -8,6 +8,10 @@ headroom) and the same 700-token probe as moe_sweep.py and dense.sh, n=3.
 
   LOGDIR=logs python3 preset_probe.py <out.txt> <preset> [preset ...]
   EXTRA="--device ROCm1" python3 preset_probe.py ...   # appended to every preset
+  DROP="spec-type" python3 preset_probe.py ...          # preset keys left out (comma-separated)
+
+DROP exists because appending can't switch some things off: `EXTRA="--spec-type none"`
+left the preset's draft-mtp in force (2026-10-16, Qwen3.8 same tok/s and acceptance).
 """
 import os, re, shlex, sys
 
@@ -37,8 +41,9 @@ def sections():
 
 def flags(p, glob):
     f = []
+    drop = {d.strip() for d in os.environ.get("DROP", "").split(",") if d.strip()}
     for k, v in glob["kv"] + p["kv"]:
-        if k in SKIP or k in ("n-gpu-layers", "parallel"):
+        if k in SKIP or k in drop or k in ("n-gpu-layers", "parallel"):
             continue  # fit.sh and probe() pass -ngl 99 -np 1 themselves
         f += [f"--{k}", v]
     return f + shlex.split(os.environ.get("EXTRA", ""))

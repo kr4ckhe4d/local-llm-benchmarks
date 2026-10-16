@@ -85,14 +85,14 @@ def cards(text):
                                "xt_model": int(m[4]), "xt_free": int(m[6])}
 
 
-def probe(key, preset, extra=""):
+def probe(key, preset, extra="", drop=""):
     """preset_probe.py with EXTRA appended: fit.sh line, per-card memory, tg median, MTP acceptance."""
     logdir = LOGS / key
     logdir.mkdir(parents=True, exist_ok=True)
     out = OUT / f"{key}.txt"
     out.unlink(missing_ok=True)
     rc, text = run(["python3", RAW / "preset_probe.py", out, preset], key,
-                   env={"LOGDIR": str(logdir), "EXTRA": extra}, cwd=RAW)
+                   env={"LOGDIR": str(logdir), "EXTRA": extra, "DROP": drop}, cwd=RAW)
     body = out.read_text() if out.exists() else text
     fit = re.search(r"fit (OK|NO)\s+(.*)", body)
     tg = re.search(r"probe: tg\s+([\d.]+)", body)
@@ -163,7 +163,7 @@ def step_q38():
     p = "qwen3.8-27B-q6-128k"
     probe("q38-both-mtp", p, "")
     probe("q38-rocm1-mtp", p, "--device ROCm1")
-    probe("q38-rocm1-nomtp", p, "--device ROCm1 --spec-type none")
+    probe("q38-rocm1-nomtp", p, "--device ROCm1", drop="spec-type")    # removed: appending --spec-type none left MTP on
     probe("q38-rocm0-mtp", p, "--device ROCm0")                                 # 22 GB file on 16 GB: expect no fit
 
 
