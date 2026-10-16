@@ -394,7 +394,11 @@ start_strata() {
   if strata_up; then
     echo "==> Strata already up on :${STRATA_PORT}"; return 0
   fi
-  (cd "$STRATA_DIR" && nohup "$STRATA_RUN" > "$STRATA_DIR/strata-server.out" 2>&1 < /dev/null &)
+  # exec: the subshell becomes Strata. Without it the backgrounded `cd && nohup`
+  # list stayed behind as a bash waiting on Strata, holding the caller's stdout
+  # open, so `switch-model.sh router | ...` never returned.
+  (cd "$STRATA_DIR" && exec nohup "$STRATA_RUN") > "$STRATA_DIR/strata-server.out" 2>&1 < /dev/null &
+  disown
   for _ in $(seq 1 20); do
     strata_up && break
     sleep 3
