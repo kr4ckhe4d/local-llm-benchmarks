@@ -34,7 +34,7 @@ Where the experts live, 9070 XT alone:
 |---|---|---|---|
 | Both cards | on | 56.30 | 84.2% |
 | R9700 alone | on | 55.78 | 84.2% |
-| R9700 alone | off | 55.79 | n/a |
+| R9700 alone | off | 24.06 | n/a (`q38-rocm1-nomtp-fixed.txt`; the first attempt, 55.79, left MTP on — see below) |
 | 9070 XT alone | on | **did not fit** | n/a |
 
 ## Real 128K depth
@@ -48,6 +48,6 @@ Empty-context generation for the 'kept' column: Qwen3.6 128K and Qwen3.8 both-ca
 
 ## Correction (added after the run)
 
-`q38-rocm1-nomtp` above is **invalid**: appending `--spec-type none` did not turn MTP off (same 55.79 tok/s and
-84.2% acceptance as with MTP). Rerun with the preset's `spec-type` line removed: **24.06 tok/s**, R9700 7,375 MiB free
+The first `q38-rocm1-nomtp` run (`q38-rocm1-nomtp.txt`) is **invalid**: appending `--spec-type none` did not turn MTP off (same 55.79 tok/s and
+84.2% acceptance as with MTP). The table shows the rerun with the preset's `spec-type` line removed: **24.06 tok/s**, R9700 7,375 MiB free
 (`q38-rocm1-nomtp-fixed.txt`). See FINDINGS.md.
