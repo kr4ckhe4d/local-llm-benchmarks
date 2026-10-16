@@ -143,10 +143,10 @@ that result. `benchmarks/strata-tuning/one_vs_two.py`, results in
 
 | | Prompt reading | Generation | Code | Prose |
 |---|---|---|---|---|
-| Both cards (tuned) | 1,756 / 1,774 tok/s (two runs) | 93.9 / 96.9 | ~136 | ~75 |
+| Both cards (tuned) | 1,756 / 1,774 tok/s (two runs) | 93.9 / 96.9 | ~133 | ~75 |
 | R9700 alone | 1,566 tok/s | **86.2** | ~105 | ~74 |
 
-- **Both cards: +11% generation, +13% prompt reading, +31% on code**, prose level.
+- **Both cards: +11% generation, +13% prompt reading, +27% on code**, prose level.
 - Not a dramatic tier jump: the R9700 alone still keeps 95-99.6% of expert
   lookups in VRAM thanks to Strata's adaptive cache. The second card's extra
   room mainly speeds code, where the pipelined split also helps.
@@ -161,7 +161,7 @@ that result. `benchmarks/strata-tuning/one_vs_two.py`, results in
    every model that fits one card (gpt-oss, Qwen3.6), and level for the dense
    Qwen3.8.
 2. **So what is the 48 GB for?** Flash-Next on Strata (section 5) is the one
-   measured case where both cards beat the R9700 alone: +11% generation, +31%
+   measured case where both cards beat the R9700 alone: +11% generation, +27%
    on code. Every other model here fits one card and runs faster on it.
 3. **Drop or reframe the twist** (section 2): -1%, not -9%.
 4. **Fix two predictions on screen**: the 9070 XT is ~5% slower than the R9700,

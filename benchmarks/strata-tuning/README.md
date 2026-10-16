@@ -70,8 +70,8 @@ Order: both, R9700, both again; the third run was interrupted once and redone.
 | Both cards, again | 1,774 tok/s | 96.9 | 133 / 146 / 127 | 75 / 75 / 76 | |
 
 * **Both cards win here**, the one model on this box where they do: +11% on
-  generation (95.4 average against 86.2), +13% on prompt reading, **+31% on
-  code** (136 against 105 average), prose about level.
+  generation (95.4 average against 86.2), +13% on prompt reading, **+27% on
+  code** (133 against 105 average), prose about level.
 * The R9700 alone still served 95-99.6% of expert lookups from VRAM: Strata's
   adaptive cache follows the conversation, so the single card loses less than
   its 69% of cached expert pairs suggests.
