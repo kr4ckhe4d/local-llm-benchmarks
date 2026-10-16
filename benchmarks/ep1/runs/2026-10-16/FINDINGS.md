@@ -133,6 +133,26 @@ prediction is kept on screen, show it failing.
 
 ---
 
+## 5. The 48GB case: Flash-Next on Strata (measured after the main run)
+
+Every model above fits the R9700 alone, so the main run has no result where
+both cards win. Strata (Qwen3.8-Flash-Next IQ3_XXS, 200K context, same day) is
+that result. `benchmarks/strata-tuning/one_vs_two.py`, results in
+`one-vs-two.json`; method as the tuning sweep (cold 29K-token prompt, six
+1,000-token answers, temperature 0, thinking off).
+
+| | Prompt reading | Generation | Code | Prose |
+|---|---|---|---|---|
+| Both cards (tuned) | 1,756 / 1,774 tok/s (two runs) | 93.9 / 96.9 | ~136 | ~75 |
+| R9700 alone | 1,566 tok/s | **86.2** | ~105 | ~74 |
+
+- **Both cards: +11% generation, +13% prompt reading, +31% on code**, prose level.
+- Not a dramatic tier jump: the R9700 alone still keeps 95-99.6% of expert
+  lookups in VRAM thanks to Strata's adaptive cache. The second card's extra
+  room mainly speeds code, where the pipelined split also helps.
+- So "48 GB never beat 32 GB" is false for Flash-Next. It holds for the models
+  in sections 1-3 only.
+
 ## What this means for the episode
 
 1. **The headline should be the bigger card, not the second card.** Going from
@@ -140,10 +160,9 @@ prediction is kept on screen, show it failing.
    Splitting across both cards was **~9-10% slower** than the R9700 alone for
    every model that fits one card (gpt-oss, Qwen3.6), and level for the dense
    Qwen3.8.
-2. **So what is the 48 GB for?** Models and settings that do not fit 32 GB: the
-   episode's own data does not include one, because every model tested here
-   fits the R9700 alone. The series' Flash-Next on Strata (about 47 GB across
-   both cards) is the example that needs both. Worth one line, or a teaser.
+2. **So what is the 48 GB for?** Flash-Next on Strata (section 5) is the one
+   measured case where both cards beat the R9700 alone: +11% generation, +31%
+   on code. Every other model here fits one card and runs faster on it.
 3. **Drop or reframe the twist** (section 2): -1%, not -9%.
 4. **Fix two predictions on screen**: the 9070 XT is ~5% slower than the R9700,
    not equal; Qwen3.6 Q6 does fit the R9700 alone.

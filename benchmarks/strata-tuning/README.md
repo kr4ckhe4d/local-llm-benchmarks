@@ -56,3 +56,24 @@ before is `strata-iq3_xxs.json.pre-tuning`.
 **`setup.sh --setup` undoes two of the three:** it rewrites `layer_split` and
 does not carry hand-added `args` (it keeps the `env` entry). Re-apply after
 any setup run.
+
+## One card or two: R9700 alone against both cards (2026-10-16)
+
+`one_vs_two.py`, the same prompts and method as above, 200K context. The R9700
+alone runs without the two split-only settings (pipeline windows, stage trim).
+Order: both, R9700, both again; the third run was interrupted once and redone.
+
+| | Prompt reading (29K) | Generation | Code (3) | Prose (3) | Expert cache |
+|---|---|---|---|---|---|
+| Both cards, tuned | 1,756 tok/s | 93.9 | 131 / 137 / 127 | 76 / 73 / 74 | 14,227 + 6,065 slots |
+| R9700 alone | 1,566 tok/s | **86.2** | 98 / 108 / 108 | 70 / 73 / 79 | 16,896 slots, 25.7 GiB |
+| Both cards, again | 1,774 tok/s | 96.9 | 133 / 146 / 127 | 75 / 75 / 76 | |
+
+* **Both cards win here**, the one model on this box where they do: +11% on
+  generation (95.4 average against 86.2), +13% on prompt reading, **+31% on
+  code** (136 against 105 average), prose about level.
+* The R9700 alone still served 95-99.6% of expert lookups from VRAM: Strata's
+  adaptive cache follows the conversation, so the single card loses less than
+  its 69% of cached expert pairs suggests.
+* The repeat moved +3% (93.9 -> 96.9), more than this box's usual 0.3%, but
+  well inside the gap.
