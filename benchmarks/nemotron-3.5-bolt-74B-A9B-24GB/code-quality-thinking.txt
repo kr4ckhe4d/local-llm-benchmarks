@@ -1,0 +1,489 @@
+# code quality -- enable_thinking true (--thinking), --reasoning-budget -1, --max-tokens 30000, temperature 0.0
+# model : NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf
+# ctx   : 32768
+# flags : -lm dio -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 -np 1
+# llama.cpp version: 0.7.0-dev (build 11719, commit 5aeac37a3)
+# date  : 2026-10-18T21:09:23+08:00
+
+
+=== nemotron-3.5-bolt-74B-A9B-24GB-thinking ===
+
+----- glob_match -----
+def glob_match(pattern, name):
+    def parse_class(start):
+        pos = start + 1
+        n = len(pattern)
+        negate = False
+        if pos < n and pattern[pos] == '!':
+            negate = True
+            pos += 1
+
+        chars = set()
+        ranges = []
+
+        # ']' immediately after '[' or '[!' is a literal member
+        if pos < n and pattern[pos] == ']':
+            chars.add(']')
+            pos += 1
+
+        while pos < n and pattern[pos] != ']':
+            c = pattern[pos]
+            pos += 1
+            if pos < n and pattern[pos] == '-':
+                pos += 1  # skip '-'
+                if pos < n and pattern[pos] != ']':
+                    end_c = pattern[pos]
+                    pos += 1
+                    ranges.append((c, end_c))
+                else:
+                    # '-' at end is literal
+                    chars.add('-')
+                    break
+            else:
+                chars.add(c)
+
+        if pos >= n:
+            # Unterminated class
+            return None
+
+        # Consume closing ']'
+        pos += 1
+
+        def pred(c, _chars=chars, _ranges=ranges, _negate=negate):
+            in_class = c in _chars or any(lo <= c <= hi for lo, hi in _ranges)
+            return not in_class if _negate else in_class
+
+        tokens.append(('class', pred))
+        return pos
+
+    tokens = []
+    i = 0
+    n = len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == '[':
+            result = parse_class(i)
+            if result is not None:
+                i = result
+            else:
+                tokens.append(('lit', '['))
+                i += 1
+        elif c == '*':
+            tokens.append(('star',))
+            i += 1
+        elif c == '?':
+            tokens.append(('qmark',))
+            i += 1
+        else:
+            tokens.append(('lit', c))
+            i += 1
+
+    m = len(tokens)
+    L = len(name)
+    # dp[i][j] == tokens[0:i] matches name[0:j]
+    dp = [[False] * (L + 1) for _ in range(m + 1)]
+    dp[0][0] = True
+
+    for i in range(1, m + 1):
+        tok = tokens[i - 1]
+        if tok[0] == 'star':
+            for j in range(L + 1):
+                dp[i][j] = dp[i - 1][j]
+                if j > 0:
+                    dp[i][j] = dp[i][j] or dp[i][j - 1]
+        elif tok[0] == 'qmark':
+            for j in range(1, L + 1):
+                dp[i][j] = dp[i - 1][j - 1]
+        elif tok[0] == 'lit':
+            c = tok[1]
+            for j in range(1, L + 1):
+                dp[i][j] = dp[i - 1][j - 1] and name[j - 1] == c
+        else:  # 'class'
+            pred = tok[1]
+            for j in range(1, L + 1):
+                dp[i][j] = dp[i - 1][j - 1] and pred(name[j - 1])
+
+    return dp[m][L]
+
+
+  glob_match          8/8   clean
+
+----- shlex_split -----
+def shlex_split(s):
+    tokens = []
+    current = []
+    state = 'normal'
+    token_started = False
+    i = 0
+    n = len(s)
+    whitespace = ' \t\n\r\f\v'
+
+    while i < n:
+        c = s[i]
+
+        if state == 'normal':
+            if c in whitespace:
+                if token_started:
+                    tokens.append(''.join(current))
+                    current = []
+                    token_started = False
+                i += 1
+            elif c == '\\':
+                token_started = True
+                i += 1
+                if i < n:
+                    current.append(s[i])
+                    i += 1
+                else:
+                    current.append('\\')
+            elif c == "'":
+                token_started = True
+                state = 'single'
+                i += 1
+            elif c == '"':
+                token_started = True
+                state = 'double'
+                i += 1
+            else:
+                token_started = True
+                current.append(c)
+                i += 1
+
+        elif state == 'single':
+            if c == "'":
+                state = 'normal'
+                i += 1
+            else:
+                current.append(c)
+                i += 1
+
+        elif state == 'double':
+            if c == '\\':
+                i += 1
+                if i < n:
+                    nc = s[i]
+                    if nc in '\\"$`':
+                        current.append(nc)
+                        i += 1
+                    else:
+                        current.append('\\')
+                else:
+                    current.append('\\')
+            elif c == '"':
+                state = 'normal'
+                i += 1
+            else:
+                current.append(c)
+                i += 1
+
+    if state != 'normal':
+        raise ValueError("No closing quotation")
+
+    if token_started:
+        tokens.append(''.join(current))
+
+    return tokens
+
+
+  shlex_split         6/7   missed: dq_escapes
+
+----- urljoin -----
+def urljoin_(base, url):
+    def parse_url(u):
+        has_fragment = '#' in u
+        if has_fragment:
+            u, fragment = u.split('#', 1)
+        else:
+            fragment = ''
+        has_query = '?' in u
+        if has_query:
+            u, query = u.split('?', 1)
+        else:
+            query = ''
+        scheme = ''
+        if ':' in u:
+            idx = u.find(':')
+            candidate = u[:idx]
+            if candidate and candidate[0].isalpha() and all(c.isalnum() or c in '+-.' for c in candidate):
+                scheme = candidate
+                u = u[idx + 1:]
+        authority = ''
+        path = u
+        if u.startswith('//'):
+            u = u[2:]
+            slash_idx = u.find('/')
+            if slash_idx == -1:
+                authority = u
+                u = ''
+            else:
+                authority = u[:slash_idx]
+                u = u[slash_idx:]
+            path = u
+        return scheme, authority, path, query, fragment, has_query, has_fragment
+
+    def remove_dot_segments(path):
+        if not path:
+            return path
+        output = []
+        absolute = path.startswith('/')
+        if absolute:
+            output.append('/')
+            path = path[1:]
+        for seg in path.split('/'):
+            if seg == '' or seg == '.':
+                continue
+            elif seg == '..':
+                if len(output) > 1:
+                    output.pop()
+            else:
+                output.append(seg)
+        result = '/'.join(output)
+        return result if result else ''
+
+    def compose(scheme, authority, path, query, fragment):
+        url = ''
+        if scheme:
+            url += scheme + ':'
+        if authority:
+            url += '//' + authority
+        url += path
+        if query:
+            url += '?' + query
+        if fragment:
+            url += '#' + fragment
+        return url
+
+    if url == '':
+        scheme, authority, path, query, fragment, _, _ = parse_url(base)
+        return compose(scheme, authority, path, query, '')
+
+    b_scheme, b_authority, b_path, b_query, b_fragment, _, _ = parse_url(base)
+    r_scheme, r_authority, r_path, r_query, r_fragment, r_has_query, r_has_fragment = parse_url(url)
+
+    if r_scheme:
+        res_scheme = r_scheme
+        res_authority = r_authority
+        res_path = remove_dot_segments(r_path)
+        res_query = r_query
+        res_fragment = r_fragment if r_has_fragment else b_fragment
+    elif r_authority:
+        res_scheme = b_scheme
+        res_authority = r_authority
+        res_path = remove_dot_segments(r_path)
+        res_query = r_query
+        res_fragment = r_fragment if r_has_fragment else b_fragment
+    elif r_path:
+        res_scheme = b_scheme
+        res_authority = b_authority
+        if r_path.startswith('/'):
+            res_path = r_path
+        else:
+            if b_path and b_path[-1] != '/':
+                last_slash = b_path.rfind('/')
+                if last_slash != -1:
+                    b_path = b_path[:last_slash + 1]
+                else:
+                    b_path = ''
+            res_path = b_path + r_path
+        res_path = remove_dot_segments(res_path)
+        res_query = r_query if r_has_query else b_query
+        res_fragment = r_fragment if r_has_fragment else b_fragment
+    else:
+        res_scheme = b_scheme
+        res_authority = b_authority
+        res_path = b_path
+        res_path = remove_dot_segments(res_path)
+        res_query = r_query if r_has_query else b_query
+        res_fragment = r_fragment if r_has_fragment else b_fragment
+
+    if res_path == '' and res_authority and (res_query or res_fragment):
+        res_path = '/'
+
+    return compose(res_scheme, res_authority, res_path, res_query, res_fragment)
+
+
+  urljoin             1/9   missed: absolute, netloc, abs_path, rel_path, dotdot, query, fragment, dot_only
+
+----- textwrap -----
+def wrap_(text, width):
+    if width < 1:
+        raise ValueError("invalid width %r" % (width,))
+
+    text = text.expandtabs(8)
+    words = text.split()
+
+    lines = []
+    ans = []
+    width_so_far = 0
+
+    for word in words:
+        wlen = len(word)
+        if wlen > width:
+            for i in range(0, wlen, width):
+                piece = word[i:i + width]
+                plen = len(piece)
+                if ans:
+                    if width_so_far + 1 + plen > width:
+                        lines.append(' '.join(ans))
+                        ans = [piece]
+                        width_so_far = plen
+                    else:
+                        ans.append(piece)
+                        width_so_far += 1 + plen
+                else:
+                    ans.append(piece)
+                    width_so_far = plen
+        else:
+            if ans and width_so_far + 1 + wlen > width:
+                lines.append(' '.join(ans))
+                ans = [word]
+                width_so_far = wlen
+            else:
+                ans.append(word)
+                if len(ans) == 1:
+                    width_so_far = wlen
+                else:
+                    width_so_far += 1 + wlen
+
+    if ans:
+        lines.append(' '.join(ans))
+
+    return lines
+
+
+  textwrap            4/6   missed: collapse, random60
+
+----- csv_rows -----
+def csv_rows(text):
+    rows = []
+    row = []
+    field = []
+    state = 'normal'  # normal, quoted, quoted_escape
+    i = 0
+    n = len(text)
+
+    while i < n:
+        c = text[i]
+        if state == 'normal':
+            if c == '"':
+                state = 'quoted'
+            elif c == ',':
+                row.append(''.join(field))
+                field.clear()
+            elif c == '\r':
+                if i + 1 < n and text[i + 1] == '\n':
+                    i += 1
+                row.append(''.join(field))
+                field.clear()
+                rows.append(row)
+                row = []
+            elif c == '\n':
+                row.append(''.join(field))
+                field.clear()
+                rows.append(row)
+                row = []
+            else:
+                field.append(c)
+        elif state == 'quoted':
+            if c == '"':
+                state = 'quoted_escape'
+            else:
+                field.append(c)
+        elif state == 'quoted_escape':
+            if c == '"':
+                field.append(c)
+                state = 'quoted'
+            elif c == ',':
+                row.append(''.join(field))
+                field.clear()
+                state = 'normal'
+            elif c == '\r':
+                if i + 1 < n and text[i + 1] == '\n':
+                    i += 1
+                row.append(''.join(field))
+                field.clear()
+                rows.append(row)
+                row = []
+                state = 'normal'
+            elif c == '\n':
+                row.append(''.join(field))
+                field.clear()
+                rows.append(row)
+                row = []
+                state = 'normal'
+            else:
+                # Lone quote followed by non-special char: treat quote as literal
+                field.append('"')
+                state = 'normal'
+                continue
+        i += 1
+
+    if state != 'normal' or field or row:
+        row.append(''.join(field))
+        field.clear()
+        rows.append(row)
+
+    return rows
+
+
+  csv_rows            7/7   clean
+
+----- add_months -----
+def add_months(y, m, d, n):
+    total = y * 12 + (m - 1) + n
+    new_y = total // 12
+    new_m = total % 12 + 1
+
+    if new_m == 2:
+        if (new_y % 4 == 0 and new_y % 100 != 0) or (new_y % 400 == 0):
+            last_day = 29
+        else:
+            last_day = 28
+    elif new_m in (4, 6, 9, 11):
+        last_day = 30
+    else:
+        last_day = 31
+
+    new_d = d if d <= last_day else last_day
+    return (new_y, new_m, new_d)
+
+
+  add_months          6/6   clean
+
+----- parse_qsl -----
+def parse_qsl_(qs):
+    def decode(s):
+        result = []
+        i = 0
+        while i < len(s):
+            ch = s[i]
+            if ch == '+':
+                result.append(' ')
+                i += 1
+            elif ch == '%' and i + 2 < len(s):
+                try:
+                    result.append(chr(int(s[i + 1:i + 3], 16)))
+                    i += 3
+                except ValueError:
+                    result.append(ch)
+                    i += 1
+            else:
+                result.append(ch)
+                i += 1
+        return ''.join(result)
+
+    pairs = []
+    for component in qs.split('&'):
+        if not component:
+            continue
+        if '=' in component:
+            key, value = component.split('=', 1)
+        else:
+            key, value = component, ''
+        pairs.append((decode(key), decode(value)))
+    return pairs
+
+
+  parse_qsl           7/7   clean
+
+nemotron-3.5-bolt-74B-A9B-24GB-thinking: 39/50 checks pass (78.0%) | 4/7 tasks fully clean

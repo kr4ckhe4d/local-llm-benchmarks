@@ -258,11 +258,11 @@ def extract_code(text):
     return text
 
 
-def ask(host, prompt, timeout, max_tokens, model=None):
+def ask(host, prompt, timeout, max_tokens, model=None, thinking=False):
     payload = {
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens, "temperature": 0.0,
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": thinking},
     }
     if model:                       # router mode needs an explicit preset name
         payload["model"] = model
@@ -304,6 +304,13 @@ def main():
     # Headroom, not a fix for a known failure. See needle-test.py.
     ap.add_argument("--max-tokens", type=int, default=12288)
     ap.add_argument("--show-code", action="store_true")
+    # Added 2026-10-18. Every score in the README is thinking off, so this is
+    # off by default. Models that ignore enable_thinking (Qwen3-Next Thinking,
+    # GPT-OSS) think either way; for the ones that honour it, this is the only
+    # way to see what thinking buys. Serve with --reasoning-budget -1, or the
+    # server's cap decides the result.
+    ap.add_argument("--thinking", action="store_true",
+                    help="send enable_thinking: true (default false)")
     a = ap.parse_args()
 
     tot_ok = tot = 0
@@ -311,7 +318,7 @@ def main():
     print(f"\n=== {a.label} ===")
     for name, prompt, checks_src in TASKS:
         try:
-            body = ask(a.host, prompt, a.timeout, a.max_tokens, a.model)
+            body = ask(a.host, prompt, a.timeout, a.max_tokens, a.model, a.thinking)
         except Exception as e:
             n = n_checks(checks_src)
             print(f"  {name:18s}  0/{n}   REQUEST FAILED {type(e).__name__}")
