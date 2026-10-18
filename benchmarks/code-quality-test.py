@@ -21,7 +21,7 @@ Runs model-written code. It executes in a temp dir with a wall-clock timeout
 and no arguments, but it is still model-written code running on your box --
 which is the only way to score correctness rather than plausibility.
 """
-import argparse, json, re, subprocess, sys, tempfile, textwrap, urllib.request
+import argparse, json, os, re, subprocess, sys, tempfile, textwrap, urllib.request
 from pathlib import Path
 
 TASKS = [
@@ -258,18 +258,25 @@ def extract_code(text):
     return text
 
 
-def ask(host, prompt, timeout, max_tokens, model=None, thinking=False):
+def ask(host, prompt, timeout, max_tokens, model=None, thinking=False, api_key=None,
+        temperature=0.0, top_p=None, effort=None):
     payload = {
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_tokens, "temperature": 0.0,
+        "max_tokens": max_tokens, "temperature": temperature,
         "chat_template_kwargs": {"enable_thinking": thinking},
     }
+    if top_p is not None:
+        payload["top_p"] = top_p
+    if effort:
+        payload["reasoning_effort"] = effort
+        payload["chat_template_kwargs"]["reasoning_effort"] = effort
     if model:                       # router mode needs an explicit preset name
         payload["model"] = model
     req = urllib.request.Request(
         host + "/v1/chat/completions",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"})
+        headers={"Content-Type": "application/json",
+                 **({"Authorization": f"Bearer {api_key}"} if api_key else {})})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)["choices"][0]["message"]["content"] or ""
 
@@ -311,6 +318,24 @@ def main():
     # server's cap decides the result.
     ap.add_argument("--thinking", action="store_true",
                     help="send enable_thinking: true (default false)")
+    # Added 2026-10-18 for Strata on :8095, which refuses requests without a
+    # key. Read from the environment so it stays out of ps and shell history.
+    # Added 2026-10-18. 0.0 keeps every stored score exactly reproducible, but
+    # greedy decoding sends some thinking models into a loop that never ends:
+    # Qwen3.8-Flash-Next at xhigh thought for 100K tokens on glob_match and
+    # wrote nothing. Qwen's thinking-mode advice is 0.6 / top-p 0.95. A score
+    # taken above 0.0 is one sample, not a measurement; say so beside it.
+    ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--top-p", type=float, default=None)
+    # Added 2026-10-18. With --thinking and no effort, Qwen3.8-Flash-Next's
+    # template defaults to xhigh, and at xhigh it thought past 100K tokens on
+    # glob_match without answering. At medium or low it solved it 8/8 in ~6K.
+    # Sent both as the OpenAI field and as a template kwarg, so it reaches
+    # Strata and llama.cpp alike.
+    ap.add_argument("--reasoning-effort", default=None,
+                    help="e.g. low, medium, high (default: the template's own)")
+    ap.add_argument("--api-key-env", default="LLM_API_KEY",
+                    help="environment variable holding a bearer key (default LLM_API_KEY)")
     a = ap.parse_args()
 
     tot_ok = tot = 0
@@ -318,7 +343,9 @@ def main():
     print(f"\n=== {a.label} ===")
     for name, prompt, checks_src in TASKS:
         try:
-            body = ask(a.host, prompt, a.timeout, a.max_tokens, a.model, a.thinking)
+            body = ask(a.host, prompt, a.timeout, a.max_tokens, a.model, a.thinking,
+                       os.environ.get(a.api_key_env), a.temperature, a.top_p,
+                       a.reasoning_effort)
         except Exception as e:
             n = n_checks(checks_src)
             print(f"  {name:18s}  0/{n}   REQUEST FAILED {type(e).__name__}")

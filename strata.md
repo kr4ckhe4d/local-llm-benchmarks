@@ -53,6 +53,39 @@ scaling): the cards still hold 21,713 pairs, ~99.6% of the routed mass, and
 the short code answer runs 96.3 tok/s against 102.1 at 128K. KV is int8, about
 0.9 GB per 64K tokens. 256K should fit too; 384K/512K are experimental.
 
+### Code quality: the best score here, but not at xhigh (2026-10-18)
+
+`code-quality-test.py` against Strata v0.1.43 (`7695859a`) on :8095. The
+harness now takes `--api-key-env` and sends Strata's key as a bearer token.
+Results in
+[`qwen3.8-flash-next-IQ3_XXS-strata`](benchmarks/qwen3.8-flash-next-IQ3_XXS-strata):
+
+| Setting | Checks | Clean tasks | Thinking tokens | Time |
+|---|---|---|---|---|
+| Thinking off, temp 0.0 | **43/50 (86%)** | 4/7 | none | ~1 min |
+| Thinking, **medium**, temp 0.6 | **47/50 (94%)** | 5/7 | 46K (1.6-14.3K per task) | 7 min |
+| Thinking, xhigh (default), temp 0.0 | glob_match 0/8, stopped | | 100K, no answer | 9.4 min on one task |
+| Thinking, xhigh (default), temp 0.6 | stopped during glob_match | | 70K, no answer | 11.4 min on one task |
+
+* **Both are the top scores in this repo.** Thinking off it beats every other
+  model's 39/50 by 4 checks, and it is the only model to get `urljoin` 9/9.
+  Medium misses only `shlex_split`'s `dq_escapes` and `textwrap`'s
+  `collapse` and `random60`, which every model misses.
+* **Never ask it at the default effort.** With thinking on and no effort,
+  the template picks xhigh. There it deliberates on `glob_match`'s
+  bracket edge cases without end: 100K tokens with greedy decoding, still
+  going at 70K with temperature 0.6. With `reasoning_effort` medium or low
+  the same bare prompt solved it 8/8 in ~6K tokens and under a minute. So
+  did the same question asked through a client with a 10K-token agent
+  prompt (2K tokens, 31 s). Pass `--reasoning-effort medium` (also new in
+  the harness) and say which effort a score used. This is not the web
+  chat's High setting, which maps to xhigh too; the API defaults there when
+  `enable_thinking` is true and no effort is given.
+* The medium row is one sample at temperature 0.6, so allow a check or
+  two of spread. The xhigh runs are kept as
+  `code-quality-thinking-temp0-loop.txt` and
+  `code-quality-thinking-xhigh-temp06-stopped.txt`.
+
 ## Beside the router
 
 The llama.cpp router cannot hold Strata: it only spawns `llama-server`

@@ -2004,6 +2004,8 @@ model's, not the harness's.
 | Nemotron 3.5 Bolt 74B-A9B 24GB ‡ | ~2.4 | 35/50 (70%) | 2/7 |
 | Nemotron 3.5 Bolt 74B-A9B 24GB, **thinking on** ‡ | ~2.4 | **39/50 (78%)** | 4/7 |
 | Qwen3-Next-80B-A3B-Thinking `Q4_K_M` § | ~4.8 | 27/50 (54%) | 2/7 |
+| Qwen3.8-Flash-Next `IQ3_XXS`, Strata ¶ | ~3.1 | **43/50 (86%)** | 4/7 |
+| Qwen3.8-Flash-Next `IQ3_XXS`, Strata, **thinking medium** ¶ | ~3.1 | **47/50 (94%)** | 5/7 |
 
 † The two Gemma 4 rows were measured 2026-08-29 at `--max-tokens 12288`; every
 other row used 2400. They are directly comparable to each other but not exactly
@@ -2012,13 +2014,20 @@ floor — see the Gemma 4 section.
 
 ‡ 2026-10-18, side build b11719, `--max-tokens 12288` (thinking off) and
 30000 (thinking on, `--thinking`, `--reasoning-budget -1`). BPW is the file
-size over 74B parameters. The thinking-on row is the only row here
-with reasoning: it spent 104K tokens (32 minutes) on the seven tasks. See
-[r9700+rx9070.md](r9700+rx9070.md#nemotron-35-bolt-74b-a9b-24gb-ties-the-top-code-score-only-with-thinking-2026-10-18).
+size over 74B parameters. The thinking-on row spent 104K tokens (32
+minutes) on the seven tasks. See
+[r9700+rx9070.md](r9700+rx9070.md#nemotron-35-bolt-74b-a9b-24gb-3950-only-after-32-minutes-of-thinking-2026-10-18).
 
 § It ignores `enable_thinking: false`, so the suite's 1024-token reasoning
 cap cut it off. With no cap it scored 37/50, after 8-18K tokens of thinking
 per task. The weights are deleted.
+
+¶ 2026-10-18, Strata v0.1.43 on :8095 (`--api-key-env`). BPW is IQ3_XXS's
+nominal rate. Thinking off is temperature 0.0, like every other row. The
+medium row is `--thinking --reasoning-effort medium --temperature 0.6`: one
+sample, 46K thinking tokens, 7 minutes. **Thinking at the default effort
+(xhigh) never finished `glob_match`** (100K tokens), so state the effort
+for any thinking score. See [strata.md](strata.md).
 
 **BPW does not order this table.** The highest-bit quant scores lowest and the
 lowest-bit quant scores highest. IQ4_XS lost 9 checks in one go by emitting
