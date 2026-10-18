@@ -1,0 +1,447 @@
+# code quality -- same as code-quality.txt but --reasoning-budget -1 (no thinking cap), --max-tokens 30000
+# model : Qwen3-Next-80B-A3B-Thinking-Q4_K_M.gguf
+# ctx   : 32768
+# flags : -lm dio -ncmoe 4 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 -np 1
+# llama.cpp version: 0.6.0-dev (build 11434, commit 5e03bdd87)
+# date  : 2026-10-18T19:34:22+08:00
+
+
+=== qwen3-next-80B-thinking-Q4_K_M-nocap ===
+
+----- glob_match -----
+def glob_match(pattern, name):
+    if not pattern:
+        return not name
+    if not name:
+        return all(c == '*' for c in pattern)
+    if pattern[0] == '*':
+        return glob_match(pattern[1:], name) or glob_match(pattern, name[1:])
+    elif pattern[0] == '?':
+        return glob_match(pattern[1:], name[1:])
+    elif pattern[0] == '[':
+        j = 1
+        while j < len(pattern) and pattern[j] != ']':
+            j += 1
+        if j == len(pattern):
+            if name and name[0] == '[':
+                return glob_match(pattern[1:], name[1:])
+            return False
+        if j == 1:
+            if name and name[0] == '[':
+                return glob_match(pattern[1:], name[1:])
+            return False
+        if pattern[1] == '!' and j == 2:
+            if name and name[0] == '[':
+                return glob_match(pattern[1:], name[1:])
+            return False
+        class_part = pattern[1:j]
+        negation = False
+        if class_part.startswith('!') and len(class_part) > 1:
+            negation = True
+            class_part = class_part[1:]
+        set_chars = set()
+        i = 0
+        while i < len(class_part):
+            if i < len(class_part) - 2 and class_part[i+1] == '-' and class_part[i] <= class_part[i+2]:
+                start, end = class_part[i], class_part[i+2]
+                for c in range(ord(start), ord(end) + 1):
+                    set_chars.add(chr(c))
+                i += 3
+            else:
+                set_chars.add(class_part[i])
+                i += 1
+        if not name:
+            return False
+        if negation:
+            if name[0] not in set_chars:
+                return glob_match(pattern[j+1:], name[1:])
+            return False
+        else:
+            if name[0] in set_chars:
+                return glob_match(pattern[j+1:], name[1:])
+            return False
+    else:
+        if name and pattern[0] == name[0]:
+            return glob_match(pattern[1:], name[1:])
+        return False
+
+
+  glob_match          7/8   missed: rbracket
+
+----- shlex_split -----
+def shlex_split(s):
+    current_state = 'outside'
+    current_token = ''
+    tokens = []
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if current_state == 'outside':
+            if c in ' \t\n\r':
+                if current_token:
+                    tokens.append(current_token)
+                    current_token = ''
+                i += 1
+                continue
+            elif c == "'":
+                current_state = 'single'
+                i += 1
+                continue
+            elif c == '"':
+                current_state = 'double'
+                i += 1
+                continue
+            elif c == '\\':
+                if i + 1 < n:
+                    next_char = s[i+1]
+                    current_token += next_char
+                    i += 2
+                else:
+                    current_token += c
+                    i += 1
+                continue
+            else:
+                current_token += c
+                i += 1
+        elif current_state == 'single':
+            if c == "'":
+                current_state = 'outside'
+                i += 1
+                continue
+            else:
+                current_token += c
+                i += 1
+        elif current_state == 'double':
+            if c == '"':
+                current_state = 'outside'
+                i += 1
+                continue
+            elif c == '\\':
+                if i + 1 < n:
+                    next_char = s[i+1]
+                    if next_char in ['\\', '"', '$', '`']:
+                        current_token += next_char
+                        i += 2
+                    else:
+                        current_token += c
+                        current_token += next_char
+                        i += 2
+                else:
+                    current_token += c
+                    i += 1
+                continue
+            else:
+                current_token += c
+                i += 1
+    if current_token:
+        tokens.append(current_token)
+    return tokens
+
+
+  shlex_split         4/7   missed: single_q, double_q, dq_escapes
+
+----- urljoin -----
+def urljoin_(base, url):
+    if url == '':
+        scheme = ''
+        rest = base
+        if ':' in base:
+            scheme, rest = base.split(':', 1)
+        else:
+            scheme = ''
+            rest = base
+        if rest.startswith('//'):
+            rest = rest[2:]
+            idx = len(rest)
+            for i, char in enumerate(rest):
+                if char in ['/', '?', '#']:
+                    idx = i
+                    break
+            netloc = rest[:idx]
+            path_part = rest[idx:]
+        else:
+            netloc = ''
+            path_part = rest
+        if '#' in path_part:
+            path_and_query, fragment = path_part.split('#', 1)
+        else:
+            path_and_query = path_part
+            fragment = ''
+        if '?' in path_and_query:
+            path_str, query = path_and_query.split('?', 1)
+        else:
+            path_str = path_and_query
+            query = ''
+        result = ''
+        if scheme:
+            result += scheme + ':'
+        if netloc:
+            result += '//' + netloc
+        result += path_str
+        if query:
+            result += '?' + query
+        return result
+    else:
+        base_scheme = ''
+        base_rest = base
+        if ':' in base:
+            base_scheme, base_rest = base.split(':', 1)
+        else:
+            base_scheme = ''
+            base_rest = base
+        if base_rest.startswith('//'):
+            base_rest = base_rest[2:]
+            idx = len(base_rest)
+            for i, char in enumerate(base_rest):
+                if char in ['/', '?', '#']:
+                    idx = i
+                    break
+            base_netloc = base_rest[:idx]
+            base_path_part = base_rest[idx:]
+        else:
+            base_netloc = ''
+            base_path_part = base_rest
+        if '#' in base_path_part:
+            base_path_and_query, base_fragment = base_path_part.split('#', 1)
+        else:
+            base_path_and_query = base_path_part
+            base_fragment = ''
+        if '?' in base_path_and_query:
+            base_path_str, base_query = base_path_and_query.split('?', 1)
+        else:
+            base_path_str = base_path_and_query
+            base_query = ''
+        url_scheme = ''
+        url_rest = url
+        if ':' in url:
+            url_scheme, url_rest = url.split(':', 1)
+        else:
+            url_scheme = ''
+            url_rest = url
+        if url_rest.startswith('//'):
+            url_rest = url_rest[2:]
+            idx = len(url_rest)
+            for i, char in enumerate(url_rest):
+                if char in ['/', '?', '#']:
+                    idx = i
+                    break
+            url_netloc = url_rest[:idx]
+            url_path_part = url_rest[idx:]
+        else:
+            url_netloc = ''
+            url_path_part = url_rest
+        if '#' in url_path_part:
+            url_path_and_query, url_fragment = url_path_part.split('#', 1)
+        else:
+            url_path_and_query = url_path_part
+            url_fragment = ''
+        if '?' in url_path_and_query:
+            url_path_str, url_query = url_path_and_query.split('?', 1)
+        else:
+            url_path_str = url_path_and_query
+            url_query = ''
+        if url_scheme:
+            scheme = url_scheme
+            netloc = url_netloc
+            path = url_path_str
+            query = url_query
+            fragment = url_fragment
+        else:
+            scheme = base_scheme
+            if url_netloc:
+                netloc = url_netloc
+                path = url_path_str
+            else:
+                netloc = base_netloc
+                if url_path_str.startswith('/'):
+                    path = url_path_str
+                else:
+                    base_parts = base_path_str.split('/')
+                    url_parts = url_path_str.split('/')
+                    combined_parts = base_parts + url_parts
+                    resolved_parts = []
+                    for part in combined_parts:
+                        if part == '' or part == '.':
+                            continue
+                        elif part == '..':
+                            if resolved_parts:
+                                resolved_parts.pop()
+                        else:
+                            resolved_parts.append(part)
+                    if base_path_str.startswith('/'):
+                        path = '/' + '/'.join(resolved_parts)
+                    else:
+                        path = '/'.join(resolved_parts)
+            query = url_query if url_query else base_query
+            fragment = url_fragment if url_fragment else base_fragment
+        result = ''
+        if scheme:
+            result += scheme + ':'
+        if netloc:
+            result += '//' + netloc
+        result += path
+        if query:
+            result += '?' + query
+        if fragment:
+            result += '#' + fragment
+        return result
+
+
+  urljoin             3/9   missed: netloc, abs_path, rel_path, dotdot, fragment, dot_only
+
+----- textwrap -----
+def wrap_(text, width):
+    current_pos = 0
+    expanded = []
+    for char in text:
+        if char == '\t':
+            num_spaces = 8 - (current_pos % 8)
+            expanded.append(' ' * num_spaces)
+            current_pos += num_spaces
+        else:
+            expanded.append(char)
+            current_pos += 1
+    expanded = ''.join(expanded)
+    collapsed = ' '.join(expanded.split())
+    words = collapsed.split()
+    lines = []
+    current_line = ''
+    for word in words:
+        if len(word) > width:
+            for i in range(0, len(word), width):
+                chunk = word[i:i+width]
+                if current_line == '':
+                    current_line = chunk
+                else:
+                    if len(current_line) + 1 + len(chunk) <= width:
+                        current_line += ' ' + chunk
+                    else:
+                        lines.append(current_line)
+                        current_line = chunk
+        else:
+            if current_line == '':
+                current_line = word
+            else:
+                if len(current_line) + 1 + len(word) <= width:
+                    current_line += ' ' + word
+                else:
+                    lines.append(current_line)
+                    current_line = word
+    if current_line != '':
+        lines.append(current_line)
+    return lines
+
+
+  textwrap            4/6   missed: collapse, random60
+
+----- csv_rows -----
+def csv_rows(text):
+    result = []
+    current_row = []
+    current_field = []
+    in_quote = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if in_quote:
+            if c == '"':
+                if i + 1 < n and text[i+1] == '"':
+                    current_field.append('"')
+                    i += 1
+                else:
+                    in_quote = False
+            else:
+                current_field.append(c)
+        else:
+            if c == '"':
+                in_quote = True
+            elif c == ',':
+                current_row.append(''.join(current_field))
+                current_field = []
+            elif c == '\n':
+                current_row.append(''.join(current_field))
+                result.append(current_row)
+                current_row = []
+                current_field = []
+            elif c == '\r':
+                if i + 1 < n and text[i+1] == '\n':
+                    current_row.append(''.join(current_field))
+                    result.append(current_row)
+                    current_row = []
+                    current_field = []
+                    i += 1
+                else:
+                    current_field.append(c)
+            else:
+                current_field.append(c)
+        i += 1
+    if current_field:
+        current_row.append(''.join(current_field))
+    if current_row:
+        result.append(current_row)
+    return result
+
+
+  csv_rows            7/7   clean
+
+----- add_months -----
+import calendar
+
+def add_months(y, m, d, n):
+    total = y * 12 + m - 1 + n
+    new_y = total // 12
+    new_m = total % 12 + 1
+    _, last_day = calendar.monthrange(new_y, new_m)
+    new_d = min(d, last_day)
+    return (new_y, new_m, new_d)
+
+
+  add_months          6/6   clean
+
+----- parse_qsl -----
+def parse_qsl_(qs):
+    def decode(s):
+        i = 0
+        res = []
+        while i < len(s):
+            if s[i] == '+':
+                res.append(' ')
+                i += 1
+            elif s[i] == '%':
+                if i + 2 < len(s):
+                    hex_str = s[i+1:i+3]
+                    try:
+                        num = int(hex_str, 16)
+                        res.append(chr(num))
+                        i += 3
+                        continue
+                    except ValueError:
+                        res.append('%')
+                        i += 1
+                else:
+                    res.append('%')
+                    i += 1
+            else:
+                res.append(s[i])
+                i += 1
+        return ''.join(res)
+    
+    result = []
+    parts = qs.split('&')
+    for part in parts:
+        if '=' in part:
+            key, value = part.split('=', 1)
+        else:
+            key = part
+            value = ''
+        key_decoded = decode(key)
+        value_decoded = decode(value)
+        result.append((key_decoded, value_decoded))
+    return result
+
+
+  parse_qsl           6/7   missed: empty
+
+qwen3-next-80B-thinking-Q4_K_M-nocap: 37/50 checks pass (74.0%) | 2/7 tasks fully clean
