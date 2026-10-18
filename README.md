@@ -2014,7 +2014,7 @@ floor — see the Gemma 4 section.
 30000 (thinking on, `--thinking`, `--reasoning-budget -1`). BPW is the file
 size over 74B parameters. The thinking-on row is the only row here
 with reasoning: it spent 104K tokens (32 minutes) on the seven tasks. See
-[r9700+rx9070.md](r9700+rx9070.md#nemotron-35-bolt-74b-a9b-24gb-best-code-score-worst-library-recall-2026-10-18).
+[r9700+rx9070.md](r9700+rx9070.md#nemotron-35-bolt-74b-a9b-24gb-ties-the-top-code-score-only-with-thinking-2026-10-18).
 
 § It ignores `enable_thinking: false`, so the suite's 1024-token reasoning
 cap cut it off. With no cap it scored 37/50, after 8-18K tokens of thinking
