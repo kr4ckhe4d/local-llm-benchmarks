@@ -380,9 +380,9 @@ for m in json.load(sys.stdin)["data"]:
 # request; its before_load hook then unloads the router model, and it unloads
 # itself after 15 idle minutes. 'stop' leaves it alone.
 STRATA_DIR="$HOME/code/Strata"
-# Coder IQ1_M since 2026-10-22: IQ3_XXS kept ~16 GiB of experts in RAM and OOM-killed
-# the desktop on this 30 GB box. STRATA_RUN=$STRATA_DIR/run-iq3_xxs.sh goes back.
-STRATA_RUN="${STRATA_RUN:-$STRATA_DIR/run-coder-iq1_m.sh}"
+# IQ3_XXS needs STRATA_RESIDENT_HEADROOM_GIB=12 in its config, or it OOM-kills the
+# desktop on this 30 GB box (strata.md). STRATA_RUN overrides the script.
+STRATA_RUN="${STRATA_RUN:-$STRATA_DIR/run-iq3_xxs.sh}"
 STRATA_PORT=8095
 
 strata_up() {

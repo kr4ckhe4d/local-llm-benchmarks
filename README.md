@@ -40,7 +40,7 @@ in the linked files.
 | [ddr5-9800x3d.md](ddr5-9800x3d.md) | What moving from DDR4 to DDR5 (5950X to 9800X3D) did to CPU-offloaded MoE |
 | [llama-b11434.md](llama-b11434.md), [llama-a868c3e3c.md](llama-a868c3e3c.md) | llama.cpp version-to-version changes, measured before upgrading |
 | [gsq-rco.md](gsq-rco.md) | ISTA-DASLab GSQ-RCO quants (Qwen3.8-27B and Qwen3.8-Flash-Next) against Unsloth's |
-| [strata.md](strata.md) | Qwen3.8-Flash-Next on the Strata engine: Coder IQ1_M in use (IQ3_XXS OOM'd the 30 GB box), 97-133 tok/s |
+| [strata.md](strata.md) | Qwen3.8-Flash-Next on the Strata engine: IQ3_XXS at 107-114 tok/s with 12 GiB RAM headroom; Coder IQ1_M tried and deleted |
 | [dflash2-qat-q2.md](dflash2-qat-q2.md) | DFlash2 speculative drafter and QAT Q2_0 for Qwen3.8-27B on 16 GB |
 | [turboquant.md](turboquant.md) | TurboQuant 2-4 bit KV-cache quantization |
 | [instella-moe.md](instella-moe.md) | AMD Instella-MoE-16B-A3B |
@@ -2005,9 +2005,9 @@ model's, not the harness's.
 | Nemotron 3.5 Bolt 74B-A9B 24GB, **thinking on** ‡ | ~2.4 | **39/50 (78%)** | 4/7 |
 | Qwen3-Next-80B-A3B-Thinking `Q4_K_M` § | ~4.8 | 27/50 (54%) | 2/7 |
 | Qwen3.8-Flash-Next `IQ3_XXS`, Strata ¶ | ~3.1 | **43/50 (86%)** | 4/7 |
-| Qwen3.8-Flash-Next `IQ3_XXS`, Strata, **thinking medium** ¶ | ~3.1 | **47/50 (94%)** | 5/7 |
+| Qwen3.8-Flash-Next `IQ3_XXS`, Strata, **thinking medium**, 3 runs ¶ | ~3.1 | **47 / 47 / 47 (94%)** | 5/7 |
 | Qwen3.8-Flash-Next **Coder** `IQ1_M`, Strata ¶ | ~3.5 kept | 42/50 (84%) | 3/7 |
-| Qwen3.8-Flash-Next **Coder** `IQ1_M`, Strata, thinking medium ¶ | ~3.5 kept | 31/50 (62%) | 3/7 |
+| Qwen3.8-Flash-Next **Coder** `IQ1_M`, Strata, thinking medium, 3 runs ¶ | ~3.5 kept | 31 / 43 / 39 (mean 75%) | 3-4/7 |
 
 † The two Gemma 4 rows were measured 2026-08-29 at `--max-tokens 12288`; every
 other row used 2400. They are directly comparable to each other but not exactly
@@ -2032,8 +2032,8 @@ sample, 46K thinking tokens, 7 minutes. **Thinking at the default effort
 for any thinking score. See [strata.md](strata.md).
 The Coder rows are 2026-10-22, same settings; its BPW is the kept experts'
 IQ3_S-like storage (1.89 per original parameter, half the experts gone). Its
-medium run lost two whole tasks (`csv_rows` loops forever, `urljoin` returned
-no code once and fenced code in three replays).
+medium runs vary: `urljoin` scored 0, 5 and 3 of 9 (IQ3_XXS 9/9 every time),
+and run 1's `csv_rows` loops forever. The medium rows are three samples each.
 
 **BPW does not order this table.** The highest-bit quant scores lowest and the
 lowest-bit quant scores highest. IQ4_XS lost 9 checks in one go by emitting

@@ -9,7 +9,7 @@ Anthropic APIs, so Claude Code talks to it directly.
 Tried 2026-10-10 on the two cards (R9700 + 9070 XT), Strata 0.1.41 (commit
 `fb58e0d`), engine compiled by `setup.sh` against the system ROCm 7.2.4.
 
-## Coder IQ1_M — in use since 2026-10-22
+## Coder IQ1_M — tried 2026-10-22, deleted
 
 **Why the switch:** IQ3_XXS logged the desktop out twice on 2026-10-22. The
 kernel OOM killer took `kwin_wayland` (13:13 and 13:30). `--resident-experts`
@@ -36,8 +36,7 @@ Then re-apply the args that setup drops in `strata-coder-iq1_m.json`:
 `--pipeline-windows 2`, `STRATA_STAGE_TRIM=1`, `before_load`,
 `idle_unload_s`, `lazy_load`, plus **`STRATA_RESIDENT_HEADROOM_GIB=10`**.
 `layer_split` stays `auto` (layers 0-26 / 27-47); the 33 was tuned for
-IQ3_XXS. `switch-model.sh` starts `run-coder-iq1_m.sh`;
-`STRATA_RUN=~/code/Strata/run-iq3_xxs.sh` goes back.
+IQ3_XXS.
 
 | | IQ3_XXS | Coder IQ1_M |
 |---|---|---|
@@ -49,7 +48,7 @@ IQ3_XXS. `switch-model.sh` starts `run-coder-iq1_m.sh`;
 | Short code answer | 102.1 tok/s (94.8 tuned, long) | 122.6-132.8 tok/s |
 | Long answer, thinking medium | — | 96-104 tok/s over 10-17K tokens |
 | Code quality, thinking off | **43/50**, 4/7 clean | 42/50, 3/7 clean |
-| Code quality, thinking medium | **47/50**, 5/7 clean | 31/50, 3/7 clean |
+| Code quality, thinking medium (3 runs) | **47, 47, 47** /50 | 31, 43, 39 /50 (mean 37.7) |
 
 Code quality results are in
 [`qwen3.8-flash-next-coder-IQ1_M-strata`](benchmarks/qwen3.8-flash-next-coder-IQ1_M-strata).
@@ -57,17 +56,28 @@ Code quality results are in
 * **Thinking off is a wash.** It gets `glob_match` 8/8, where IQ3_XXS got
   4/8. It loses 3 on `shlex_split` quoting, and one each on `urljoin`
   (`dot_only`) and `parse_qsl` (`empty`).
-* **The medium row's 16 lost checks are two zeros.** `csv_rows` forgot
-  `i += 1` in its `\n` branch and hit the 30 s exec timeout. `urljoin` came
-  back with no code at all. Three replays of the same `urljoin` prompt all
-  returned fenced code after 11-15K thinking tokens, so that zero did not
-  reproduce. One sample at temperature 0.6, like IQ3_XXS's 47/50, so the
-  gap is noisier than it looks. The other five tasks match IQ3_XXS's medium
-  run check for check.
+* **At medium effort IQ3_XXS is clearly better (repeated 2026-10-22).** It
+  scored 47/50 in all three runs, with the same three misses every time.
+  The Coder scored 31, 43 and 39. `urljoin` is the Coder's weak task (0, 5,
+  3 of 9, against 9/9 every time). Run 1 also lost `csv_rows` to an endless
+  loop (`i += 1` missing in its `\n` branch); runs 2 and 3 got it 7/7.
+  Results are in `code-quality-thinking-medium-run{2,3}.txt` in both
+  folders.
+* **IQ3_XXS fits with `STRATA_RESIDENT_HEADROOM_GIB=12`.** It held 13.75 GiB
+  of experts in RAM (15.8 at the default 4). The lowest free RAM was 9.2 GB,
+  with Chrome open and Blender closed. It also ran 107-114 tok/s, faster
+  than the 81-102 measured before. So the OOM came from the headroom, not
+  the model size. With Blender open it is still tight.
 * It thinks longer at medium than IQ3_XXS did: 1.2-17K tokens per task, 9
   minutes for the suite against 7.
 
-## IQ3_XXS — best scores, but it OOMs the 30 GB box
+**Verdict: deleted, back to IQ3_XXS.** The Coder's only gain was RAM, and
+the 12 GiB headroom fixed that for IQ3_XXS without giving up 9 checks at
+medium effort. `strata-iq3_xxs.json` carries the headroom, and
+`switch-model.sh` starts `run-iq3_xxs.sh` again. The old config without it
+is `strata-iq3_xxs.json.pre-headroom` in the Strata folder.
+
+## IQ3_XXS — the one to use (with `STRATA_RESIDENT_HEADROOM_GIB=12`)
 
 **Verdict: kept.** Same prompt and settings as the Q2_0 test below, and the
 output was "day and night, heaps better": a ginger cat crossing a farm fence
@@ -148,10 +158,10 @@ Results in
 
 The llama.cpp router cannot hold Strata: it only spawns `llama-server`
 children and talks to them over a command pipe. So Strata runs next to it on
-port 8095, and the two take turns on the cards (Strata fills most of both
-cards; nothing else fits beside it):
+port 8095, and the two take turns on the cards (Strata IQ3_XXS fills ~32 + ~16
+GB; nothing else fits beside it):
 
-* **Strata to router:** `"idle_unload_s": 900` in `strata-coder-iq1_m.json`
+* **Strata to router:** `"idle_unload_s": 900` in `strata-iq3_xxs.json`
   unloads Strata after 15 idle minutes, the same as the router's
   `--sleep-idle-seconds`.
 * **Router to Strata:** `"before_load":

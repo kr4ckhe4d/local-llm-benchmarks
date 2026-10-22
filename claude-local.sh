@@ -26,7 +26,7 @@ DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-qwen3.8-27B-q6-128k}"
 # (format=json) is enabled; a stock SearXNG answers 403 there.
 SEARXNG_URL="${SEARXNG_URL:-http://192.168.5.33:8080}"
 
-# Strata (Qwen3.8-Flash-Next Coder IQ1_M) runs beside the router, not in it: the
+# Strata (Qwen3.8-Flash-Next IQ3_XXS) runs beside the router, not in it: the
 # router can only spawn llama-server. `claude-local.sh strata` talks to it
 # directly. It needs an API key because it listens on the LAN; copy it from
 # ~/code/Strata/.strata-api-key on the box. See strata.md.
@@ -187,7 +187,7 @@ fi
 BASE="$ROUTER"; TOKEN="${ANTHROPIC_AUTH_TOKEN:-local}"
 if [ "$MODEL" = "strata" ]; then
   command -v claude >/dev/null 2>&1 || die "claude not on PATH (try: export PATH=\"\$HOME/.local/bin:\$PATH\")"
-  strata_health | grep -q '"service": *"strata"' || die "Strata unreachable at $STRATA -- is run-coder-iq1_m.sh running on the GPU box?"
+  strata_health | grep -q '"service": *"strata"' || die "Strata unreachable at $STRATA -- is run-iq3_xxs.sh running on the GPU box?"
   TOKEN=$(strata_key)
   [ -n "$TOKEN" ] || die "no Strata API key: set STRATA_API_KEY or put it in $STRATA_KEY_FILE"
   BASE="$STRATA"

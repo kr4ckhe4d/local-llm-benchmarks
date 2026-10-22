@@ -165,7 +165,7 @@ command -v "$PI_BIN" >/dev/null 2>&1 || die "pi not on PATH (npm install -g @ear
 [ -n "$MODEL" ] || MODEL="$DEFAULT_MODEL"
 
 if [ "$MODEL" = "strata" ]; then
-  strata_health | grep -q '"service": *"strata"' || die "Strata unreachable at $STRATA -- is run-coder-iq1_m.sh running on the GPU box?"
+  strata_health | grep -q '"service": *"strata"' || die "Strata unreachable at $STRATA -- is run-iq3_xxs.sh running on the GPU box?"
   [ -n "$(strata_key)" ] || die "no Strata API key: set STRATA_API_KEY or put it in $STRATA_KEY_FILE"
   PROVIDER=strata; PI_MODEL=qwen3.8-flash-next; BASE="$STRATA"
 else

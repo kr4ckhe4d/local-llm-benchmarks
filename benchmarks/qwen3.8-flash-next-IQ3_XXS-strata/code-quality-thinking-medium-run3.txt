@@ -1,0 +1,534 @@
+# code quality -- --thinking --reasoning-effort medium, temperature 0.6, top-p 0.95 (one sample, not reproducible), --max-tokens 32768
+# model : Qwen3.8-Flash-Next IQ3_XXS (qwen3.8-flash-next-iq3_xxs)
+# server: Strata v0.1.43 (commit 7695859a) on :8095, as run by switch-model.sh (200K context, both cards, RESIDENT_HEADROOM 12)
+# date  : 2026-10-22T14:46:02+08:00
+
+
+=== qwen3.8-flash-next-IQ3_XXS-strata-thinking-medium-run3 ===
+
+----- glob_match -----
+def glob_match(pattern, name):
+    def _match(pi, ni):
+        while pi < len(pattern):
+            pc = pattern[pi]
+
+            if pc == '*':
+                # Consume consecutive stars
+                while pi < len(pattern) and pattern[pi] == '*':
+                    pi += 1
+                if pi == len(pattern):
+                    return True
+                # Try * matching 0, 1, 2, … characters
+                for i in range(ni, len(name) + 1):
+                    if _match(pi, i):
+                        return True
+                return False
+
+            elif pc == '?':
+                if ni >= len(name):
+                    return False
+                pi += 1
+                ni += 1
+
+            elif pc == '[':
+                negated = False
+                j = pi + 1
+
+                if j < len(pattern) and pattern[j] == '!':
+                    negated = True
+                    j += 1
+
+                # ] immediately after [ or [! is a literal member
+                literal_bracket = False
+                if j < len(pattern) and pattern[j] == ']':
+                    literal_bracket = True
+                    j += 1
+
+                # Parse characters and ranges until closing ]
+                chars = []
+                ranges = []
+                closed = False
+
+                while j < len(pattern):
+                    if pattern[j] == ']':
+                        closed = True
+                        break
+                    # Range: X-Y where Y is not ]
+                    if (j + 2 < len(pattern)
+                            and pattern[j + 1] == '-'
+                            and pattern[j + 2] != ']'):
+                        ranges.append((pattern[j], pattern[j + 2]))
+                        j += 3
+                    else:
+                        chars.append(pattern[j])
+                        j += 1
+
+                if not closed:
+                    # Unterminated [ is a literal [
+                    if ni >= len(name) or name[ni] != '[':
+                        return False
+                    pi += 1
+                    ni += 1
+                else:
+                    if ni >= len(name):
+                        return False
+                    ch = name[ni]
+                    matched = False
+
+                    if literal_bracket and ch == ']':
+                        matched = True
+
+                    if not matched:
+                        for c in chars:
+                            if ch == c:
+                                matched = True
+                                break
+
+                    if not matched:
+                        for lo, hi in ranges:
+                            if lo <= ch <= hi:
+                                matched = True
+                                break
+
+                    if negated:
+                        matched = not matched
+
+                    if not matched:
+                        return False
+
+                    pi = j + 1
+                    ni += 1
+
+            else:
+                if ni >= len(name) or name[ni] != pc:
+                    return False
+                pi += 1
+                ni += 1
+
+        return ni == len(name)
+
+    return _match(0, 0)
+
+
+  glob_match          8/8   clean
+
+----- shlex_split -----
+def shlex_split(s):
+    tokens = []
+    current = []
+    in_single = False
+    in_double = False
+    has_token = False
+    i = 0
+    n = len(s)
+    whitespace = " \t\r\n\f"
+
+    while i < n:
+        c = s[i]
+
+        if in_single:
+            if c == "'":
+                in_single = False
+            else:
+                current.append(c)
+            i += 1
+
+        elif in_double:
+            if c == '"':
+                in_double = False
+                i += 1
+            elif c == '\\':
+                if i + 1 < n:
+                    nxt = s[i + 1]
+                    if nxt in ('\\', '"', '$', '`'):
+                        current.append(nxt)
+                        i += 2
+                    else:
+                        current.append('\\')
+                        current.append(nxt)
+                        i += 2
+                else:
+                    current.append('\\')
+                    i += 1
+            else:
+                current.append(c)
+                i += 1
+
+        else:
+            if c in whitespace:
+                if has_token:
+                    tokens.append(''.join(current))
+                    current = []
+                    has_token = False
+                i += 1
+            elif c == "'":
+                in_single = True
+                has_token = True
+                i += 1
+            elif c == '"':
+                in_double = True
+                has_token = True
+                i += 1
+            elif c == '\\':
+                has_token = True
+                if i + 1 < n:
+                    current.append(s[i + 1])
+                    i += 2
+                else:
+                    current.append('\\')
+                    i += 1
+            else:
+                has_token = True
+                current.append(c)
+                i += 1
+
+    if has_token:
+        tokens.append(''.join(current))
+
+    return tokens
+
+
+  shlex_split         6/7   missed: dq_escapes
+
+----- urljoin -----
+def urljoin_(base, url):
+    def _parse(uri):
+        scheme = None
+        authority = None
+        path = ""
+        query = None
+        fragment = None
+
+        h = uri.find("#")
+        if h != -1:
+            fragment = uri[h + 1:]
+            uri = uri[:h]
+
+        q = uri.find("?")
+        if q != -1:
+            query = uri[q + 1:]
+            uri = uri[:q]
+
+        slash = uri.find("/")
+        colon = uri.find(":")
+        if colon != -1 and (slash == -1 or colon < slash):
+            cand = uri[:colon]
+            if cand and cand[0].isalpha() and all(c.isalnum() or c in "+-." for c in cand):
+                scheme = cand
+                uri = uri[colon + 1:]
+
+        if uri.startswith("//"):
+            uri = uri[2:]
+            s = uri.find("/")
+            if s == -1:
+                authority = uri
+                uri = ""
+            else:
+                authority = uri[:s]
+                uri = uri[s:]
+
+        path = uri
+        return scheme, authority, path, query, fragment
+
+    def _remove_dot_segments(path):
+        out = []
+        while path:
+            if path.startswith("../"):
+                path = path[3:]
+            elif path.startswith("./"):
+                path = path[2:]
+            elif path.startswith("/./"):
+                path = "/" + path[3:]
+            elif path == "/.":
+                path = "/"
+            elif path.startswith("/../"):
+                path = "/" + path[4:]
+                if out:
+                    out.pop()
+            elif path == "/..":
+                path = "/"
+                if out:
+                    out.pop()
+            elif path == ".":
+                path = ""
+            elif path == "..":
+                path = ""
+            else:
+                if path[0] == "/":
+                    nxt = path.find("/", 1)
+                    if nxt == -1:
+                        out.append(path)
+                        path = ""
+                    else:
+                        out.append(path[:nxt])
+                        path = path[nxt:]
+                else:
+                    nxt = path.find("/")
+                    if nxt == -1:
+                        out.append(path)
+                        path = ""
+                    else:
+                        out.append(path[:nxt])
+                        path = path[nxt:]
+        return "".join(out)
+
+    def _merge(b_auth, b_path, r_path):
+        if b_auth is not None and b_path == "":
+            return "/" + r_path
+        idx = b_path.rfind("/")
+        if idx == -1:
+            return r_path
+        return b_path[:idx + 1] + r_path
+
+    def _reconstruct(scheme, authority, path, query, fragment):
+        result = ""
+        if scheme is not None:
+            result += scheme + ":"
+        if authority is not None:
+            result += "//" + authority
+        result += path
+        if query:
+            result += "?" + query
+        if fragment:
+            result += "#" + fragment
+        return result
+
+    b_scheme, b_auth, b_path, b_query, _ = _parse(base)
+    r_scheme, r_auth, r_path, r_query, r_frag = _parse(url)
+
+    # 1. Empty reference → base without fragment
+    if url == "":
+        return _reconstruct(b_scheme, b_auth, b_path, b_query, None)
+
+    # 2. Reference has its own scheme → absolute replacement
+    if r_scheme is not None:
+        return _reconstruct(r_scheme, r_auth, _remove_dot_segments(r_path), r_query, r_frag)
+
+    # 3. No scheme in reference
+    # 3a. Network-path reference (//host/p)
+    if r_auth is not None:
+        return _reconstruct(b_scheme, r_auth, _remove_dot_segments(r_path), r_query, r_frag)
+
+    # 3b. No authority in reference – inherit base authority & scheme
+    if r_path == "":
+        # Query-only or fragment-only reference (empty path)
+        t_path = b_path
+        if r_query is not None:
+            t_query = r_query
+        else:
+            t_query = b_query
+    elif r_path.startswith("/"):
+        # Absolute-path reference
+        t_path = _remove_dot_segments(r_path)
+        t_query = r_query
+    else:
+        # Relative-path reference
+        t_path = _remove_dot_segments(_merge(b_auth, b_path, r_path))
+        t_query = r_query
+
+    return _reconstruct(b_scheme, b_auth, t_path, t_query, r_frag)
+
+
+  urljoin             9/9   clean
+
+----- textwrap -----
+def wrap_(text, width):
+    # Expand tabs to spaces (tabsize=8)
+    expanded = []
+    col = 0
+    for ch in text:
+        if ch == '\t':
+            n = 8 - (col % 8)
+            expanded.append(' ' * n)
+            col += n
+        else:
+            expanded.append(ch)
+            col += 1
+    text = ''.join(expanded)
+
+    # Replace every run of whitespace with a single space
+    parts = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i].isspace():
+            parts.append(' ')
+            while i < n and text[i].isspace():
+                i += 1
+        else:
+            parts.append(text[i])
+            i += 1
+    text = ''.join(parts).strip()
+
+    if not text:
+        return []
+
+    # Split into words, then break each word at hyphens (break_on_hyphens=True)
+    # A hyphen is a break point when it is between two non-hyphen characters.
+    chunks = []
+    for word in text.split(' '):
+        start = 0
+        for j in range(len(word)):
+            if (word[j] == '-'
+                    and 0 < j < len(word) - 1
+                    and word[j + 1] != '-'):
+                chunks.append(word[start:j + 1])
+                start = j + 1
+        if start < len(word):
+            chunks.append(word[start:])
+
+    # Build lines greedily, breaking long chunks (break_long_words=True)
+    lines = []
+    cur = ''
+
+    for chunk in chunks:
+        if not chunk:
+            continue
+
+        if cur:
+            if len(cur) + 1 + len(chunk) <= width:
+                cur += ' ' + chunk
+            else:
+                lines.append(cur)
+                cur = ''
+                # place chunk (possibly broken) on a fresh line
+                while len(chunk) > width:
+                    lines.append(chunk[:width])
+                    chunk = chunk[width:]
+                cur = chunk
+        else:
+            while len(chunk) > width:
+                lines.append(chunk[:width])
+                chunk = chunk[width:]
+            cur = chunk
+
+    if cur:
+        lines.append(cur)
+
+    return lines
+
+
+  textwrap            4/6   missed: collapse, random60
+
+----- csv_rows -----
+def csv_rows(text):
+    rows = []
+    row = []
+    field = []
+    i = 0
+    n = len(text)
+    in_quotes = False
+    field_started = False
+
+    while i < n:
+        ch = text[i]
+
+        if in_quotes:
+            if ch == '"':
+                if i + 1 < n and text[i + 1] == '"':
+                    field.append('"')
+                    i += 2
+                else:
+                    in_quotes = False
+                    i += 1
+            else:
+                field.append(ch)
+                i += 1
+        else:
+            if ch == '"' and not field:
+                in_quotes = True
+                field_started = True
+                i += 1
+            elif ch == ',':
+                row.append(''.join(field))
+                field = []
+                i += 1
+            elif ch == '\r':
+                row.append(''.join(field))
+                rows.append(row)
+                row = []
+                field = []
+                field_started = False
+                if i + 1 < n and text[i + 1] == '\n':
+                    i += 2
+                else:
+                    i += 1
+            elif ch == '\n':
+                row.append(''.join(field))
+                rows.append(row)
+                row = []
+                field = []
+                field_started = False
+                i += 1
+            else:
+                field.append(ch)
+                field_started = True
+                i += 1
+
+    if field or row or field_started:
+        row.append(''.join(field))
+        rows.append(row)
+
+    return rows
+
+
+  csv_rows            7/7   clean
+
+----- add_months -----
+import calendar
+
+def add_months(y, m, d, n):
+    total = (m - 1) + n
+    new_year = y + total // 12
+    new_month = total % 12 + 1
+    new_day = min(d, calendar.monthrange(new_year, new_month)[1])
+    return (new_year, new_month, new_day)
+
+
+  add_months          6/6   clean
+
+----- parse_qsl -----
+def parse_qsl_(qs):
+    def _unquote_plus(s):
+        s = s.replace('+', ' ')
+        result = []
+        i = 0
+        n = len(s)
+        while i < n:
+            if s[i] == '%' and i + 2 < n:
+                bytes_buf = []
+                j = i
+                while j < n and s[j] == '%' and j + 2 < n:
+                    hex_pair = s[j + 1:j + 3]
+                    try:
+                        byte_val = int(hex_pair, 16)
+                    except ValueError:
+                        break
+                    bytes_buf.append(byte_val)
+                    j += 3
+                if bytes_buf:
+                    result.append(bytes(bytes_buf).decode('utf-8', errors='surrogateescape'))
+                    i = j
+                else:
+                    result.append('%')
+                    i += 1
+            else:
+                result.append(s[i])
+                i += 1
+        return ''.join(result)
+
+    pairs = []
+    for component in qs.split('&'):
+        if not component:
+            continue
+        if '=' in component:
+            key, value = component.split('=', 1)
+        else:
+            key, value = component, ''
+        pairs.append((_unquote_plus(key), _unquote_plus(value)))
+    return pairs
+
+
+  parse_qsl           7/7   clean
+
+qwen3.8-flash-next-IQ3_XXS-strata-thinking-medium-run3: 47/50 checks pass (94.0%) | 5/7 tasks fully clean
