@@ -1,0 +1,355 @@
+# code quality -- --thinking --reasoning-effort medium, temperature 0.6, top-p 0.95 (one sample, not reproducible), --max-tokens 32768
+# model : Qwen3.8-Flash-Next Coder IQ1_M (qwen3.8-flash-next-coder-iq1_m)
+# server: Strata v0.1.43 (commit 7695859a) on :8095, as run by switch-model.sh (200K context, both cards, RESIDENT_HEADROOM 10)
+# date  : 2026-10-22T14:03:19+08:00
+
+
+=== qwen3.8-flash-next-coder-IQ1_M-strata-thinking-medium ===
+
+----- glob_match -----
+def glob_match(pattern, name):
+    def _match(pat, pi, s, si):
+        while pi < len(pat):
+            c = pat[pi]
+            if c == '*':
+                while pi < len(pat) and pat[pi] == '*':
+                    pi += 1
+                if pi == len(pat):
+                    return True
+                for si2 in range(si, len(s) + 1):
+                    if _match(pat, pi, s, si2):
+                        return True
+                return False
+            elif c == '?':
+                if si >= len(s):
+                    return False
+                pi += 1
+                si += 1
+            elif c == '[':
+                j = pi + 1
+                negate = False
+                if j < len(pat) and pat[j] == '!':
+                    negate = True
+                    j += 1
+                lit_rbracket = False
+                if j < len(pat) and pat[j] == ']':
+                    lit_rbracket = True
+                    j += 1
+                close = -1
+                while j < len(pat):
+                    if pat[j] == ']':
+                        close = j
+                        break
+                    j += 1
+                if close == -1:
+                    if si >= len(s) or s[si] != '[':
+                        return False
+                    pi += 1
+                    si += 1
+                    continue
+                char_set = set()
+                if lit_rbracket:
+                    char_set.add(']')
+                k = pi + 1
+                if negate:
+                    k += 1
+                if lit_rbracket:
+                    k += 1
+                while k < close:
+                    if k + 2 < close and pat[k + 1] == '-':
+                        lo, hi = pat[k], pat[k + 2]
+                        if ord(lo) <= ord(hi):
+                            for ci in range(ord(lo), ord(hi) + 1):
+                                char_set.add(chr(ci))
+                        k += 3
+                    else:
+                        char_set.add(pat[k])
+                        k += 1
+                if si >= len(s):
+                    return False
+                in_set = s[si] in char_set
+                if negate:
+                    in_set = not in_set
+                if not in_set:
+                    return False
+                pi = close + 1
+                si += 1
+            else:
+                if si >= len(s) or s[si] != c:
+                    return False
+                pi += 1
+                si += 1
+        return si == len(s)
+    return _match(pattern, 0, name, 0)
+
+
+  glob_match          8/8   clean
+
+----- shlex_split -----
+def shlex_split(s):
+    tokens = []
+    current = []
+    i = 0
+    in_token = False
+
+    while i < len(s):
+        c = s[i]
+
+        # --- whitespace: end current token ---
+        if c in ' \t\n\r':
+            if in_token:
+                tokens.append(''.join(current))
+                current = []
+                in_token = False
+            i += 1
+            continue
+
+        # --- single-quoted run: everything literal, no escapes ---
+        if c == "'":
+            in_token = True
+            i += 1
+            while i < len(s):
+                if s[i] == "'":
+                    i += 1
+                    break
+                current.append(s[i])
+                i += 1
+            continue
+
+        # --- double-quoted run ---
+        if c == '"':
+            in_token = True
+            i += 1
+            while i < len(s):
+                if s[i] == '"':
+                    i += 1
+                    break
+                if s[i] == '\\':
+                    if i + 1 < len(s):
+                        nxt = s[i + 1]
+                        if nxt in ('\\', '"', '$', '`'):
+                            current.append(nxt)
+                            i += 2
+                            continue
+                        else:
+                            current.append('\\')
+                            i += 1
+                            continue
+                    else:
+                        current.append('\\')
+                        i += 1
+                        continue
+                current.append(s[i])
+                i += 1
+            continue
+
+        # --- backslash outside quotes: escapes next char ---
+        if c == '\\':
+            in_token = True
+            if i + 1 < len(s):
+                current.append(s[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+
+        # --- plain character ---
+        in_token = True
+        current.append(c)
+        i += 1
+
+    if in_token:
+        tokens.append(''.join(current))
+
+    return tokens
+
+
+  shlex_split         6/7   missed: dq_escapes
+
+----- urljoin -----
+
+
+  urljoin             0/9   missed: absolute, netloc, abs_path, rel_path, dotdot, empty, query, fragment, dot_only
+
+----- textwrap -----
+def wrap_(text, width):
+    # Preprocessing: expand tabs, replace/collapse all whitespace, strip
+    text = text.expandtabs()
+    text = ' '.join(text.split())
+
+    if not text or width <= 0:
+        return []
+
+    # Split into words, then split each word on hyphens (hyphen stays with left part)
+    chunks = []
+    for word in text.split(' '):
+        current = ''
+        for c in word:
+            current += c
+            if c == '-':
+                chunks.append(current)
+                current = ''
+        if current:
+            chunks.append(current)
+
+    if not chunks:
+        return []
+
+    # Greedy fill
+    lines = []
+    curr_line = []
+    curr_len = 0
+
+    for chunk in chunks:
+        if len(chunk) > width:
+            pieces = [chunk[i:i + width] for i in range(0, len(chunk), width)]
+            for j, piece in enumerate(pieces):
+                space_len = 1 if (curr_line and j == 0) else 0
+                if curr_len + space_len + len(piece) <= width:
+                    curr_line.append(piece)
+                    curr_len += space_len + len(piece)
+                else:
+                    if curr_line:
+                        lines.append(' '.join(curr_line))
+                    curr_line = [piece]
+                    curr_len = len(piece)
+        else:
+            space_len = 1 if curr_line else 0
+            if curr_len + space_len + len(chunk) <= width:
+                curr_line.append(chunk)
+                curr_len += space_len + len(chunk)
+            else:
+                if curr_line:
+                    lines.append(' '.join(curr_line))
+                curr_line = [chunk]
+                curr_len = len(chunk)
+
+    if curr_line:
+        lines.append(' '.join(curr_line))
+
+    return lines
+
+
+  textwrap            4/6   missed: collapse, random60
+
+----- csv_rows -----
+def csv_rows(text):
+    rows = []
+    row = []
+    field = []
+    in_quotes = False
+    last_was_newline = False
+    i = 0
+    n = len(text)
+
+    while i < n:
+        c = text[i]
+        if in_quotes:
+            if c == '"':
+                if i + 1 < n and text[i + 1] == '"':
+                    field.append('"')
+                    i += 2
+                    continue
+                else:
+                    in_quotes = False
+                    i += 1
+                    continue
+            else:
+                field.append(c)
+                i += 1
+        else:
+            if c == '"':
+                in_quotes = True
+                i += 1
+                last_was_newline = False
+            elif c == ',':
+                row.append(''.join(field))
+                field = []
+                i += 1
+                last_was_newline = False
+            elif c == '\r':
+                if i + 1 < n and text[i + 1] == '\n':
+                    i += 2
+                else:
+                    i += 1
+                row.append(''.join(field))
+                rows.append(row)
+                row = []
+                field = []
+                last_was_newline = True
+            elif c == '\n':
+                row.append(''.join(field))
+                rows.append(row)
+                row = []
+                field = []
+                last_was_newline = True
+            else:
+                field.append(c)
+                i += 1
+                last_was_newline = False
+
+    if not last_was_newline and (field or row or n > 0):
+        row.append(''.join(field))
+        rows.append(row)
+
+    return rows
+
+
+  csv_rows            0/7   DID NOT RUN — timeout
+
+----- add_months -----
+def add_months(y, m, d, n):
+    def is_leap(year):
+        return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+
+    def days_in_month(year, month):
+        if month == 2:
+            return 29 if is_leap(year) else 28
+        if month in (1, 3, 5, 7, 8, 10, 12):
+            return 31
+        return 30
+
+    total = (m - 1) + n
+    new_y = y + total // 12
+    new_m = total % 12 + 1
+    new_d = min(d, days_in_month(new_y, new_m))
+    return (new_y, new_m, new_d)
+
+
+  add_months          6/6   clean
+
+----- parse_qsl -----
+def parse_qsl_(qs):
+    def _unquote_plus(s):
+        result = []
+        i = 0
+        n = len(s)
+        while i < n:
+            if s[i] == '+':
+                result.append(' ')
+                i += 1
+            elif s[i] == '%' and i + 2 < n:
+                hex_pair = s[i+1:i+3]
+                try:
+                    result.append(chr(int(hex_pair, 16)))
+                    i += 3
+                except ValueError:
+                    result.append('%')
+                    i += 1
+            else:
+                result.append(s[i])
+                i += 1
+        return ''.join(result)
+
+    pairs = []
+    for part in qs.split('&'):
+        if not part:
+            continue
+        key, _, value = part.partition('=')
+        pairs.append((_unquote_plus(key), _unquote_plus(value)))
+    return pairs
+
+
+  parse_qsl           7/7   clean
+
+qwen3.8-flash-next-coder-IQ1_M-strata-thinking-medium: 31/50 checks pass (62.0%) | 3/7 tasks fully clean

@@ -1,0 +1,652 @@
+# code quality -- differential vs stdlib, 50 checks, temperature 0.0, enable_thinking false
+# model : Qwen3.8-Flash-Next Coder IQ1_M (qwen3.8-flash-next-coder-iq1_m)
+# server: Strata v0.1.43 (commit 7695859a) on :8095, as run by switch-model.sh (200K context, both cards, RESIDENT_HEADROOM 10)
+# date  : 2026-10-22T14:02:39+08:00
+
+
+=== qwen3.8-flash-next-coder-IQ1_M-strata ===
+
+----- glob_match -----
+def glob_match(pattern, name):
+    """
+    Implement fnmatch.fnmatchcase semantics from scratch.
+    Supports:
+      * - matches any sequence of characters (including empty)
+      ? - matches exactly one character
+      [abc] - matches any character in the set
+      [a-z] - matches any character in the range
+      [!abc] - matches any character NOT in the set
+      ] immediately after [ or [! is treated as literal
+      Unterminated [ is treated as literal [
+    Match is anchored to the whole string.
+    """
+    def match(p_idx, s_idx):
+        # If we've consumed all of pattern, check if we've consumed all of string
+        if p_idx == len(pattern):
+            return s_idx == len(name)
+        
+        p_char = pattern[p_idx]
+        
+        if p_char == '*':
+            # Try matching zero or more characters
+            # Skip consecutive * in pattern
+            while p_idx < len(pattern) and pattern[p_idx] == '*':
+                p_idx += 1
+            if p_idx == len(pattern):
+                return True
+            # Try all possible splits
+            for i in range(s_idx, len(name) + 1):
+                if match(p_idx, i):
+                    return True
+            return False
+        
+        elif p_char == '?':
+            if s_idx >= len(name):
+                return False
+            return match(p_idx + 1, s_idx + 1)
+        
+        elif p_char == '[':
+            # Parse the character class
+            j = p_idx + 1
+            negated = False
+            if j < len(pattern) and pattern[j] == '!':
+                negated = True
+                j += 1
+            
+            # Handle ] as first char in set (literal)
+            first_bracket = True
+            chars = []
+            ranges = []
+            
+            while j < len(pattern):
+                if pattern[j] == ']' and not first_bracket:
+                    # End of character class
+                    break
+                first_bracket = False
+                
+                if j + 2 < len(pattern) and pattern[j + 1] == '-' and pattern[j + 2] != ']':
+                    # Range
+                    start_char = pattern[j]
+                    end_char = pattern[j + 2]
+                    ranges.append((start_char, end_char))
+                    j += 3
+                else:
+                    chars.append(pattern[j])
+                    j += 1
+            
+            if j >= len(pattern):
+                # Unterminated [ - treat as literal
+                if s_idx >= len(name):
+                    return False
+                if name[s_idx] != '[':
+                    return False
+                return match(p_idx + 1, s_idx + 1)
+            
+            # j points to the closing ]
+            # Check if current char matches the set
+            if s_idx >= len(name):
+                return False
+            
+            current_char = name[s_idx]
+            in_set = False
+            
+            for c in chars:
+                if current_char == c:
+                    in_set = True
+                    break
+            
+            if not in_set:
+                for start, end in ranges:
+                    if start <= current_char <= end:
+                        in_set = True
+                        break
+            
+            if negated:
+                in_set = not in_set
+            
+            if in_set:
+                return match(p_idx + (j - p_idx + 1), s_idx + 1)
+            else:
+                return False
+        
+        else:
+            # Literal character
+            if s_idx >= len(name):
+                return False
+            if name[s_idx] != p_char:
+                return False
+            return match(p_idx + 1, s_idx + 1)
+    
+    return match(0, 0)
+
+
+  glob_match          8/8   clean
+
+----- shlex_split -----
+def shlex_split(s):
+    """
+    Reproduce shlex.split(s) in POSIX mode from scratch.
+    
+    Rules:
+    - Whitespace splits tokens.
+    - Single quotes: everything inside is literal, no escapes.
+    - Double quotes: backslash escapes only \\, ", $, `; otherwise backslash is literal.
+    - Backslash outside quotes: escapes the next character (makes it literal).
+    - Adjacent quoted and unquoted runs concatenate into ONE token.
+    """
+    tokens = []
+    current_token = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+    n = len(s)
+    
+    while i < n:
+        c = s[i]
+        
+        if c == ' ' or c == '\t' or c == '\n' or c == '\r':
+            # Whitespace: end current token if any
+            if current_token:
+                tokens.append(''.join(current_token))
+                current_token = []
+            i += 1
+            continue
+        
+        if c == "'":
+            # Single quote: toggle single quote mode
+            if not in_double_quote:
+                in_single_quote = not in_single_quote
+                i += 1
+                continue
+            else:
+                # Inside double quote, single quote is literal
+                current_token.append(c)
+                i += 1
+                continue
+        
+        if c == '"':
+            # Double quote: toggle double quote mode
+            if not in_single_quote:
+                in_double_quote = not in_double_quote
+                i += 1
+                continue
+            else:
+                # Inside single quote, double quote is literal
+                current_token.append(c)
+                i += 1
+                continue
+        
+        if c == '\\':
+            # Backslash handling
+            if in_single_quote:
+                # Inside single quotes, backslash is literal
+                current_token.append(c)
+                i += 1
+                continue
+            elif in_double_quote:
+                # Inside double quotes: backslash escapes only \\, ", $, `
+                if i + 1 < n:
+                    next_c = s[i + 1]
+                    if next_c == '\\' or next_c == '"' or next_c == '$' or next_c == '`':
+                        current_token.append(next_c)
+                        i += 2
+                        continue
+                    else:
+                        # Backslash is literal
+                        current_token.append(c)
+                        i += 1
+                        continue
+                else:
+                    # Backslash at end of string inside double quotes
+                    current_token.append(c)
+                    i += 1
+                    continue
+            else:
+                # Outside quotes: backslash escapes next character
+                if i + 1 < n:
+                    current_token.append(s[i + 1])
+                    i += 2
+                    continue
+                else:
+                    # Backslash at end of string
+                    current_token.append(c)
+                    i += 1
+                    continue
+        
+        # Regular character
+        current_token.append(c)
+        i += 1
+    
+    # Don't forget the last token
+    if current_token:
+        tokens.append(''.join(current_token))
+    
+    return tokens
+
+
+  shlex_split         3/7   missed: single_q, double_q, dq_escapes, mixed
+
+----- urljoin -----
+def urljoin_(base, url):
+    """
+    Reproduce urllib.parse.urljoin from scratch, implementing RFC 3986 reference resolution.
+    """
+    def parse_url(s):
+        """Parse a URL string into (scheme, netloc, path, query, fragment)."""
+        if not s:
+            return ('', '', '', '', '')
+        
+        # Extract fragment
+        if '#' in s:
+            idx = s.index('#')
+            fragment = s[idx + 1:]
+            s = s[:idx]
+        else:
+            fragment = ''
+        
+        # Extract query
+        if '?' in s:
+            idx = s.index('?')
+            query = s[idx + 1:]
+            s = s[:idx]
+        else:
+            query = ''
+        
+        # Extract scheme
+        scheme = ''
+        if ':' in s:
+            colon_idx = s.index(':')
+            # Check if the part before colon is a valid scheme (letters, digits, ., -, _)
+            potential_scheme = s[:colon_idx]
+            if potential_scheme and all(c.isalnum() or c in '.-_' for c in potential_scheme) and potential_scheme[0].isalpha():
+                scheme = potential_scheme
+                s = s[colon_idx + 1:]
+            else:
+                # Not a valid scheme, treat as path
+                pass
+        
+        # Extract netloc
+        netloc = ''
+        if s.startswith('//'):
+            # Find end of netloc: next / or end of string
+            rest = s[2:]
+            slash_idx = rest.find('/')
+            if slash_idx == -1:
+                netloc = rest
+                path = ''
+            else:
+                netloc = rest[:slash_idx]
+                path = rest[slash_idx:]
+        elif scheme:
+            # After scheme, check for //
+            if s.startswith('//'):
+                rest = s[2:]
+                slash_idx = rest.find('/')
+                if slash_idx == -1:
+                    netloc = rest
+                    path = ''
+                else:
+                    netloc = rest[:slash_idx]
+                    path = rest[slash_idx:]
+            else:
+                netloc = ''
+                path = s
+        else:
+            netloc = ''
+            path = s
+        
+        return (scheme, netloc, path, query, fragment)
+    
+    def unparse_url(scheme, netloc, path, query, fragment):
+        """Reconstruct a URL from components."""
+        result = ''
+        if scheme:
+            result += scheme + ':'
+        if netloc:
+            result += '//' + netloc
+        result += path
+        if query:
+            result += '?' + query
+        if fragment:
+            result += '#' + fragment
+        return result
+    
+    def normalize_path(path):
+        """Normalize path with . and .. components."""
+        if not path:
+            return path
+        
+        # Split into components
+        # Preserve leading slash
+        leading_slash = path.startswith('/')
+        trailing_slash = path.endswith('/')
+        
+        parts = path.split('/')
+        
+        # Remove empty parts that result from leading/trailing slashes
+        # But we need to track them
+        new_parts = []
+        for part in parts:
+            if part == '':
+                continue
+            elif part == '.':
+                continue
+            elif part == '..':
+                if new_parts:
+                    new_parts.pop()
+                else:
+                    if not leading_slash:
+                        new_parts.append('..')
+            else:
+                new_parts.append(part)
+        
+        # Reconstruct
+        if leading_slash:
+            result = '/' + '/'.join(new_parts)
+        else:
+            result = '/'.join(new_parts)
+        
+        if trailing_slash and result and not result.endswith('/'):
+            result += '/'
+        elif trailing_slash and not result:
+            result = '/'
+        
+        return result
+    
+    def join_paths(base_path, url_path):
+        """Join two paths according to RFC 3986."""
+        if url_path.startswith('/'):
+            return url_path
+        else:
+            # Remove last component from base_path
+            if '/' in base_path:
+                idx = base_path.rfind('/')
+                return base_path[:idx + 1] + url_path
+            else:
+                return url_path
+    
+    # Parse base and url
+    base_scheme, base_netloc, base_path, base_query, base_fragment = parse_url(base)
+    url_scheme, url_netloc, url_path, url_query, url_fragment = parse_url(url)
+    
+    # RFC 3986 resolution rules
+    if url_scheme:
+        # Absolute URL: use url as-is
+        result_scheme = url_scheme
+        result_netloc = url_netloc
+        result_path = normalize_path(url_path)
+        result_query = url_query
+        result_fragment = url_fragment
+    elif url_netloc:
+        # Protocol-relative URL
+        result_scheme = base_scheme
+        result_netloc = url_netloc
+        result_path = normalize_path(url_path)
+        result_query = url_query
+        result_fragment = url_fragment
+    elif url_path:
+        # Path-based reference
+        result_scheme = base_scheme
+        result_netloc = base_netloc
+        result_path = normalize_path(join_paths(base_path, url_path))
+        result_query = url_query
+        result_fragment = url_fragment
+    elif url_query:
+        # Query-only reference
+        result_scheme = base_scheme
+        result_netloc = base_netloc
+        result_path = base_path
+        result_query = url_query
+        result_fragment = url_fragment
+    elif url_fragment:
+        # Fragment-only reference
+        result_scheme = base_scheme
+        result_netloc = base_netloc
+        result_path = base_path
+        result_query = base_query
+        result_fragment = url_fragment
+    else:
+        # Empty reference: return base without fragment
+        result_scheme = base_scheme
+        result_netloc = base_netloc
+        result_path = base_path
+        result_query = base_query
+        result_fragment = ''
+    
+    return unparse_url(result_scheme, result_netloc, result_path, result_query, result_fragment)
+
+
+  urljoin             8/9   missed: dot_only
+
+----- textwrap -----
+def wrap_(text, width):
+    if width <= 0:
+        raise ValueError("width must be positive")
+    
+    # Expand tabs to spaces (default tabsize=8)
+    expanded = text.expandtabs(8)
+    
+    # Collapse whitespace: split on any whitespace and rejoin with single spaces
+    # This handles multiple spaces, newlines, etc.
+    words = expanded.split()
+    
+    if not words:
+        return []
+    
+    lines = []
+    current_line = ""
+    
+    for word in words:
+        if not current_line:
+            # Start a new line with this word
+            if len(word) <= width:
+                current_line = word
+            else:
+                # Word is longer than width, need to break it
+                while len(word) > width:
+                    lines.append(word[:width])
+                    word = word[width:]
+                if word:
+                    current_line = word
+                else:
+                    lines.append("")
+                    current_line = ""
+        else:
+            # Try to add word to current line
+            if len(current_line) + 1 + len(word) <= width:
+                current_line += " " + word
+            else:
+                # Current line is full, push it and start new line
+                lines.append(current_line)
+                current_line = ""
+                # Now handle the word on a fresh line
+                if len(word) <= width:
+                    current_line = word
+                else:
+                    while len(word) > width:
+                        lines.append(word[:width])
+                        word = word[width:]
+                    if word:
+                        current_line = word
+                    else:
+                        lines.append("")
+                        current_line = ""
+    
+    if current_line:
+        lines.append(current_line)
+    
+    return lines
+
+
+  textwrap            4/6   missed: collapse, random60
+
+----- csv_rows -----
+def csv_rows(text):
+    rows = []
+    current_row = []
+    current_field = []
+    in_quotes = False
+    i = 0
+    n = len(text)
+    
+    while i < n:
+        char = text[i]
+        
+        if in_quotes:
+            if char == '"':
+                # Check if next char is also a quote (escaped quote)
+                if i + 1 < n and text[i + 1] == '"':
+                    current_field.append('"')
+                    i += 2
+                else:
+                    # End of quoted field
+                    in_quotes = False
+                    i += 1
+            else:
+                current_field.append(char)
+                i += 1
+        else:
+            if char == '"':
+                # Start of quoted field
+                in_quotes = True
+                i += 1
+            elif char == ',':
+                # Field separator
+                current_row.append(''.join(current_field))
+                current_field = []
+                i += 1
+            elif char == '\r':
+                # Handle CRLF or CR
+                if i + 1 < n and text[i + 1] == '\n':
+                    # CRLF
+                    current_row.append(''.join(current_field))
+                    rows.append(current_row)
+                    current_row = []
+                    current_field = []
+                    i += 2
+                else:
+                    # Just CR
+                    current_row.append(''.join(current_field))
+                    rows.append(current_row)
+                    current_row = []
+                    current_field = []
+                    i += 1
+            elif char == '\n':
+                # LF line ending
+                current_row.append(''.join(current_field))
+                rows.append(current_row)
+                current_row = []
+                current_field = []
+                i += 1
+            else:
+                current_field.append(char)
+                i += 1
+    
+    # Handle last field/row if text doesn't end with newline
+    if current_field or current_row:
+        current_row.append(''.join(current_field))
+        rows.append(current_row)
+    
+    return rows
+
+
+  csv_rows            7/7   clean
+
+----- add_months -----
+def add_months(y, m, d, n):
+    """
+    Add n calendar months to the date (y, m, d).
+    If the day does not exist in the target month, clamp to the last day of that month.
+    n may be negative.
+    Returns a tuple (year, month, day).
+    """
+    # Calculate total months from a reference point
+    total_months = (y * 12 + (m - 1)) + n
+    
+    # New year and month
+    new_y = total_months // 12
+    new_m = total_months % 12 + 1
+    
+    # Determine the last day of the new month
+    def days_in_month(year, month):
+        if month == 1: return 31
+        if month == 2:
+            # Leap year check
+            if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0):
+                return 29
+            else:
+                return 28
+        if month == 3: return 31
+        if month == 4: return 30
+        if month == 5: return 31
+        if month == 6: return 30
+        if month == 7: return 31
+        if month == 8: return 31
+        if month == 9: return 30
+        if month == 10: return 31
+        if month == 11: return 30
+        if month == 12: return 31
+    
+    max_day = days_in_month(new_y, new_m)
+    new_d = min(d, max_day)
+    
+    return (new_y, new_m, new_d)
+
+
+  add_months          6/6   clean
+
+----- parse_qsl -----
+def parse_qsl_(qs):
+    """
+    Reproduce urllib.parse.parse_qsl(qs, keep_blank_values=True) from scratch.
+    - Split on '&' only.
+    - Each component: if it contains '=', split on first '=' into key and value.
+      If no '=', key is the whole component and value is ''.
+    - Decode percent-escapes and '+' as space in both key and value.
+    - Keep blank values (i.e., don't skip pairs where value is empty).
+    - Return list of (key, value) tuples in order.
+    """
+    def unquote_plus(s):
+        """Decode percent-escapes and '+' as space."""
+        result = []
+        i = 0
+        while i < len(s):
+            c = s[i]
+            if c == '+':
+                result.append(' ')
+                i += 1
+            elif c == '%' and i + 2 < len(s):
+                hex_str = s[i+1:i+3]
+                try:
+                    byte_val = int(hex_str, 16)
+                    result.append(chr(byte_val))
+                    i += 3
+                except ValueError:
+                    result.append(c)
+                    i += 1
+            else:
+                result.append(c)
+                i += 1
+        return ''.join(result)
+
+    if not qs:
+        return []
+
+    pairs = []
+    components = qs.split('&')
+    for component in components:
+        if '=' in component:
+            key, value = component.split('=', 1)
+            key_decoded = unquote_plus(key)
+            value_decoded = unquote_plus(value)
+            pairs.append((key_decoded, value_decoded))
+        else:
+            key_decoded = unquote_plus(component)
+            pairs.append((key_decoded, ''))
+
+    return pairs
+
+
+  parse_qsl           6/7   missed: empty
+
+qwen3.8-flash-next-coder-IQ1_M-strata: 42/50 checks pass (84.0%) | 3/7 tasks fully clean

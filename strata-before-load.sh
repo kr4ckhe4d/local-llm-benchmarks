@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Strata's "before_load" hook: unload whatever the llama.cpp router has loaded,
-# so Strata gets both cards. Strata (IQ3_XXS) fills ~32 GB + ~16 GB; with a
+# so Strata gets both cards. Strata (Coder IQ1_M) fills most of both cards; with a
 # router model still resident its expert cache would come up short or fail.
 #
-# Wired in ~/code/Strata/strata-iq3_xxs.json:
+# Wired in ~/code/Strata/strata-coder-iq1_m.json:
 #   "before_load": "/home/nipuna/code/local-llm-benchmarks/strata-before-load.sh"
 #   "idle_unload_s": 900
 # The other direction (Strata unloads before a router model loads) is done by

@@ -9,7 +9,65 @@ Anthropic APIs, so Claude Code talks to it directly.
 Tried 2026-10-10 on the two cards (R9700 + 9070 XT), Strata 0.1.41 (commit
 `fb58e0d`), engine compiled by `setup.sh` against the system ROCm 7.2.4.
 
-## IQ3_XXS — the one to use
+## Coder IQ1_M — in use since 2026-10-22
+
+**Why the switch:** IQ3_XXS logged the desktop out twice on 2026-10-22. The
+kernel OOM killer took `kwin_wayland` (13:13 and 13:30). `--resident-experts`
+sizes its RAM copy from `MemAvailable` at start, minus
+`STRATA_RESIDENT_HEADROOM_GIB` (default 4). It held 15.8 GiB of experts,
+pageable (`STRATA_RESIDENT_PIN=0`), so most of it went to zram. With ~8 GB of
+GTT and Blender and Chrome on top, the 30 GB box ran out. The OOM killer chose
+`strata` first but could not reap it (GPU-mapped memory), so it went on
+through Chrome, Blender and plasmashell to kwin.
+
+[Coder](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF)
+keeps 256 of each layer's 512 experts, stored like IQ3_S. "IQ1_M" is 1.89
+bits per *original* parameter, not the storage format. Shard 2 is the same
+file as IQ3_XXS's, so setup hard-linked it: deleting `models/IQ3_XXS` does
+not delete the Coder's copy.
+
+```bash
+./setup.sh --setup --yes --backend hip --family coder --model IQ1_M --gpus 1,0 \
+  --context 204800 --port 8095 --host 0.0.0.0 --api-key <key> \
+  --data-dir /mnt/fast/strata-data --no-start
+```
+
+Then re-apply the args that setup drops in `strata-coder-iq1_m.json`:
+`--pipeline-windows 2`, `STRATA_STAGE_TRIM=1`, `before_load`,
+`idle_unload_s`, `lazy_load`, plus **`STRATA_RESIDENT_HEADROOM_GIB=10`**.
+`layer_split` stays `auto` (layers 0-26 / 27-47); the 33 was tuned for
+IQ3_XXS. `switch-model.sh` starts `run-coder-iq1_m.sh`;
+`STRATA_RUN=~/code/Strata/run-iq3_xxs.sh` goes back.
+
+| | IQ3_XXS | Coder IQ1_M |
+|---|---|---|
+| Experts on the cards | 22,143 of 24,576 | 11,951 of 12,288 |
+| Decode hit rate | 97.1-98.7% | 98.3-99.9% |
+| Experts in RAM / Strata RSS | 15.8 GiB / OOM | 7.1 GiB / 10.6 GB |
+| RAM still free, model loaded | none | 16.2 GB at the lowest |
+| First load | 1-3 min | ~20 s |
+| Short code answer | 102.1 tok/s (94.8 tuned, long) | 122.6-132.8 tok/s |
+| Long answer, thinking medium | — | 96-104 tok/s over 10-17K tokens |
+| Code quality, thinking off | **43/50**, 4/7 clean | 42/50, 3/7 clean |
+| Code quality, thinking medium | **47/50**, 5/7 clean | 31/50, 3/7 clean |
+
+Code quality results are in
+[`qwen3.8-flash-next-coder-IQ1_M-strata`](benchmarks/qwen3.8-flash-next-coder-IQ1_M-strata).
+
+* **Thinking off is a wash.** It gets `glob_match` 8/8, where IQ3_XXS got
+  4/8. It loses 3 on `shlex_split` quoting, and one each on `urljoin`
+  (`dot_only`) and `parse_qsl` (`empty`).
+* **The medium row's 16 lost checks are two zeros.** `csv_rows` forgot
+  `i += 1` in its `\n` branch and hit the 30 s exec timeout. `urljoin` came
+  back with no code at all. Three replays of the same `urljoin` prompt all
+  returned fenced code after 11-15K thinking tokens, so that zero did not
+  reproduce. One sample at temperature 0.6, like IQ3_XXS's 47/50, so the
+  gap is noisier than it looks. The other five tasks match IQ3_XXS's medium
+  run check for check.
+* It thinks longer at medium than IQ3_XXS did: 1.2-17K tokens per task, 9
+  minutes for the suite against 7.
+
+## IQ3_XXS — best scores, but it OOMs the 30 GB box
 
 **Verdict: kept.** Same prompt and settings as the Q2_0 test below, and the
 output was "day and night, heaps better": a ginger cat crossing a farm fence
@@ -90,10 +148,10 @@ Results in
 
 The llama.cpp router cannot hold Strata: it only spawns `llama-server`
 children and talks to them over a command pipe. So Strata runs next to it on
-port 8095, and the two take turns on the cards (Strata IQ3_XXS fills ~32 + ~16
-GB; nothing else fits beside it):
+port 8095, and the two take turns on the cards (Strata fills most of both
+cards; nothing else fits beside it):
 
-* **Strata to router:** `"idle_unload_s": 900` in `strata-iq3_xxs.json`
+* **Strata to router:** `"idle_unload_s": 900` in `strata-coder-iq1_m.json`
   unloads Strata after 15 idle minutes, the same as the router's
   `--sleep-idle-seconds`.
 * **Router to Strata:** `"before_load":
