@@ -55,34 +55,31 @@ MODELS_MAX=1             # MoE presets take 19-43 GB of the 48.9 across both car
 SLEEP_IDLE="${SLEEP_IDLE:-900}"
 
 declare -A MODEL_FILE=(
-  [gpt-oss-20b]="gpt-oss-20b-mxfp4.gguf"
-  [qwen3.6]="Qwen3.6-35B-A3B-UD-Q6_K.gguf"
   [qwen3.8]="Qwen3.8-27B-UD-Q6_K.gguf"
   [qwen3.8-mtp]="Qwen3.8-27B-UD-Q6_K.gguf"   # kept for old commands; = qwen3.8
   [qwen3.8-q8]="Qwen3.8-27B-Q8_0.gguf"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored-Q8_0.gguf"
+  [gemma4-12b]="gemma-4-12B-it-Q8_0.gguf"
 )
 
 declare -A MODEL_LABEL=(
-  [gpt-oss-20b]="GPT-OSS-20B"
-  [qwen3.6]="Qwen3.6-35B-A3B"
   [qwen3.8]="Qwen3.8-27B"
   [qwen3.8-mtp]="Qwen3.8-27B +MTP"
   [qwen3.8-q8]="Qwen3.8-27B Q8_0 +MTP"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored"
+  [gemma4-12b]="Gemma 4-12B Q8_0 +vision +MTP"
 )
 
 # Which llama.cpp build to serve each model with. Measured, not guessed.
 declare -A MODEL_BACKEND=(
-  [gpt-oss-20b]="build"          # was build-vulkan; see README — Vulkan retired
-  [qwen3.6]="build"              # UD-Q6_K since 2026-10-07: ROCm
   [qwen3.8]="build"              # UD-Q6_K + MTP since 2026-10-07: ROCm
   [qwen3.8-mtp]="build"          # UD-Q6_K + MTP since 2026-10-07: ROCm
   [qwen3.8-q8]="build"           # Q8_0 + MTP: ROCm
   [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
   [qwen3.5-9b-uncensored]="build" # Q8_0: ROCm
+  [gemma4-12b]="build"           # Q8_0 + mmproj + MTP: ROCm
 )
 
 # Kept as a hook, now empty. Every model runs on build/ (ROCm) — the Vulkan
@@ -118,21 +115,6 @@ declare -A CTX_TOKENS=(
 # VRAM", describe the single 16 GB card. models-preset.ini holds the measured
 # before/after for each config and is the reference; this table mirrors it.
 declare -A CONFIG=(
-  # GPT-OSS-20B — native 131072, and that is already YaRN-stretched 32x from a
-  # 4096 base (see gpt-oss.rope.scaling.* in the GGUF). 128k is its ceiling.
-  # Pinned to the R9700 (-dev ROCm1, llama.cpp's name for it) since 2026-10-06:
-  # the auto split across both cards cost 10% (132.9 vs 147.1 tok/s).
-  ["gpt-oss-20b:32k"]="-dev ROCm1"
-  ["gpt-oss-20b:128k"]="-dev ROCm1"
-
-  # Qwen3.6-35B-A3B — hybrid attention, 40 layers, 10 with KV. Native 262144.
-  # Sampling and a 4096 reasoning budget since 2026-09-26: with neither, a 128k
-  # chat looped an eight-line checklist in its thinking until max_tokens.
-  # presence-penalty 1.5 is Qwen's own thinking-mode recommendation.
-  ["qwen3.6:32k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 1.5 --reasoning-budget 4096"
-  ["qwen3.6:128k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 1.5 --reasoning-budget 4096"
-  ["qwen3.6:256k"]="-ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 1.5 --reasoning-budget 4096"
-
   # Qwen3.8-27B — DENSE 27B (no -ncmoe), hybrid attention, 64 layers, 16 with
   # KV. Native 262144, but this card cannot reach it: 4 KV heads x 256 across 16
   # layers costs 34,816 B/token at q8_0, which is 2.7x Qwen3-Coder-Next. The
@@ -202,6 +184,13 @@ declare -A CONFIG=(
   ["qwen3.5-9b-uncensored:128k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
   ["qwen3.5-9b-uncensored:256k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
+  # Gemma 4-12B — DENSE 12B, multimodal (image + experimental audio through the
+  # mmproj), native 262144. MTP drafter is a separate file, so it needs -md as
+  # well as --spec-type. Pinned to the R9700: 18.0 GB at 128k, 19.4 GB at 256k.
+  # 101-114 tok/s with MTP (2026-10-28). Mirrors gemma4-12B-q8-vision-256k.
+  ["gemma4-12b:128k"]="--mmproj models/mmproj-gemma-4-12B-it-BF16.gguf -md models/mtp-gemma-4-12B-it-Q8_0.gguf --spec-type draft-mtp -dev ROCm1 --reasoning-budget 1024 --repeat-penalty 1.05"
+  ["gemma4-12b:256k"]="--mmproj models/mmproj-gemma-4-12B-it-BF16.gguf -md models/mtp-gemma-4-12B-it-Q8_0.gguf --spec-type draft-mtp -dev ROCm1 --reasoning-budget 1024 --repeat-penalty 1.05"
+
 
 
 )
@@ -210,9 +199,7 @@ declare -A CONFIG=(
 # model's native range. If a beyond-native context is ever re-added to
 # CTX_TOKENS/CONFIG, this ensures it gets RoPE scaling rather than silently
 # running out of trained range and emitting garbage.
-declare -A YARN=(
-  [qwen3.6]="--rope-scaling yarn --rope-scale 4 --yarn-orig-ctx 262144"
-)
+declare -A YARN=()
 
 usage() {
   cat <<USAGE
@@ -227,10 +214,6 @@ Usage: $(basename "$0") router            serve ALL presets, switchable from the
        $(basename "$0") list
 
 Models:
-  gpt-oss-20b    GPT-OSS-20B      11.3GB  MoE 21B / 3.6B active, native 128K
-                                          147 tok/s, pinned to the R9700 alone
-  qwen3.6        Qwen3.6-35B-A3B  27.3GB  MoE 35B / 3B active, hybrid attn (40L)
-                                          74 tok/s at every context, no offload
   qwen3.8        Qwen3.8-27B      20.5GB  DENSE 27B, hybrid attn (64L), thinking
                                           UD-Q6_K + MTP: 57 tok/s, 22 at 128k depth
   qwen3.8-mtp    (same as qwen3.8, kept so old commands still work)
@@ -241,12 +224,13 @@ Models:
   qwen3.5-9b-uncensored
                  Qwen3.5-9B-Unc.  8.9GB   DENSE 9B, same family, half the layers.
                                           Reaches native 256k. 58 tok/s, R9700 only
+  gemma4-12b     Gemma 4-12B      13.3GB  DENSE 12B, images (+audio) via mmproj.
+                                          Q8_0 + MTP: ~105 tok/s. 128k/256k, R9700
 
 Context: 32k 64k 128k 256k  (only sizes within each model's native trained
 range. Two cards since 2026-10-05, a 9070 XT and an R9700, 48.9 GB that
 llama.cpp splits every model across; nearly every config now fits with no CPU
-offload, so generation barely changes with context. gpt-oss-20b caps at
-128k (native). qwen3.8-q8 stops at 128k: 256k leaves under
+offload, so generation barely changes with context. qwen3.8-q8 stops at 128k: 256k leaves under
 1 GB on the 9070 XT. 512k/1m are not offered by any model currently
 on disk. Run '$(basename "$0") list'.)
 
@@ -256,7 +240,7 @@ Notes:
     client instead of the shell. Both run the same ROCm build and the same
     flags (this script's table mirrors the presets), so pinning a model
     gains no speed; it only keeps one model resident without the router.
-  * gpt-oss-20b and qwen3.5-9b-uncensored run on the R9700 alone (-dev
+  * qwen3.5-9b-uncensored and gemma4-12b run on the R9700 alone (-dev
     ROCm1); every other model splits across both cards.
   * Close DaVinci Resolve first — it holds ~10.4GB VRAM and will cause
     allocation failures on the tighter configs.
@@ -267,7 +251,7 @@ Notes:
 
 Examples:
   $(basename "$0") router
-  $(basename "$0") gpt-oss-20b 128k
+  $(basename "$0") qwen3.8 128k
   $(basename "$0") stop
   $(basename "$0") start
   SLEEP_IDLE=-1 $(basename "$0") router            # never sleep
@@ -276,7 +260,7 @@ USAGE
 
 list_combos() {
   echo "Verified model/context combinations (backend shown per context):"
-  for model in gpt-oss-20b qwen3.6 qwen3.8 qwen3.8-mtp qwen3.8-q8 qwen3.5-uncensored qwen3.5-9b-uncensored; do
+  for model in qwen3.8 qwen3.8-mtp qwen3.8-q8 qwen3.5-uncensored qwen3.5-9b-uncensored gemma4-12b; do
     printf '  %-21s ' "$model"
     for ctx in 16k 32k 64k 128k 192k 200k 256k 512k 1m; do
       local k="${model}:${ctx}"
