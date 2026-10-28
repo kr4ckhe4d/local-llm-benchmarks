@@ -514,8 +514,10 @@ switch_model() {
   mkdir -p "$(dirname "$STATE")"
   printf '%s %s\n' "$model" "$ctx" > "$STATE"
   cd "$LLAMA_DIR"
+  # --ctx-checkpoints 4 mirrors [*] in models-preset.ini: the default 32 filled
+  # 25 GB of RAM on a long Qwen3.8 agent turn and hung the server.
   # shellcheck disable=SC2086
-  nohup "$bin" -m "models/$file" -ngl 99 -c "$tokens" $extra -np 1 --load-mode dio \
+  nohup "$bin" -m "models/$file" -ngl 99 -c "$tokens" $extra -np 1 --load-mode dio --ctx-checkpoints 4 \
     --sleep-idle-seconds "$SLEEP_IDLE" \
     --host "$HOST" --port "$PORT" > "$LOG" 2>&1 < /dev/null &
   disown
