@@ -21,6 +21,7 @@ R9700 (48.9 GB VRAM, both PCIe 5.0 x8), CachyOS, ROCm 7.2, llama.cpp b11434.
 | Qwen3.8 27B (dense) | IQ4_XS + MTP | 71 tok/s, 85% draft acceptance (file since replaced by UD-Q6_K) |
 | Qwen3.8 27B | **UD-Q6_K** + MTP | 57 tok/s; KLD vs BF16 0.0020 (IQ4_XS: 0.0179); as good as Q8_0 in Claude Code, 12% faster |
 | GLM-4.7-Flash 30B-A3B | Q4/Q8, 128K | 75 tok/s in an empty context, but **154 tok/s prefill** at 128K depth (attention-bound; removed) |
+| Nemotron 3.5 Lightning 30B-A3B | Q8_0 + MTP, 128K | **167 tok/s**, 83% draft acceptance (1.70x); 128K costs only 2.7 GB more than 32K — but 28K thinking tokens per coding task |
 | MoE models generally | second card | CPU expert offload gone: **+38% to +183%** generation |
 
 Generation is the 700-token probe in an empty context unless it says "depth";
@@ -44,6 +45,7 @@ in the linked files.
 | [dflash2-qat-q2.md](dflash2-qat-q2.md) | DFlash2 speculative drafter and QAT Q2_0 for Qwen3.8-27B on 16 GB |
 | [turboquant.md](turboquant.md) | TurboQuant 2-4 bit KV-cache quantization |
 | [instella-moe.md](instella-moe.md) | AMD Instella-MoE-16B-A3B |
+| [nemotron-3.5-lightning-30B.md](nemotron-3.5-lightning-30B.md) | Nemotron 3.5 Lightning 30B-A3B `Q8_0`: the repo's fastest generation and cheapest 128K, spent on 28K reasoning tokens a task |
 | [handover.md](handover.md) | Working notes, including the KLD-vs-BF16 quant study |
 | [`models-preset.ini`](models-preset.ini) | The llama-server router presets, each with the measurements that set it |
 | [`benchmarks/`](benchmarks/) | The scripts (`fit.sh`, `kld-test.sh`, `throughput-test.py`, ...) and raw logs |
@@ -2003,6 +2005,8 @@ model's, not the harness's.
 | Laguna XS 2.1 `Q8_0` | ~8.5 | 27/50 (54%) | 2/7 |
 | Nemotron 3.5 Bolt 74B-A9B 24GB ‡ | ~2.4 | 35/50 (70%) | 2/7 |
 | Nemotron 3.5 Bolt 74B-A9B 24GB, **thinking on** ‡ | ~2.4 | **39/50 (78%)** | 4/7 |
+| Nemotron 3.5 Lightning 30B-A3B `Q8_0` ‖ | ~9.0 | 27/50 (54%) | 1/7 |
+| Nemotron 3.5 Lightning 30B-A3B `Q8_0`, **thinking on** ‖ | ~9.0 | 35/50 (70%) | 1/7 |
 | Qwen3-Next-80B-A3B-Thinking `Q4_K_M` § | ~4.8 | 27/50 (54%) | 2/7 |
 | Qwen3.8-Flash-Next `IQ3_XXS`, Strata ¶ | ~3.1 | **43/50 (86%)** | 4/7 |
 | Qwen3.8-Flash-Next `IQ3_XXS`, Strata, **thinking medium**, 3 runs ¶ | ~3.1 | **47 / 47 / 47 (94%)** | 5/7 |
@@ -2019,6 +2023,18 @@ floor — see the Gemma 4 section.
 size over 74B parameters. The thinking-on row spent 104K tokens (32
 minutes) on the seven tasks. See
 [r9700+rx9070.md](r9700+rx9070.md#nemotron-35-bolt-74b-a9b-24gb-3950-only-after-32-minutes-of-thinking-2026-10-18).
+
+‖ 2026-10-31, b11434, MTP drafter attached. BPW is the file size over 30B
+parameters. Thinking off is the suite default (`--max-tokens 12288`,
+temperature 0.0) and lost 9 checks to one `urljoin` that **did not parse** —
+the same generation failure as IQ4_XS below. The thinking row is `-c 131072`,
+`--max-tokens 65536`, **temperature 1.0**, because greedy decoding loops on
+this model, so it is not strictly comparable to Bolt's greedy 39/50: read it as
+"no better than Bolt". It cost 197,067 generated tokens over the seven tasks,
+28,152 on average, and three tasks cannot be served at all in a 32K context
+with thinking on. Two earlier thinking runs scored 16/50 and 23/50 and are
+**void** — budget-bound and context-bound respectively. See
+[nemotron-3.5-lightning-30B.md](nemotron-3.5-lightning-30B.md).
 
 § It ignores `enable_thinking: false`, so the suite's 1024-token reasoning
 cap cut it off. With no cap it scored 37/50, after 8-18K tokens of thinking
@@ -2278,6 +2294,7 @@ Three prompts (Recharts, MUI, Chart.js + D3), 3 runs each, `temperature 0.0`:
 | Qwen3.8-27B `UD-IQ3_XXS` v3 | 2026-08-05 | **36/39 (92%)** | 6/9 |
 | Qwen3-Coder-Next `UD-Q4_K_M` | 2026-01-30 | **39/42 (93%)** | 6/9 |
 | Laguna XS 2.1 `Q8_0` | 2026-07-21 | 27/36 (75%) | 3/9 |
+| Nemotron 3.5 Lightning 30B-A3B `Q8_0` | — | 27/36 (75%) | 3/9 |
 | Laguna XS 2.1 `Q4_K_M` | 2026-07-21 | 18/36 (50%) | 3/9 |
 
 **A tie between the first two, and that was the original finding.** Six months
@@ -2318,6 +2335,15 @@ before procedural coding ability does, which is consistent with the KLD
 result — and it means a knowledge probe is the cheaper instrument for
 detecting quant damage than a coding probe. Treat the cross-lab spread in the
 table above as an upper bound: some of every gap there is quantisation.
+
+**Nemotron 3.5 Lightning has no such excuse.** It lands at the same 27/36 as
+Laguna's `Q8_0` while itself being `Q8_0`, so the quant explanation is not
+available — 75% is this model's recall, not its quantisation. It invented
+`recharts@2.12.3` and two `@emotion` UMD paths identically on all three runs,
+stable rather than sampling noise. That puts it between Qwen3.8-27B's `Q2` and
+`Q3` tiers (67% and 92%, [dflash2-qat-q2.md](dflash2-qat-q2.md)) while
+carrying essentially no quantisation damage of its own. Better than Nemotron
+3.5 Bolt's 45%, and still the family's weak axis.
 
 Release dates for everything on disk, since it bounds the cutoff even if it
 does not equal it:
