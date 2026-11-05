@@ -1,0 +1,80 @@
+def shlex_split(s):
+    """
+    Split a string into a list of tokens, reproducing shlex.split(s) in POSIX mode.
+    
+    Rules:
+    - Whitespace separates tokens.
+    - Single quotes: everything inside is literal (no escape sequences).
+    - Double quotes: backslash escapes only another backslash, a double quote, a dollar sign, or a backtick; otherwise literal.
+    - Backslash outside quotes escapes the next character.
+    - Adjacent quoted and unquoted runs concatenate into one token.
+    """
+    tokens = []
+    current = []
+    i = 0
+    n = len(s)
+    
+    while i < n:
+        c = s[i]
+        
+        # Check for whitespace (space, tab, newline, etc.)
+        if c in (' ', '\t', '\n', '\r', '\f', '\v'):
+            if current:
+                tokens.append(''.join(current))
+                current = []
+            i += 1
+            continue
+        
+        # Single quote
+        if c == "'":
+            i += 1
+            while i < n:
+                if s[i] == "'":
+                    i += 1
+                    break
+                current.append(s[i])
+                i += 1
+            continue
+        
+        # Double quote
+        if c == '"':
+            i += 1
+            while i < n:
+                if s[i] == '"':
+                    i += 1
+                    break
+                if s[i] == '\\':
+                    # Check what the backslash escapes
+                    if i + 1 < n:
+                        next_c = s[i + 1]
+                        if next_c in ('\\', '"', '$', '`'):
+                            current.append(next_c)
+                            i += 2
+                            continue
+                    # Backslash is literal if it doesn't escape one of the special chars
+                    current.append('\\')
+                    i += 1
+                    continue
+                current.append(s[i])
+                i += 1
+            continue
+        
+        # Backslash outside quotes
+        if c == '\\':
+            if i + 1 < n:
+                current.append(s[i + 1])
+                i += 2
+            else:
+                # Trailing backslash, ignore or treat as literal? In POSIX, a trailing backslash is an error or ignored.
+                # shlex.split in POSIX mode: a backslash at end of string is ignored.
+                i += 1
+            continue
+        
+        # Regular character
+        current.append(c)
+        i += 1
+    
+    if current:
+        tokens.append(''.join(current))
+    
+    return tokens

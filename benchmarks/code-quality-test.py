@@ -229,7 +229,13 @@ for _name, _fn in CHECKS:
 print("__RESULTS__" + json.dumps(_results))
 '''
 
-FENCE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.S)
+# Fences are paired whatever their language, then non-Python ones dropped.
+# The old pattern only recognised ```/```python/```py openers, so after a
+# ```text block it took that block's CLOSING fence for an opener and
+# captured the prose between blocks as code (found 2026-11-05: a csv_rows
+# answer with a ```text hand trace scored 0/7 on a SyntaxError in prose).
+FENCE_ANY = re.compile(r"```([\w+.-]*)[^\n]*\n(.*?)```", re.S)
+PY_LANGS = {"", "python", "py", "python3"}
 
 
 def n_checks(checks_src):
@@ -252,7 +258,7 @@ def extract_code(text):
     """Prefer fenced blocks; fall back to the whole body if the model
     ignored the format, since an unfenced-but-correct answer is still
     correct code and penalising formatting would measure the wrong thing."""
-    blocks = FENCE.findall(text)
+    blocks = [b for lang, b in FENCE_ANY.findall(text) if lang.lower() in PY_LANGS]
     if blocks:
         return "\n\n".join(blocks)
     return text

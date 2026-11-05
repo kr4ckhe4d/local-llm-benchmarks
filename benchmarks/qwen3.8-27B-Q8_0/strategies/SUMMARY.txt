@@ -1,0 +1,37 @@
+# Qwen3.8-27B-Q8_0 code-quality: inference strategies, 2026-11-05
+# Same 7 tasks / 50 hidden checks as code-quality-test.py; the model never sees them.
+# Harness: benchmarks/code-quality-strategies.py. Every answer and exchange saved per run dir.
+
+| strategy                                   | score | clean | wall   | notes |
+| select + repair (6 cands, own tests, 2 fix) | 46/50 | 5/7   | ~23min | misses: shlex dq_escapes, textwrap 3/6 |
+| select (6 cands ranked by own tests)        | 44/50 | 5/7   | ~23min | urljoin 9/9 picked from [7,2,8,2,9,1] |
+| repair (own tests, 2 fix rounds)            | 43/50 | 4/7   | ~13min | glob [a-z] bug caught by own test |
+| repair-v2 (4 rounds, test rewrite)          | 43/50 | 4/7   | ~18min | identical to repair: extra rounds buy nothing |
+| temp 0, MTP off  (control)                  | 43/50 | 4/7   | ~2min  | glob +1, urljoin +1 vs MTP on |
+| temp 0, KV f16   (control)                  | 42/50 | 4/7   | ~2min  | glob +1 vs q8_0 KV |
+| review (Nemotron Lightning reviews, Qwen revises) | 42/50 | 4/7 | ~10min | reviewer right on shlex "a\b", wrong on glob "*" vs "" |
+| baseline: temp 0, thinking off              | 41/50 | 3/7   | ~2min  | reproduced exactly twice |
+| plan (thinking plan -> thinking-off code)   | 39/50 | 2/7   | ~25min | urljoin collapsed 3/9 on a parse slip |
+| checklist (edge cases + hand trace)         | 39/50 | 2/7   | ~4min  | rescored after the extract_code fence fix (was 32) |
+| vote (5 at t0.6, fuzz-agreement majority)   | 37/50 | 3/7   | ~12min | best-of-5 would be 46: shared mistakes outvote the right answer |
+| thinking on, t0.6, budget 8000              | 36/50 | 3/7   | ~20min | |
+| min-p 0.1 at t0.6 / t1.0 (n=3 each)         | 36.3 / 38.7 avg | | | no better than top-p; t1.0 run2 hit 45 |
+| thinking on, t0, budget 8000                | 35/50 | 3/7   | ~20min | csv_rows 0/7: missing `field = []` |
+
+Two kinds of failure, and only one is fixable by the model checking itself:
+- SLIPS: one line wrong in a long function wrecks every output (csv `field = []`,
+  urljoin `//` consumed twice, plan's urljoin parse). Sampled runs hit one in ~1 task
+  in 5. Own tests catch them; select/repair remove them.
+- MISUNDERSTANDINGS: shlex quoting, textwrap whitespace, urljoin dot_only. The model's
+  tests encode the same mistake: real shlex.split passes 138/142 of its shlex tests,
+  the model's wrong function 140; real textwrap 35/41, model answers 38. No self-check
+  fixes these. The Nemotron review fixed one shlex case the hidden checks don't cover.
+
+Greedy-path noise: MTP on/off and KV q8_0/f16 each move the temp-0 score by 1-2
+checks with every other setting fixed. Treat single-run differences under ~2 as ties.
+
+Harness bugs found and fixed on the way (all in commit history):
+- code-quality-test.py extract_code paired fences wrongly after a ```text block.
+- tests that do not compile now salvaged line by line; function redefinitions in
+  tests stripped; test generation capped at 4096 tokens and deduped (glob tests
+  looped ~250x on one assert at temp 0).

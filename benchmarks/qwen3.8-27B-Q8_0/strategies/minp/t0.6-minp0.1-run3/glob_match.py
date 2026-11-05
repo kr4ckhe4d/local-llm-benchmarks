@@ -1,0 +1,78 @@
+def glob_match(pattern, name):
+    def match_here(pat, s):
+        while pat:
+            c = pat[0]
+            if c == '*':
+                # Skip consecutive stars
+                while pat and pat[0] == '*':
+                    pat = pat[1:]
+                if not pat:
+                    return True
+                # Try matching the rest of pat against s at each position
+                for i in range(len(s) + 1):
+                    if match_here(pat, s[i:]):
+                        return True
+                return False
+            elif c == '?':
+                if not s:
+                    return False
+                pat = pat[1:]
+                s = s[1:]
+            elif c == '[':
+                # Check for unterminated bracket
+                end = -1
+                i = 1
+                negate = False
+                if i < len(pat) and pat[i] == '!':
+                    negate = True
+                    i += 1
+                # If ] is immediately after [ or [!, it's a literal
+                if i < len(pat) and pat[i] == ']':
+                    i += 1
+                while i < len(pat):
+                    if pat[i] == ']':
+                        end = i
+                        break
+                    i += 1
+                if end == -1:
+                    # Unterminated [, treat [ as literal
+                    if not s or s[0] != '[':
+                        return False
+                    pat = pat[1:]
+                    s = s[1:]
+                else:
+                    # Extract the bracket expression content
+                    content = pat[i:end]
+                    # Parse the content into a set of characters or ranges
+                    def in_bracket(ch, content, negate):
+                        if not content:
+                            return not negate
+                        j = 0
+                        matched = False
+                        while j < len(content):
+                            if j + 2 < len(content) and content[j+1] == '-':
+                                lo = content[j]
+                                hi = content[j+2]
+                                if lo <= ch <= hi:
+                                    matched = True
+                                    break
+                                j += 3
+                            else:
+                                if ch == content[j]:
+                                    matched = True
+                                    break
+                                j += 1
+                        return (not matched) if negate else matched
+                    if not s or not in_bracket(s[0], content, negate):
+                        return False
+                    pat = pat[end+1:]
+                    s = s[1:]
+            else:
+                # Literal character
+                if not s or s[0] != c:
+                    return False
+                pat = pat[1:]
+                s = s[1:]
+        return not s
+
+    return match_here(pattern, name)

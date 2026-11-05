@@ -1,0 +1,113 @@
+```python
+def wrap_(text, width):
+    """
+    Reproduce textwrap.wrap(text, width) with default options from scratch.
+    
+    Default options:
+    - Whitespace is collapsed (runs of whitespace become a single space)
+    - Tabs are expanded (using tabsize=8, converting tabs to spaces)
+    - Words longer than width ARE broken
+    - Result is a list of lines, none longer than width (except where a single unbreakable chunk forces it)
+    """
+    if width <= 0:
+        raise ValueError("invalid width %r (must be > 0)" % width)
+    
+    # Step 1: Expand tabs and collapse whitespace
+    # First, expand tabs using tabsize=8
+    expanded = []
+    col = 0
+    for ch in text:
+        if ch == '\t':
+            # Calculate spaces needed to reach next tab stop (multiple of 8)
+            spaces = 8 - (col % 8)
+            expanded.append(' ' * spaces)
+            col += spaces
+        else:
+            expanded.append(ch)
+            col += 1
+    text = ''.join(expanded)
+    
+    # Step 2: Collapse all whitespace (spaces, newlines, etc.) into single spaces
+    # Replace any run of whitespace with a single space
+    collapsed = []
+    prev_was_space = False
+    for ch in text:
+        if ch in ' \n\r\t\f\v':
+            if not prev_was_space:
+                collapsed.append(' ')
+                prev_was_space = True
+        else:
+            collapsed.append(ch)
+            prev_was_space = False
+    
+    text = ''.join(collapsed)
+    
+    # Step 3: Split into words (sequences of non-space characters)
+    words = []
+    current_word = []
+    for ch in text:
+        if ch == ' ':
+            if current_word:
+                words.append(''.join(current_word))
+                current_word = []
+        else:
+            current_word.append(ch)
+    if current_word:
+        words.append(''.join(current_word))
+    
+    # Step 4: Wrap the words into lines of at most `width` characters
+    lines = []
+    current_line = []
+    current_len = 0
+    
+    for word in words:
+        word_len = len(word)
+        
+        # If the word itself is longer than width, we need to break it
+        if word_len > width:
+            # First, if we have a current line, flush it
+            if current_line:
+                lines.append(' '.join(current_line))
+                current_line = []
+                current_len = 0
+            
+            # Break the long word into chunks of size `width`
+            for i in range(0, word_len, width):
+                chunk = word[i:i + width]
+                if current_line:
+                    # This shouldn't happen because we flushed above, but just in case
+                    lines.append(' '.join(current_line))
+                    current_line = []
+                    current_len = 0
+                lines.append(chunk)
+            # After breaking the word, current_line is empty
+            current_line = []
+            current_len = 0
+        else:
+            # Normal word fitting within width
+            if current_line:
+                # Adding this word would require a space + word
+                new_len = current_len + 1 + word_len
+                if new_len <= width:
+                    current_line.append(word)
+                    current_len = new_len
+                else:
+                    # Flush current line and start new one with this word
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                    current_len = word_len
+            else:
+                # Starting a new line
+                current_line = [word]
+                current_len = word_len
+    
+    # Flush the last line if it has any words
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    # Handle empty text case
+    if not lines and text == '':
+        return []
+    
+    return lines
+```

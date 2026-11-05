@@ -1,0 +1,182 @@
+def urljoin_(base, url):
+    """
+    Reproduce urllib.parse.urljoin from scratch, implementing RFC 3986 reference resolution.
+    
+    Handles:
+    - Absolute URLs (with scheme) replace the base
+    - Scheme-relative URLs (//host/path)
+    - Absolute paths (/path)
+    - Relative paths
+    - Dot segments (. and ..) normalization
+    - Empty string returns base without fragment
+    - Query-only (?q) and fragment-only (#f) references
+    """
+    
+    # Parse a URL into components: scheme, netloc, path, query, fragment
+    def parse_url(url):
+        url = url.strip()
+        scheme = ''
+        netloc = ''
+        path = ''
+        query = ''
+        fragment = ''
+        
+        # Handle fragment
+        if '#' in url:
+            url, fragment = url.split('#', 1)
+        
+        # Handle query
+        if '?' in url:
+            url, query = url.split('?', 1)
+        
+        # Handle scheme
+        if ':' in url:
+            # Check if it's a valid scheme (letters, digits, +, -, .)
+            idx = url.index(':')
+            potential_scheme = url[:idx]
+            if potential_scheme and all(c.isalnum() or c in '+-.' for c in potential_scheme):
+                scheme = potential_scheme
+                url = url[idx+1:]
+        
+        # Handle netloc
+        if url.startswith('//'):
+            url = url[2:]
+            # Find the end of netloc
+            for i, c in enumerate(url):
+                if c == '/' or c == '?' or c == '#':
+                    netloc = url[:i]
+                    url = url[i:]
+                    break
+            else:
+                netloc = url
+                url = ''
+        
+        # The rest is path
+        path = url
+        
+        return scheme, netloc, path, query, fragment
+    
+    # Normalize a path by resolving . and .. segments
+    def normalize_path(path):
+        if not path:
+            return path
+        
+        # Split into segments
+        segments = path.split('/')
+        result = []
+        
+        for segment in segments:
+            if segment == '.':
+                # Current directory - skip
+                continue
+            elif segment == '..':
+                # Parent directory - pop if possible
+                if result and result[-1] != '':
+                    result.pop()
+            else:
+                result.append(segment)
+        
+        # Rejoin
+        normalized = '/'.join(result)
+        
+        # Preserve leading slash
+        if path.startswith('/') and not normalized.startswith('/'):
+            normalized = '/' + normalized
+        
+        # Preserve trailing slash if original had one and path wasn't just dots
+        if path.endswith('/') and not normalized.endswith('/') and normalized:
+            normalized = normalized + '/'
+        
+        return normalized
+    
+    # Parse base and url
+    base_scheme, base_netloc, base_path, base_query, base_fragment = parse_url(base)
+    url_scheme, url_netloc, url_path, url_query, url_fragment = parse_url(url)
+    
+    # Case 1: Empty url - return base without fragment
+    if url == '':
+        if base_fragment:
+            return base_scheme + '://' + base_netloc + base_path + ('?' + base_query if base_query else '')
+        else:
+            return base
+    
+    # Case 2: url has scheme - it's an absolute URL, use it as-is
+    if url_scheme:
+        result = url_scheme + ':'
+        if url_netloc:
+            result += '//' + url_netloc
+        result += url_path
+        if url_query:
+            result += '?' + url_query
+        if url_fragment:
+            result += '#' + url_fragment
+        return result
+    
+    # Case 3: url is scheme-relative (//host/path)
+    if url_netloc:
+        result = base_scheme + '://' + url_netloc + url_path
+        if url_query:
+            result += '?' + url_query
+        if url_fragment:
+            result += '#' + url_fragment
+        return result
+    
+    # Case 4: url is fragment-only (#fragment)
+    if not url_path and not url_query and url_fragment:
+        # Return base with new fragment
+        result = base_scheme + '://' + base_netloc + base_path
+        if base_query:
+            result += '?' + base_query
+        result += '#' + url_fragment
+        return result
+    
+    # Case 5: url is query-only (?query)
+    if not url_path and url_query and not url_fragment:
+        # Return base with new query
+        result = base_scheme + '://' + base_netloc + base_path
+        result += '?' + url_query
+        if url_fragment:
+            result += '#' + url_fragment
+        return result
+    
+    # Case 6: url is absolute path (/path)
+    if url_path.startswith('/'):
+        result = base_scheme + '://' + base_netloc + normalize_path(url_path)
+        if url_query:
+            result += '?' + url_query
+        if url_fragment:
+            result += '#' + url_fragment
+        return result
+    
+    # Case 7: url is relative path
+    # Merge base path with url path
+    if base_path:
+        # Remove the last segment of base path
+        if base_path.endswith('/'):
+            base_dir = base_path
+        else:
+            last_slash = base_path.rfind('/')
+            if last_slash == -1:
+                base_dir = ''
+            else:
+                base_dir = base_path[:last_slash + 1]
+        
+        merged_path = base_dir + url_path
+    else:
+        merged_path = url_path
+    
+    # Normalize the merged path
+    normalized_path = normalize_path(merged_path)
+    
+    result = base_scheme + '://' + base_netloc + normalized_path
+    if url_query:
+        result += '?' + url_query
+    else:
+        if base_query:
+            result += '?' + base_query
+    if url_fragment:
+        result += '#' + url_fragment
+    elif base_fragment:
+        result += '#' + base_fragment
+    
+    return result

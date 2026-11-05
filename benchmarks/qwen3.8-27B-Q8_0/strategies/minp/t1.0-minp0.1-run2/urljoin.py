@@ -1,0 +1,211 @@
+def urljoin_(base, url):
+    if not base:
+        base = ""
+    if not url:
+        url = ""
+
+    # Parse a URL into components: scheme, netloc, path, query, fragment
+    def parse_url(u):
+        scheme = ""
+        rest = u
+        # Check for scheme
+        i = 0
+        while i < len(rest) and (rest[i].isalnum() or rest[i] in '+-.'
+                                  or (65 <= ord(rest[i]) <= 122)):
+            i += 1
+        if i < len(rest) and rest[i] == ':':
+            scheme = rest[:i]
+            rest = rest[i + 1:]
+
+        # Check for authority (netloc)
+        netloc = ""
+        if rest.startswith("//"):
+            rest = rest[2:]
+            j = 0
+            while j < len(rest) and rest[j] not in '/?#':
+                j += 1
+            netloc = rest[:j]
+            rest = rest[j:]
+
+        # Split off path, query, fragment
+        # Find the earliest of '?', '#'
+        path = ""
+        query = ""
+        fragment = ""
+        # Check for fragment
+        frag_idx = rest.find('#')
+        if frag_idx != -1:
+            fragment = rest[frag_idx + 1:]
+            rest = rest[:frag_idx]
+
+        # Check for query
+        q_idx = rest.find('?')
+        if q_idx != -1:
+            query = rest[q_idx + 1:]
+            rest = rest[:q_idx]
+
+        path = rest
+
+        return scheme, netloc, path, query, fragment
+
+    def remove_dot_segments(path):
+        # RFC 3986 section 5.2.4: Remove Dot Segments
+        output = []
+        while path:
+            # A. If the input buffer begins with a prefix of "../" or "./",
+            #    then remove that prefix from the input buffer; otherwise,
+            # B. If the input buffer begins with a prefix of "/./" or "/.",
+            #    where "." is a complete path segment, then replace that
+            #    prefix with "/" in the input buffer; otherwise,
+            # C. If the input buffer begins with a prefix of "/../" or "/..",
+            #    where ".." is a complete path segment, then replace that
+            #    prefix with "/" in the input buffer and remove the last
+            #    segment and any preceding "/" (if any) from the output
+            #    buffer; otherwise,
+            # D. If the input buffer consists only of "." or "..", then remove
+            #    that from the input buffer; otherwise,
+            # E. move the first path segment in the input buffer to the end of
+            #    the output buffer, including the initial "/" character (if
+            #    any) and any subsequent characters up to, but not including,
+            #    the next "/" character or the end of the input buffer.
+
+            if path.startswith("../"):
+                path = path[3:]
+            elif path.startswith("./"):
+                path = path[2:]
+            elif path.startswith("/./"):
+                path = "/" + path[3:]
+            elif path == "/.":
+                path = "/"
+            elif path.startswith("/../"):
+                path = "/" + path[4:]
+                # Remove last segment and any preceding "/" from output
+                if output:
+                    # Find the last "/"
+                    last_slash = -1
+                    for k in range(len(output) - 1, -1, -1):
+                        if output[k] == '/':
+                            last_slash = k
+                            break
+                    if last_slash > 0:
+                        output = output[:last_slash]
+                    else:
+                        output = []
+            elif path == "/..":
+                path = "/"
+                if output:
+                    last_slash = -1
+                    for k in range(len(output) - 1, -1, -1):
+                        if output[k] == '/':
+                            last_slash = k
+                            break
+                    if last_slash > 0:
+                        output = output[:last_slash]
+                    else:
+                        output = []
+            elif path in (".", ".."):
+                path = ""
+            else:
+                # Move first path segment to output
+                if path.startswith("/"):
+                    next_slash = path.find('/', 1)
+                    if next_slash == -1:
+                        output.append(path)
+                        path = ""
+                    else:
+                        output.append(path[:next_slash + 1])
+                        path = path[next_slash + 1:]
+                else:
+                    next_slash = path.find('/')
+                    if next_slash == -1:
+                        output.append(path)
+                        path = ""
+                    else:
+                        output.append(path[:next_slash] + '/')
+                        path = path[next_slash + 1:]
+        return ''.join(output)
+
+    # Parse both URLs
+    b_scheme, b_netloc, b_path, b_query, b_fragment = parse_url(base)
+    r_scheme, r_netloc, r_path, r_query, r_fragment = parse_url(url)
+
+    # RFC 3986 section 5.3: Reference Resolution
+    if r_scheme:
+        # r has scheme: use r's components
+        result_scheme = r_scheme
+        result_netloc = r_netloc
+        result_path = r_path
+        result_query = r_query
+        result_fragment = r_fragment
+    else:
+        if r_netloc:
+            # r has netloc but no scheme: use base scheme
+            result_scheme = b_scheme
+            result_netloc = r_netloc
+            result_path = r_path
+            result_query = r_query
+            result_fragment = r_fragment
+        else:
+            # r has no netloc
+            if not r_path:
+                # r is query/fragment only or empty
+                result_scheme = b_scheme
+                result_netloc = b_netloc
+                result_path = b_path
+                if r_query:
+                    result_query = r_query
+                else:
+                    result_query = b_query
+                if r_fragment:
+                    result_fragment = r_fragment
+                else:
+                    # If r is empty string, fragment is empty
+                    result_fragment = r_fragment if url else ""
+            else:
+                # r has path but no netloc
+                result_scheme = b_scheme
+                if r_path.startswith('/'):
+                    # r path is absolute
+                    result_netloc = b_netloc
+                    result_path = r_path
+                    result_query = r_query
+                    result_fragment = r_fragment
+                else:
+                    # r path is relative: merge with base path
+                    # If base has netloc, merge base path and r path
+                    if b_netloc:
+                        # Take base path up to last '/'
+                        last_slash = b_path.rfind('/')
+                        if last_slash == -1:
+                            merged_path = r_path
+                        else:
+                            merged_path = b_path[:last_slash + 1] + r_path
+                    else:
+                        # No netloc in base, just merge
+                        merged_path = b_path + r_path
+                    # Remove dot segments
+                    result_netloc = b_netloc
+                    result_path = remove_dot_segments(merged_path)
+                    result_query = r_query
+                    result_fragment = r_fragment
+
+    # Handle empty string case: if url is empty, return base without fragment
+    # This is already handled above when r_path, r_query, r_fragment are all empty
+    # but let's verify: if url == "", then r_scheme="", r_netloc="", r_path="", r_query="", r_fragment=""
+    # In that case, we go to the "r is query/fragment only or empty" branch
+    # result_fragment = r_fragment if url else "" -> "" 
+    # But we need result_fragment to be "" (no fragment), which is correct.
+
+    # Reconstruct the URL
+    result = ""
+    if result_scheme:
+        result += result_scheme + ":"
+    if result_netloc:
+        result += "//" + result_netloc
+    result += result_path
+    if result_query:
+        result += "?" + result_query
+    if result_fragment:
+        result += "#" + result_fragment
+
+    return result

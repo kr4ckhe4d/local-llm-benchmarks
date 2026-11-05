@@ -1,0 +1,184 @@
+```python
+def urljoin_(base, url):
+    """
+    Reproduce urllib.parse.urljoin from scratch according to RFC 3986.
+    
+    Args:
+        base: The base URL string.
+        url: The reference URL string to resolve against the base.
+    
+    Returns:
+        The resolved absolute URL string.
+    """
+    # Handle empty reference: return base without fragment
+    if url == "":
+        # Remove fragment from base
+        if "#" in base:
+            return base.split("#", 1)[0]
+        return base
+
+    # Helper to split a URL into components: (scheme, authority, path, query, fragment)
+    def split_url(u):
+        u = u.strip()
+        scheme = None
+        authority = None
+        path = u
+        query = None
+        fragment = None
+
+        # Check for fragment
+        if "#" in u:
+            u, fragment = u.split("#", 1)
+
+        # Check for query
+        if "?" in u:
+            u, query = u.split("?", 1)
+
+        # Check for scheme
+        scheme_match = None
+        # Scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+        import re
+        m = re.match(r'^([A-Za-z][A-Za-z0-9+\-.]*)://', u)
+        if m:
+            scheme = m.group(1)
+            rest = u[m.end():]
+            # Split off authority
+            # Authority ends at the first '/', '?', or '#' (but we already removed ? and #)
+            slash_idx = rest.find("/")
+            if slash_idx == -1:
+                authority = rest
+                path = ""
+            else:
+                authority = rest[:slash_idx]
+                path = rest[slash_idx:]
+        else:
+            # No scheme
+            if u.startswith("//"):
+                # Scheme-relative
+                rest = u[2:]
+                slash_idx = rest.find("/")
+                if slash_idx == -1:
+                    authority = rest
+                    path = ""
+                else:
+                    authority = rest[:slash_idx]
+                    path = rest[slash_idx:]
+            else:
+                path = u
+
+        return scheme, authority, path, query, fragment
+
+    # Parse base and reference
+    b_scheme, b_authority, b_path, b_query, b_fragment = split_url(base)
+    r_scheme, r_authority, r_path, r_query, r_fragment = split_url(url)
+
+    # If reference has a scheme, it's absolute
+    if r_scheme is not None:
+        result_scheme = r_scheme
+        result_authority = r_authority
+        result_path = r_path
+        result_query = r_query
+        result_fragment = r_fragment
+    else:
+        # Inherit scheme from base
+        result_scheme = b_scheme
+        if r_authority is not None:
+            # Reference has authority (scheme-relative or absolute path with authority)
+            result_authority = r_authority
+            result_path = r_path
+            result_query = r_query
+            result_fragment = r_fragment
+        else:
+            # Merge paths
+            result_authority = b_authority
+            if r_path == "":
+                # Reference path is empty
+                result_path = b_path
+                if r_query is not None:
+                    result_query = r_query
+                else:
+                    result_query = b_query
+                result_fragment = r_fragment
+            elif r_path.startswith("/"):
+                # Absolute path
+                result_path = r_path
+                result_query = r_query
+                result_fragment = r_fragment
+            else:
+                # Relative path: merge with base path
+                # Remove everything after the last '/' in base path
+                if b_path and not b_path.endswith("/"):
+                    # Find last '/'
+                    last_slash = b_path.rfind("/")
+                    if last_slash == -1:
+                        base_dir = ""
+                    else:
+                        base_dir = b_path[:last_slash + 1]
+                else:
+                    base_dir = b_path
+
+                merged_path = base_dir + r_path
+
+                # Remove dot segments
+                result_path = remove_dot_segments(merged_path)
+                result_query = r_query
+                result_fragment = r_fragment
+
+    # Construct the result
+    result = ""
+    if result_scheme is not None:
+        result += result_scheme + ":"
+    if result_authority is not None:
+        result += "//" + result_authority
+    result += result_path
+    if result_query is not None:
+        result += "?" + result_query
+    if result_fragment is not None:
+        result += "#" + result_fragment
+
+    return result
+
+
+def remove_dot_segments(path):
+    """
+    Remove dot segments from a URL path according to RFC 3986 Section 5.2.4.
+    """
+    # If path is empty, return empty
+    if not path:
+        return path
+
+    # Use a stack-based approach
+    output = []
+    # Split path by '/', keeping track of trailing slash
+    # We need to be careful: the path starts with '/' or not
+    # Let's process segments
+    segments = path.split("/")
+    # The first element will be empty if path starts with '/'
+    
+    # Reconstruct: we'll process each segment
+    # If path starts with '/', segments[0] is ''
+    starts_with_slash = path.startswith("/")
+    
+    for seg in segments:
+        if seg == "." or seg == "":
+            # Skip dot segments and empty segments (except we need to handle trailing slash)
+            # Actually, we need to be more careful
+            continue
+        elif seg == "..":
+            if output:
+                output.pop()
+        else:
+            output.append(seg)
+    
+    # Reconstruct path
+    if not output:
+        if starts_with_slash:
+            return "/"
+        else:
+            return ""
+    
+    result = "/".join(output)
+    if starts_with_slash:
+        result = "/" + result
+    return result
+```

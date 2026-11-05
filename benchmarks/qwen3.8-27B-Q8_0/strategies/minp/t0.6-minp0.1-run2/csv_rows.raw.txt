@@ -1,0 +1,223 @@
+```python
+def csv_rows(text):
+    """Parse RFC 4180 CSV text and return a list of rows, each a list of string fields."""
+    rows = []
+    i = 0
+    n = len(text)
+    
+    while i < n:
+        row = []
+        while True:
+            # Parse a single field
+            if i < n and text[i] == '"':
+                # Quoted field
+                i += 1  # skip opening quote
+                field_chars = []
+                while i < n:
+                    if text[i] == '"':
+                        if i + 1 < n and text[i + 1] == '"':
+                            # Escaped quote
+                            field_chars.append('"')
+                            i += 2
+                        else:
+                            # End of quoted field
+                            i += 1  # skip closing quote
+                            break
+                    else:
+                        field_chars.append(text[i])
+                        i += 1
+                # After closing quote, expect comma, CR, LF, or end of input
+                # Skip any whitespace? No, RFC 4180 doesn't allow whitespace after quote before delimiter
+                # But we need to handle the case where after closing quote we have CRLF or LF or comma or end
+                if i < n and text[i] == '\r':
+                    i += 1
+                    if i < n and text[i] == '\n':
+                        i += 1
+                    # This was the end of the line
+                    row.append(''.join(field_chars))
+                    break
+                elif i < n and text[i] == '\n':
+                    i += 1
+                    row.append(''.join(field_chars))
+                    break
+                elif i < n and text[i] == ',':
+                    i += 1
+                    row.append(''.join(field_chars))
+                    continue
+                else:
+                    # End of input
+                    row.append(''.join(field_chars))
+                    break
+            else:
+                # Unquoted field
+                field_chars = []
+                while i < n:
+                    if text[i] == ',':
+                        i += 1
+                        row.append(''.join(field_chars))
+                        break
+                    elif text[i] == '\r':
+                        i += 1
+                        if i < n and text[i] == '\n':
+                            i += 1
+                        row.append(''.join(field_chars))
+                        break
+                    elif text[i] == '\n':
+                        i += 1
+                        row.append(''.join(field_chars))
+                        break
+                    else:
+                        field_chars.append(text[i])
+                        i += 1
+                else:
+                    # Reached end of input
+                    if field_chars or row:
+                        row.append(''.join(field_chars))
+                    break
+                if i >= n:
+                    break
+        
+        # After parsing a row, check if we're at end of input
+        # If the row is empty and we're at end, don't add empty row
+        # But we need to be careful: csv.reader behavior
+        # Let's check what csv.reader does with trailing newline
+        # csv.reader(io.StringIO("a,b\n")) returns [['a', 'b']]
+        # csv.reader(io.StringIO("a,b\n\n")) returns [['a', 'b'], []]
+        
+        # Check if this row was added because we hit end of input without any data
+        # Actually, let's restructure: only add row if we actually parsed something or if it's a valid empty row
+        
+        # The issue is: when do we add an empty row?
+        # csv.reader adds an empty row for each blank line except possibly the last one if it's just a trailing newline
+        # Let's look at the behavior more carefully
+        
+        # Actually, let's just add the row if it has any fields, or if it's an empty row that corresponds to a blank line
+        # But we need to match csv.reader exactly
+        
+        # Let me re-think the logic. The problem is that my loop structure is a bit off.
+        # Let me rewrite more carefully.
+        
+        # Actually, I realize my logic above has issues. Let me rewrite the entire function.
+        pass
+    
+    return rows
+```
+
+Wait, I made a mess with that. Let me rewrite it properly.
+
+```python
+def csv_rows(text):
+    """Parse RFC 4180 CSV text and return a list of rows, each a list of string fields."""
+    rows = []
+    i = 0
+    n = len(text)
+    
+    while i < n:
+        row = []
+        while True:
+            # Parse a single field
+            if i < n and text[i] == '"':
+                # Quoted field
+                i += 1  # skip opening quote
+                field_chars = []
+                while i < n:
+                    if text[i] == '"':
+                        if i + 1 < n and text[i + 1] == '"':
+                            # Escaped quote
+                            field_chars.append('"')
+                            i += 2
+                        else:
+                            # End of quoted field
+                            i += 1  # skip closing quote
+                            break
+                    else:
+                        field_chars.append(text[i])
+                        i += 1
+                # After closing quote, check what follows
+                if i < n and text[i] == '\r':
+                    i += 1
+                    if i < n and text[i] == '\n':
+                        i += 1
+                    row.append(''.join(field_chars))
+                    break
+                elif i < n and text[i] == '\n':
+                    i += 1
+                    row.append(''.join(field_chars))
+                    break
+                elif i < n and text[i] == ',':
+                    i += 1
+                    row.append(''.join(field_chars))
+                    continue
+                else:
+                    # End of input
+                    row.append(''.join(field_chars))
+                    break
+            else:
+                # Unquoted field
+                field_chars = []
+                while i < n:
+                    if text[i] == ',':
+                        i += 1
+                        row.append(''.join(field_chars))
+                        break
+                    elif text[i] == '\r':
+                        i += 1
+                        if i < n and text[i] == '\n':
+                            i += 1
+                        row.append(''.join(field_chars))
+                        break
+                    elif text[i] == '\n':
+                        i += 1
+                        row.append(''.join(field_chars))
+                        break
+                    else:
+                        field_chars.append(text[i])
+                        i += 1
+                else:
+                    # Reached end of input
+                    row.append(''.join(field_chars))
+                    break
+                if i >= n:
+                    break
+        
+        # Only add the row if it's not an empty row at the very end due to trailing newline
+        # csv.reader behavior: "a,b\n" -> [['a','b']], "a,b\n\n" -> [['a','b'], []]
+        # So a trailing single newline doesn't create an extra empty row, but a blank line does.
+        # The key insight: we should add the row if it has any fields, OR if it's an empty row 
+        # that was created by a blank line (not just a trailing newline).
+        
+        # Actually, let's think about it differently. When do we get an empty row?
+        # If text is "\n", csv.reader returns [[]]
+        # If text is "a\n", csv.reader returns [['a']]
+        # If text is "a\n\n", csv.reader returns [['a'], []]
+        
+        # So the rule is: we add a row for each line, where a line is terminated by \n or \r\n or end of input.
+        # But if the last "line" is empty (i.e., text ends with a newline and there's nothing after), we don't add it.
+        
+        # Let me check: does my current logic add an empty row for "a\n"?
+        # i=0: parse 'a' (unquoted), hit \n at i=1, append 'a' to row, i becomes 2, break inner loop.
+        # row = ['a'], i=2, n=2. Outer loop: i < n is False, so we exit.
+        # We add row ['a']. Good.
+        
+        # For "\n": i=0, text[0]='\n', not a quote. Unquoted field: field_chars=[], hit \n, i=1, append '' to row, break.
+        # row = [''], i=1, n=1. Outer loop: i < n is False. We add row ['']. But csv.reader returns [[]] for "\n".
+        # Wait, does it? Let me think... csv.reader(io.StringIO("\n")) should return [[]].
+        # So adding [''] is correct? No, [''] is a list with one empty string, which is the same as a row with one empty field.
+        # And [[]] is a list with one empty list. These are different!
+        # csv.reader returns a list of rows, each row is a list of fields. For "\n", it returns [[]], meaning one row with zero fields? 
+        # No wait, let me actually test this mentally. A blank line in CSV is a row with one empty field? Or zero fields?
+        # Actually, I believe csv.reader treats a blank line as a row with one empty field: [''].
+        # Let me verify: csv.reader(io.StringIO("\n")) -> [['']]? Or [[]]?
+        # I'm not 100% sure. Let me assume it's [['']] since a line with just a newline has one empty field.
+        
+        # Actually, I just recalled that csv.reader does NOT skip blank lines by default. A blank line produces a row with one empty string.
+        # But wait, that might not be right either. Let me just make sure my logic is consistent.
+        
+        # The real question is: when should I NOT add a row? Only when the entire input is empty?
+        # If text is "", csv.reader returns []. My loop: i=0, n=0, outer loop doesn't execute. rows=[]. Good.
+        
+        # So I should always add the row. Let me just add it.
+        rows.append(row)
+    
+    return rows
+```

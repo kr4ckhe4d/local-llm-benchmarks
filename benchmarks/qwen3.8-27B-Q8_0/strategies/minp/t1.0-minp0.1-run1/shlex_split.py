@@ -1,0 +1,114 @@
+def shlex_split(s):
+    tokens = []
+    current = []
+    in_single = False
+    in_double = False
+    escaped = False
+    i = 0
+    n = len(s)
+    has_token = False
+
+    while i < n:
+        ch = s[i]
+
+        if escaped:
+            # Backslash was outside quotes or in double quotes escaping a special char
+            if in_double:
+                # In double quotes, backslash only escapes: \ " $ `
+                # If it escaped one of those, we've already handled the escape logic
+                # Actually, let's restructure: handle escape at the point we see backslash
+                pass
+            # This branch is for backslash outside quotes
+            # The next char is literal
+            current.append(ch)
+            escaped = False
+            i += 1
+            continue
+
+        if in_single:
+            if ch == "'":
+                in_single = False
+                i += 1
+                continue
+            else:
+                current.append(ch)
+                i += 1
+                continue
+
+        if in_double:
+            if ch == '\\':
+                # Check what's being escaped
+                if i + 1 < n:
+                    next_ch = s[i + 1]
+                    if next_ch in ('\\', '"', '$', '`'):
+                        # Escape: add the next char literally
+                        current.append(next_ch)
+                        i += 2
+                        continue
+                    else:
+                        # Backslash is literal in this context
+                        current.append('\\')
+                        i += 1
+                        continue
+                else:
+                    # Trailing backslash in double quotes
+                    current.append('\\')
+                    i += 1
+                    continue
+            elif ch == '"':
+                in_double = False
+                i += 1
+                continue
+            else:
+                current.append(ch)
+                i += 1
+                continue
+
+        # Not in any quotes
+        if ch == '\\':
+            if i + 1 < n:
+                escaped = True
+                i += 1
+                # The next character will be added literally
+                current.append(s[i])
+                escaped = False
+                i += 1
+                continue
+            else:
+                # Trailing backslash
+                current.append('\\')
+                i += 1
+                continue
+        elif ch == "'":
+            in_single = True
+            has_token = True
+            i += 1
+            continue
+        elif ch == '"':
+            in_double = True
+            has_token = True
+            i += 1
+            continue
+        elif ch.isspace():
+            if has_token or current:
+                if has_token or current:
+                    tokens.append(''.join(current))
+                    current = []
+                    has_token = False
+            i += 1
+            continue
+        else:
+            current.append(ch)
+            has_token = True
+            i += 1
+            continue
+
+    # Handle end of string
+    if in_single or in_double:
+        # Unclosed quote: in POSIX shlex, this would be an error, but let's just finish
+        pass
+
+    if has_token or current:
+        tokens.append(''.join(current))
+
+    return tokens

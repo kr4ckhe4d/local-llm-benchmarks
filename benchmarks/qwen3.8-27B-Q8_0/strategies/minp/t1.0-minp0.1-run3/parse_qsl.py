@@ -1,0 +1,52 @@
+def parse_qsl_(qs):
+    """
+    Parse a query string into a list of (key, value) tuples, mimicking
+    urllib.parse.parse_qsl(qs, keep_blank_values=True) but only using '&'
+    as the separator (not ';'). Decodes percent-escapes and '+' as space.
+    Components without '=' yield (key, '').
+    """
+    def _unquote(s):
+        """Decode percent-escapes and '+' as space."""
+        # First, replace '+' with space (only in the raw string before unquoting)
+        # Actually, in standard URL encoding, '+' means space, and %20 also means space.
+        # We need to handle both: replace '+' with ' ', then decode %XX sequences.
+        s = s.replace('+', ' ')
+        # Decode percent-escapes
+        i = 0
+        n = len(s)
+        result = []
+        while i < n:
+            if s[i] == '%' and i + 2 < n:
+                hex_chars = s[i+1:i+3]
+                try:
+                    byte_val = int(hex_chars, 16)
+                    result.append(chr(byte_val))
+                    i += 3
+                except (ValueError, IndexError):
+                    result.append(s[i])
+                    i += 1
+            else:
+                result.append(s[i])
+                i += 1
+        return ''.join(result)
+
+    if not qs:
+        return []
+
+    pairs = []
+    # Split on '&' only
+    parts = qs.split('&')
+    for part in parts:
+        if not part:
+            continue
+        # Check if there's an '='
+        if '=' in part:
+            key_part, value_part = part.split('=', 1)
+        else:
+            key_part = part
+            value_part = ''
+        key = _unquote(key_part)
+        value = _unquote(value_part)
+        pairs.append((key, value))
+
+    return pairs

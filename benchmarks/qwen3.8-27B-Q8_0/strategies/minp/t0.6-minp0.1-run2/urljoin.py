@@ -1,0 +1,230 @@
+def urljoin_(base, url):
+    """
+    Reproduce urllib.parse.urljoin behavior from scratch per RFC 3986.
+    """
+    if not base:
+        # If base is empty, treat url as absolute
+        return url
+
+    # Parse base URL into components
+    base_scheme, base_netloc, base_path, base_query, base_fragment = _parse_url(base)
+    
+    # Parse url into components
+    url_scheme, url_netloc, url_path, url_query, url_fragment = _parse_url(url)
+    
+    # If url has a scheme, it's absolute
+    if url_scheme:
+        # The result is the url itself, but we need to handle the case
+        # where url is just a scheme or has empty parts
+        # Reconstruct from url components
+        return _build_url(url_scheme, url_netloc, url_path, url_query, url_fragment)
+    
+    # If url starts with //, it's scheme-relative
+    if url.startswith('//'):
+        # Use base scheme, url netloc, path, query, fragment
+        # But we need to be careful: url_netloc should be extracted properly
+        # Our _parse_url should have captured this
+        return _build_url(base_scheme, url_netloc, url_path, url_query, url_fragment)
+    
+    # If url starts with /, it's an absolute path
+    if url.startswith('/'):
+        # Use base scheme and netloc, url path, query, fragment
+        return _build_url(base_scheme, base_netloc, url_path, url_query, url_fragment)
+    
+    # If url is empty, return base without fragment
+    if url == '':
+        return _build_url(base_scheme, base_netloc, base_path, base_query, '')
+    
+    # If url starts with ?, it's query-only
+    if url.startswith('?'):
+        # Use base scheme, netloc, path, url query, url fragment
+        return _build_url(base_scheme, base_netloc, base_path, url_query, url_fragment)
+    
+    # If url starts with #, it's fragment-only
+    if url.startswith('#'):
+        # Use base scheme, netloc, path, base query, url fragment
+        return _build_url(base_scheme, base_netloc, base_path, base_query, url_fragment)
+    
+    # Relative path reference
+    # Merge base path with url path
+    # If base has netloc, base path should start with /
+    # If base path is empty and base has netloc, base path is '/'
+    
+    if base_netloc and not base_path:
+        merged_path = '/' + url
+    else:
+        # Take the directory portion of base_path
+        # The directory is everything up to and including the last '/'
+        # If no '/', directory is ''
+        if '/' in base_path:
+            last_slash = base_path.rfind('/')
+            dir_part = base_path[:last_slash + 1]
+        else:
+            dir_part = ''
+        
+        merged_path = dir_part + url
+    
+    # Normalize the merged path (remove . and ..)
+    normalized_path = _normalize_path(merged_path)
+    
+    return _build_url(base_scheme, base_netloc, normalized_path, url_query, url_fragment)
+
+
+def _parse_url(url):
+    """
+    Parse a URL into (scheme, netloc, path, query, fragment)
+    """
+    scheme = ''
+    netloc = ''
+    path = ''
+    query = ''
+    fragment = ''
+    
+    if not url:
+        return (scheme, netloc, path, query, fragment)
+    
+    # Extract fragment
+    if '#' in url:
+        idx = url.index('#')
+        fragment = url[idx+1:]
+        url = url[:idx]
+    
+    # Extract query
+    if '?' in url:
+        idx = url.index('?')
+        query = url[idx+1:]
+        url = url[:idx]
+    
+    # Extract scheme
+    if ':' in url:
+        idx = url.index(':')
+        # Scheme must be followed by // or be a valid scheme
+        # RFC 3986: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+        scheme_part = url[:idx]
+        if _is_valid_scheme(scheme_part):
+            scheme = scheme_part.lower()
+            url = url[idx+1:]
+        else:
+            # Not a valid scheme, treat as part of path
+            pass
+    
+    # Extract netloc
+    if url.startswith('//'):
+        url = url[2:]
+        # Netloc ends at the first /, ?, or #
+        # But we've already removed ? and #
+        if '/' in url:
+            idx = url.index('/')
+            netloc = url[:idx]
+            path = url[idx:]
+        else:
+            netloc = url
+            path = ''
+    else:
+        path = url
+    
+    return (scheme, netloc, path, query, fragment)
+
+
+def _is_valid_scheme(scheme):
+    """Check if a string is a valid scheme per RFC 3986"""
+    if not scheme:
+        return False
+    if not scheme[0].isalpha():
+        return False
+    for c in scheme:
+        if not (c.isalnum() or c in '+-.'):
+            return False
+    return True
+
+
+def _build_url(scheme, netloc, path, query, fragment):
+    """
+    Build a URL from components
+    """
+    result = ''
+    if scheme:
+        result += scheme + ':'
+    if netloc:
+        result += '//' + netloc
+    result += path
+    if query:
+        result += '?' + query
+    if fragment:
+        result += '#' + fragment
+    return result
+
+
+def _normalize_path(path):
+    """
+    Normalize a path by resolving . and .. segments
+    """
+    if not path:
+        return path
+    
+    # Split into segments
+    segments = path.split('/')
+    # Preserve leading empty string if path starts with /
+    # e.g., '/a/b' -> ['', 'a', 'b']
+    # 'a/b' -> ['a', 'b']
+    
+    normalized = []
+    for seg in segments:
+        if seg == '.':
+            continue
+        elif seg == '..':
+            if normalized and normalized[-1] != '':
+                # Pop the last segment, but don't pop the root
+                normalized.pop()
+        else:
+            normalized.append(seg)
+    
+    # Rejoin
+    result = '/'.join(normalized)
+    
+    # If the original path started with '/', ensure result starts with '/'
+    if path.startswith('/') and not result.startswith('/'):
+        result = '/' + result
+    
+    # Handle trailing slash: if path ended with '/' and the last segment wasn't . or ..
+    # Actually, let's think about this more carefully
+    # If path is '/a/b/', segments = ['', 'a', 'b', '']
+    # normalized = ['', 'a', 'b', '']
+    # result = '/a/b/'
+    
+    # If path is '/a/b/./', segments = ['', 'a', 'b', '.', '']
+    # normalized = ['', 'a', 'b', '']
+    # result = '/a/b/'
+    
+    # If path is '/a/b/../', segments = ['', 'a', 'b', '..', '']
+    # normalized: '' -> ['', 'a', 'b', ''] then '..' pops 'b' -> ['', 'a', '']
+    # result = '/a/'
+    
+    # If path is '/a/../', segments = ['', 'a', '..', '']
+    # normalized: '' -> ['', 'a', ''] then '..' pops 'a' -> ['', '']
+    # result = '/'
+    
+    # If path is '/..', segments = ['', '..']
+    # normalized: '' -> [''] then '..' can't pop empty string? 
+    # Actually, if normalized[-1] is '', we don't pop
+    # So normalized = ['', '..'] -> wait, no
+    # Let me re-trace: segments = ['', '..']
+    # seg='': normalized=['']
+    # seg='..': normalized[-1] is '', so we don't pop, but we also don't append? 
+    # In my code, for '..', if normalized and normalized[-1] != '', pop. Otherwise, do nothing.
+    # So normalized stays ['']
+    # result = ''
+    # But path starts with '/', so result = '/'
+    # That seems right: '/../' normalizes to '/'
+    
+    # What about '/a/../../'?
+    # segments = ['', 'a', '..', '..', '']
+    # normalized: '' -> ['']
+    # 'a' -> ['', 'a']
+    # '..' -> pop 'a' -> ['']
+    # '..' -> normalized[-1] is '', don't pop -> ['']
+    # '' -> ['', '']
+    # result = '/'
+    # That's correct.
+    
+    return result

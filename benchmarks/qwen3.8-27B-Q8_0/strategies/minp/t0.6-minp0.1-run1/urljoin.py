@@ -1,0 +1,157 @@
+def urljoin_(base, url):
+    """
+    Reproduce urllib.parse.urljoin behavior from scratch per RFC 3986.
+    """
+    if not base:
+        base = ""
+    if not url:
+        url = ""
+
+    # Parse a URL into components: scheme, netloc, path, query, fragment
+    def parse_url(s):
+        s = s.strip()
+        scheme = ""
+        rest = s
+        if "://" in s:
+            idx = s.index("://")
+            scheme = s[:idx].lower()
+            rest = s[idx + 3:]
+        elif s.startswith("//"):
+            # scheme-relative
+            rest = s[2:]
+        else:
+            # Check if it starts with a scheme (e.g., "http:", "mailto:")
+            # A scheme is defined as ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+            i = 0
+            while i < len(s) and s[i] != ":" and s[i] != "/" and s[i] != "?" and s[i] != "#":
+                i += 1
+            if i > 0 and i < len(s) and s[i] == ":":
+                # Check if the part before colon is a valid scheme
+                potential_scheme = s[:i]
+                if potential_scheme and potential_scheme[0].isalpha():
+                    all_valid = all(
+                        c.isalnum() or c in '+-.' for c in potential_scheme
+                    )
+                    if all_valid:
+                        scheme = potential_scheme.lower()
+                        rest = s[i + 1:]
+        
+        # Now parse rest: netloc, path, query, fragment
+        netloc = ""
+        path = ""
+        query = ""
+        fragment = ""
+        
+        if rest.startswith("//"):
+            # has netloc
+            rest = rest[2:]
+            # netloc goes until next /, ?, or #
+            end = len(rest)
+            for i, c in enumerate(rest):
+                if c in "/?#":
+                    end = i
+                    break
+            netloc = rest[:end]
+            rest = rest[end:]
+        
+        # Now rest starts with path (possibly empty), then ?query, then #fragment
+        # Extract fragment first
+        if "#" in rest:
+            frag_idx = rest.index("#")
+            fragment = rest[frag_idx + 1:]
+            rest = rest[:frag_idx]
+        
+        # Extract query
+        if "?" in rest:
+            query_idx = rest.index("?")
+            query = rest[query_idx + 1:]
+            rest = rest[:query_idx]
+        
+        path = rest
+        
+        return scheme, netloc, path, query, fragment
+
+    def remove_dot_segments(path):
+        """Remove dot segments from a path per RFC 3986 section 5.2.4."""
+        segments = []
+        parts = path.split("/")
+        for part in parts:
+            if part == ".":
+                continue
+            elif part == "..":
+                if segments and segments[-1] != "":
+                    segments.pop()
+                # if segments is empty or last is "", do nothing (can't go above root)
+            else:
+                segments.append(part)
+        
+        # Reconstruct path
+        result = "/".join(segments)
+        # Preserve leading slash if original path started with /
+        if path.startswith("/") and not result.startswith("/"):
+            result = "/" + result
+        # Preserve trailing slash if original path ended with / or ./ or ../
+        if path.endswith("/") or path.endswith("/.") or path.endswith("/.."):
+            if not result.endswith("/"):
+                result += "/"
+        return result
+
+    def reassemble(scheme, netloc, path, query, fragment):
+        result = ""
+        if scheme:
+            result += scheme + ":"
+        if netloc:
+            result += "//" + netloc
+        result += path
+        if query:
+            result += "?" + query
+        if fragment:
+            result += "#" + fragment
+        return result
+
+    base_scheme, base_netloc, base_path, base_query, base_fragment = parse_url(base)
+    url_scheme, url_netloc, url_path, url_query, url_fragment = parse_url(url)
+
+    # RFC 3986 section 5.3
+    if url_scheme:
+        # Case A: absolute URL
+        result = reassemble(url_scheme, url_netloc, url_path, url_query, url_fragment)
+        return result
+
+    if url_netloc:
+        # Case B: network-path reference (//host/path)
+        result = reassemble(base_scheme, url_netloc, url_path, url_query, url_fragment)
+        return result
+
+    if not url_path:
+        if not url_query:
+            # Case C: empty path and empty query -> use base path and query, override fragment
+            result = reassemble(base_scheme, base_netloc, base_path, base_query, url_fragment)
+            return result
+        else:
+            # Case D: empty path, non-empty query -> use base path, override query and fragment
+            result = reassemble(base_scheme, base_netloc, base_path, url_query, url_fragment)
+            return result
+
+    # Now url_path is non-empty
+    if url_path.startswith("/"):
+        # Case E: absolute path
+        result = reassemble(base_scheme, base_netloc, remove_dot_segments(url_path), url_query, url_fragment)
+        return result
+
+    # Case F: relative path
+    # Merge base path and relative path
+    if base_netloc and not base_path:
+        # base path is empty, use "/"
+        merged_path = "/" + url_path
+    else:
+        # Take base path up to last slash
+        last_slash = base_path.rfind("/")
+        if last_slash == -1:
+            merged_path = url_path
+        else:
+            merged_path = base_path[:last_slash + 1] + url_path
+    
+    merged_path = remove_dot_segments(merged_path)
+    result = reassemble(base_scheme, base_netloc, merged_path, url_query, url_fragment)
+    return result

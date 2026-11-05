@@ -1,0 +1,276 @@
+def wrap_(text, width):
+    """
+    Reproduce textwrap.wrap(text, width) with default options from scratch.
+    
+    Default options:
+    - whitespace is collapsed (all whitespace characters become a single space)
+    - tabs are expanded (tab = 8 spaces, but since we collapse whitespace, 
+      this effectively means tabs become part of the whitespace that gets collapsed)
+    - words longer than width ARE broken
+    - result is a list of lines none longer than width (except where a single 
+      unbreakable chunk forces it)
+    
+    Note: In the standard textwrap module, "tabs expanded" means tab characters 
+    are replaced with spaces to reach the next tab stop (default tabstop=8). 
+    However, since whitespace is also collapsed, any sequence of whitespace 
+    (including tabs, spaces, newlines, etc.) is replaced by a single space.
+    The order of operations in textwrap is: first expand tabs, then collapse whitespace.
+    But when collapsing, all whitespace (including the expanded tabs) becomes one space.
+    
+    Let me reconsider: textwrap.wrap with default settings:
+    1. Expands tabs (tab characters replaced with spaces to align to tab stops)
+    2. Collapses all whitespace (sequences of whitespace chars) to a single space
+    3. Wraps the text
+    
+    Actually, looking at the textwrap source, the process is:
+    - First, the text is processed: tabs are expanded, and then whitespace is collapsed.
+    - The default is to collapse whitespace (collapse_whitespace=True)
+    - The default is to expand tabs (tabsize=8, and tabs are expanded before collapsing)
+    
+    Let me implement this properly:
+    1. Expand tabs: replace each tab with spaces to reach the next multiple of 8
+    2. Collapse whitespace: replace any sequence of whitespace with a single space
+    3. Strip leading/trailing whitespace
+    4. Split into words
+    5. Wrap words into lines of at most width characters, breaking long words if needed
+    """
+    import re
+    
+    # Step 1: Expand tabs
+    # Replace tabs with appropriate number of spaces
+    expanded = []
+    col = 0
+    for ch in text:
+        if ch == '\t':
+            # Next tab stop is at (col // 8 + 1) * 8
+            next_tab = (col // 8 + 1) * 8
+            spaces_needed = next_tab - col
+            expanded.append(' ' * spaces_needed)
+            col += spaces_needed
+        else:
+            expanded.append(ch)
+            col += 1
+    
+    expanded_text = ''.join(expanded)
+    
+    # Step 2: Collapse all whitespace to single spaces
+    # Whitespace characters: space, tab (already expanded), newline, carriage return, form feed, vertical tab
+    # After tab expansion, we just need to collapse sequences of whitespace
+    # Use regex to replace any sequence of whitespace with a single space
+    collapsed = re.sub(r'\s+', ' ', expanded_text)
+    
+    # Step 3: Strip leading and trailing whitespace
+    collapsed = collapsed.strip()
+    
+    # If the text is empty, return empty list
+    if not collapsed:
+        return []
+    
+    # Step 4: Split into words
+    words = collapsed.split(' ')
+    
+    # Step 5: Wrap words into lines
+    lines = []
+    current_line = []
+    current_len = 0
+    
+    for word in words:
+        # If the word itself is longer than width, we need to break it
+        # But first, let's check if we can fit the whole word
+        
+        # If current line is empty and the word fits, just add it
+        # If current line is not empty and word would exceed width, we need to handle
+        
+        if not current_line:
+            # Current line is empty
+            if len(word) <= width:
+                current_line.append(word)
+                current_len = len(word)
+            else:
+                # Word is longer than width, break it
+                # But we need to be careful: the first line gets width characters,
+                # subsequent breaks also get width characters
+                # Actually, for a single word longer than width, we break it into
+                # chunks of at most width characters
+                # But we add it to the current line and handle overflow
+                
+                # Add the word, it will be broken when we flush
+                current_line.append(word)
+                current_len = len(word)
+        else:
+            # Current line has content
+            # Check if adding this word (with a space) would exceed width
+            new_len = current_len + 1 + len(word)
+            if new_len <= width:
+                current_line.append(word)
+                current_len = new_len
+            else:
+                # Flush current line
+                lines.append(' '.join(current_line))
+                current_line = []
+                current_len = 0
+                
+                # Now try to add the word to the new empty line
+                if len(word) <= width:
+                    current_line.append(word)
+                    current_len = len(word)
+                else:
+                    current_line.append(word)
+                    current_len = len(word)
+    
+    # Flush the last line
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    # Now handle words that are longer than width
+    # We need to go through each line and break any word that is too long
+    # Actually, let me reconsider the approach. The above approach doesn't properly
+    # handle breaking long words. Let me redo this.
+    
+    # Better approach:
+    lines = []
+    current_line = []
+    current_len = 0
+    
+    for word in words:
+        # If the word is longer than width, we need to break it into pieces
+        # Each piece is at most width characters long
+        
+        # First, if current line is not empty, we should flush it if adding
+        # even the first part of the word wouldn't fit, or just check
+        
+        # Let me think about this differently. We process words one by one.
+        # For each word:
+        # - If word length <= width:
+        #   - If current line + space + word <= width: add to current line
+        #   - Else: flush current line, start new line with this word
+        # - If word length > width:
+        #   - We need to break it. The first part goes to current line if possible,
+        #     and the rest goes to subsequent lines.
+        
+        word_len = len(word)
+        
+        if word_len <= width:
+            if current_len == 0:
+                current_line.append(word)
+                current_len = word_len
+            else:
+                # Check if we can fit
+                if current_len + 1 + word_len <= width:
+                    current_line.append(word)
+                    current_len += 1 + word_len
+                else:
+                    # Flush current line
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                    current_len = word_len
+        else:
+            # Word is longer than width, need to break it
+            # The word gets broken into chunks of at most width characters
+            
+            # If current line is not empty, flush it first
+            if current_len > 0:
+                lines.append(' '.join(current_line))
+                current_line = []
+                current_len = 0
+            
+            # Now break the word into pieces of at most width
+            # The first piece can be up to width chars, and subsequent pieces too
+            # But wait: when we break a word, the pieces are just contiguous
+            # substrings of the word, each at most width long
+            
+            pos = 0
+            first = True
+            while pos < word_len:
+                if first:
+                    # First piece goes to the (now empty) current line
+                    piece = word[pos:pos+width]
+                    current_line.append(piece)
+                    current_len = len(piece)
+                    pos += len(piece)
+                    first = False
+                else:
+                    # Subsequent pieces go to new lines
+                    # But we need to flush the current line first? No, 
+                    # actually each piece that is exactly width long forms its own line
+                    # if it's a full-width piece. Let me think...
+                    
+                    # Actually, the way textwrap works: when a word is broken,
+                    # each chunk of the word occupies its own line if it fills
+                    # the line, or it starts a new line.
+                    
+                    # Let me reconsider: after the first piece, the current line
+                    # has current_len = width (since we took width chars). 
+                    # So we should flush it and start a new line.
+                    
+                    # Wait, no. Let me look at how textwrap actually handles this.
+                    
+                    # In textwrap, when a word is too long, it's broken into
+                    # pieces. Each piece is added as if it were a "word" but without
+                    # the normal space-separated word logic. The pieces are placed
+                    # on lines such that each line is at most width characters.
+                    
+                    # For a word of length L > width, it's broken into ceil(L/width)
+                    # pieces, each of length at most width. The first piece starts
+                    # on the current line (which was flushed, so it's a new line).
+                    # Each subsequent piece starts on a new line.
+                    
+                    # So: flush current line, add next piece as a new line.
+                    lines.append(' '.join(current_line))
+                    current_line = []
+                    current_len = 0
+                    
+                    piece = word[pos:pos+width]
+                    current_line.append(piece)
+                    current_len = len(piece)
+                    pos += len(piece)
+                    
+                    # If this piece is exactly width, it will be flushed at the start
+                    # of the next iteration or at the end
+                    
+                    # Actually, I need to be more careful. Let me just add the piece
+                    # and let the normal flow handle flushing.
+                    
+            # After processing all pieces of the word, current_line has the last piece
+            # and current_len is the length of that piece
+    
+    # Flush the last line
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    # Now, some lines might still be too long if a single word (not broken properly) 
+    # or due to my logic above. Let me verify by checking each line and breaking
+    # any that are too long. But actually, my logic should handle this.
+    
+    # Wait, I think there's an issue with my breaking logic. Let me trace through:
+    # Suppose width=10, word="abcdefghij" (length 10) -> fits exactly
+    # word="abcdefghijk" (length 11) -> broken into "abcdefghij" and "k"
+    # 
+    # In my code:
+    # - current_len > 0? If so, flush. Say current is empty.
+    # - first=True, piece = word[0:10] = "abcdefghij", current_line=["abcdefghij"], 
+    #   current_len=10, pos=10, first=False
+    # - Loop: pos=10 < 11, first=False
+    #   - lines.append("abcdefghij"), current_line=[], current_len=0
+    #   - piece = word[10:20] = "k", current_line=["k"], current_len=11? No, len("k")=1
+    #   - pos=11
+    # - Loop ends
+    # - current_line=["k"], so at the end, lines.append("k")
+    # Result: ["abcdefghij", "k"] - correct!
+    
+    # But wait, what if the current line wasn't empty before the long word?
+    # Say current_line = ["hello"], current_len = 5, width = 10
+    # word = "abcdefghijk" (length 11)
+    # - current_len > 0, so flush: lines.append("hello")
+    # - Then break the word as above: ["abcdefghij", "k"]
+    # Result: ["hello", "abcdefghij", "k"] - correct!
+    
+    # What about width=10, word="abcdefghij" (length 10, exactly width)?
+    # - word_len <= width, so normal logic
+    # - If current is empty: current_line=["abcdefghij"], current_len=10
+    # - At end: lines.append("abcdefghij") - correct
+    
+    # I think the logic is correct. But let me also handle the edge case where
+    # after breaking a word, the last piece might be empty (shouldn't happen)
+    
+    return lines

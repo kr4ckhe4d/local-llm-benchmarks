@@ -1,0 +1,309 @@
+```python
+def urljoin_(base, url):
+    """
+    Reproduce urllib.parse.urljoin from scratch per RFC 3986.
+    
+    Args:
+        base: The base URL string.
+        url: The reference URL string to resolve against base.
+    
+    Returns:
+        The resolved absolute URL string.
+    """
+    # Parse a URL into its components: (scheme, netloc, path, query, fragment)
+    # We do minimal parsing without full RFC 3986 validation, just enough for resolution.
+    
+    def parse_url(u):
+        if not isinstance(u, str):
+            raise TypeError("url must be a string")
+        
+        scheme = None
+        rest = u
+        
+        # Check for scheme
+        if u:
+            i = 0
+            # First char must be a letter
+            if u[0].isalpha():
+                j = 1
+                while j < len(u):
+                    c = u[j]
+                    if c.isalnum() or c in '+-.':
+                        j += 1
+                    else:
+                        break
+                if j < len(u) and u[j] == ':':
+                    scheme = u[:j].lower()
+                    rest = u[j+1:]
+        
+        # Now parse rest: netloc, path, query, fragment
+        # If rest starts with //, it's a network path
+        netloc = None
+        if rest.startswith('//'):
+            rest = rest[2:]
+            # Find the end of netloc: first '/', '?', or '#'
+            i = 0
+            while i < len(rest):
+                if rest[i] in '/?#':
+                    break
+                i += 1
+            netloc = rest[:i]
+            rest = rest[i:]
+        
+        # Now split off query and fragment
+        fragment = None
+        if '#' in rest:
+            hash_idx = rest.index('#')
+            fragment = rest[hash_idx+1:]
+            rest = rest[:hash_idx]
+        
+        query = None
+        if '?' in rest:
+            q_idx = rest.index('?')
+            query = rest[q_idx+1:]
+            rest = rest[:q_idx]
+        
+        path = rest
+        
+        return (scheme, netloc, path, query, fragment)
+    
+    def remove_dot_segments(path):
+        """Remove dot segments from a path per RFC 3986 section 5.2.4."""
+        if not path:
+            return path
+        
+        # We need to handle the path carefully. The algorithm works on a path string.
+        # RFC 3986 says to process the path as a series of segments.
+        
+        input_ = path
+        output = []
+        
+        # If path starts with '/', keep it
+        if input_.startswith('/'):
+            output.append('/')
+            input_ = input_[1:]
+        
+        # Split into segments
+        segments = input_.split('/')
+        
+        for seg in segments:
+            if seg == '.':
+                continue
+            elif seg == '..':
+                if output and output[-1] != '/':
+                    # Pop the last segment
+                    # Find the last '/' in the joined output
+                    out_str = ''.join(output)
+                    if '/' in out_str:
+                        last_slash = out_str.rfind('/')
+                        output = [out_str[:last_slash+1]]
+                    else:
+                        output = []
+                # else: at root, ignore ..
+            else:
+                output.append(seg)
+        
+        result = ''.join(output)
+        
+        # If the original path ended with / or ./ or ../, ensure we end with /
+        # RFC 3986: if the input ends with '/', the output should too
+        if input_.endswith('/'):
+            if not result.endswith('/'):
+                result += '/'
+        
+        return result
+    
+    # Parse base
+    base_scheme, base_netloc, base_path, base_query, base_fragment = parse_url(base)
+    
+    # If base is empty or invalid, we can't resolve
+    if not base:
+        # If base is empty, url must be absolute
+        if url and url[0].isalpha():
+            # Check if it's a valid absolute URL
+            # Try to parse it
+            u_scheme, u_netloc, u_path, u_query, u_fragment = parse_url(url)
+            if u_scheme:
+                # Reconstruct
+                s = u_scheme + ':'
+                if u_netloc is not None:
+                    s += '//' + u_netloc
+                if u_path:
+                    s += u_path
+                else:
+                    # If no path but has query or fragment, add nothing for path
+                    pass
+                if u_query is not None:
+                    s += '?' + u_query
+                if u_fragment is not None:
+                    s += '#' + u_fragment
+                return s
+        # If base is empty and url is not absolute, we can't resolve properly.
+        # urllib.parse.urljoin returns '' or the url depending on version.
+        # For simplicity, if base is empty, return url if it looks absolute, else empty.
+        # Actually, let's follow: if base is empty, we treat it as having no scheme.
+        # This is an edge case. Let's handle by treating base as "" which has no scheme.
+        # The reference resolution requires a base with a scheme.
+        # In practice, urllib.parse.urljoin("", "http://example.com") returns "http://example.com"
+        # and urllib.parse.urljoin("", "/path") returns "/path" which is not absolute.
+        # Let's just return url in this case if it can't be resolved properly.
+        # But the problem says "reproducing urllib.parse.urljoin", so let's be careful.
+        # For empty base, urllib.parse.urljoin returns:
+        # - if url is absolute, url
+        # - otherwise, url (which may not be absolute)
+        # Let's just return url for empty base case.
+        return url
+    
+    # Parse the reference url
+    u_scheme, u_netloc, u_path, u_query, u_fragment = parse_url(url)
+    
+    # Step 1: If the reference has a scheme, remove the base's components
+    if u_scheme is not None:
+        # The reference is an absolute URL
+        # Reconstruct the reference URL
+        result = u_scheme + ':'
+        if u_netloc is not None:
+            result += '//' + u_netloc
+        if u_path:
+            result += u_path
+        elif u_query is not None or u_fragment is not None:
+            # If no path but query or fragment, we don't add anything for path
+            pass
+        if u_query is not None:
+            result += '?' + u_query
+        if u_fragment is not None:
+            result += '#' + u_fragment
+        return result
+    
+    # Step 2: If the reference is empty, return the base without fragment
+    if url == '':
+        # Return base without fragment
+        result = base_scheme + ':'
+        if base_netloc is not None:
+            result += '//' + base_netloc
+        if base_path:
+            result += base_path
+        elif base_query is not None or base_fragment is not None:
+            # If no path but query or fragment
+            pass
+        if base_query is not None:
+            result += '?' + base_query
+        # Do NOT include fragment
+        return result
+    
+    # Step 3: If the reference has no scheme, remove the fragment from base
+    # Now we have: base with scheme and netloc (possibly), and reference with path/query/fragment
+    
+    # Determine the new path
+    if u_netloc is not None:
+        # Network-path reference: //host/path
+        new_path = u_path
+        new_netloc = u_netloc
+    elif u_path.startswith('/'):
+        # Absolute-path reference
+        new_path = u_path
+        new_netloc = base_netloc
+    elif u_path == '' and u_query is None and u_fragment is None:
+        # This case should have been caught by empty url check, but just in case
+        # Actually if url is not empty but path is empty and no query/fragment, that means url was like "?" or "#"
+        # Wait, we handled empty url. If url is like "?" or "#", then u_path is '', u_query or u_fragment is set.
+        # So this branch shouldn't be reached with all empty.
+        new_path = base_path
+        new_netloc = base_netloc
+    elif u_path == '' and (u_query is not None or u_fragment is not None):
+        # Query-only or fragment-only reference
+        # The path stays as base path, query/fragment from reference
+        new_path = base_path
+        new_netloc = base_netloc
+    else:
+        # Relative-path reference
+        # Remove the last segment of base path and append the reference path
+        # Find the last '/' in base_path
+        if base_path and base_path[-1] == '/':
+            # Base path ends with slash, so we just append
+            new_path = base_path + u_path
+        else:
+            # Remove everything after the last '/'
+            if '/' in base_path:
+                last_slash = base_path.rfind('/')
+                new_path = base_path[:last_slash+1] + u_path
+            else:
+                # No slash in base path, so remove the whole base path
+                new_path = u_path
+        new_netloc = base_netloc
+    
+    # Remove dot segments from the new path
+    new_path = remove_dot_segments(new_path)
+    
+    # Determine query and fragment
+    # If reference has a query, use it; otherwise use base query (only if path or netloc changed? No, per RFC 3986)
+    # Actually: 
+    # - If the reference has a query, the new query is the reference's query.
+    # - If the reference has no query but the base has a query, and the reference has a path (including absolute or relative), the query is dropped.
+    # - If the reference has no query and no path (query-only or fragment-only), the query comes from reference if present, else base.
+    
+    # Let me re-read RFC 3986 section 5.3:
+    # 1. If the reference has a scheme, use its scheme, authority, path, query, fragment.
+    # 2. Otherwise, if the reference has an authority, use its authority, path, query, fragment; base's scheme.
+    # 3. Otherwise, if the reference path starts with '/', use its path, query, fragment; base's scheme and authority.
+    # 4. Otherwise, if the reference is empty, use base's everything except fragment.
+    # 5. Otherwise, the reference is a relative-path. 
+    #    - Merge base's path (remove last segment) with reference's path.
+    #    - If reference has a query, use it; else if reference has no path (i.e., query-only or fragment-only), use base's query; else (relative path) no query unless reference has one.
+    #    - Actually: "If the reference string's query component is defined, the new query component is defined to be the reference's query component and the new path is the result of merging the reference path with the base path. Otherwise, the new query component is undefined and the new path is the result of merging the reference path with the base path."
+    #    - Wait, that's not quite right. Let me look again.
+    
+    # From RFC 3986 5.3:
+    # The algorithm is:
+    # 1. If the reference has a scheme, remove the base's scheme, authority, path, query, and fragment.
+    # 2. If the reference does not have a scheme but has an authority component, remove the base's scheme, authority, path, query, and fragment.
+    # 3. If the reference does not have a scheme, authority, or path, and has a query component, remove the base's query and fragment.
+    # 4. If the reference does not have a scheme, authority, path, or query, remove the base's fragment.
+    # 5. If the reference path starts with "/", remove the base's path.
+    # 6. Otherwise, merge the reference path with the base path.
+    
+    # And for query:
+    # - If the reference has a query, use it.
+    # - Otherwise, if the reference has a path (and it's not empty in the relative case), the query is not carried over from base.
+    # - Actually, the standard interpretation is:
+    #   - If reference has query: new query = reference query
+    #   - Else if reference has no path (query-only or fragment-only): new query = base query
+    #   - Else (reference has path, no query): new query = None (drop base query)
+    
+    # Let me simplify based on common implementations:
+    # - new_query = u_query if u_query is not None else (base_query if (u_path == '' and u_netloc is None) else None)
+    # - new_fragment = u_fragment (always from reference, or None if not present)
+    
+    # Actually, fragment: if reference has fragment, use it; else, no fragment.
+    new_fragment = u_fragment  # None if not present
+    
+    # For query:
+    if u_query is not None:
+        new_query = u_query
+    else:
+        # If reference has no query, check if we should keep base query
+        # We keep base query only if the reference is "query-only" or "fragment-only" (i.e., no path change)
+        if u_path == '' and u_netloc is None:
+            # Reference is like "?q" or "#f"
+            new_query = base_query
+        else:
+            # Reference has a path (relative, absolute, or network-path), so drop base query
+            new_query = None
+    
+    # Reconstruct the result
+    result = base_scheme + ':'
+    if new_netloc is not None:
+        result += '//' + new_netloc
+    if new_path:
+        result += new_path
+    elif new_query is not None or new_fragment is not None:
+        # If no path but has query or fragment, we might need to ensure proper format
+        # For example, if netloc is present and no path, we don't add anything for path
+        pass
+    if new_query is not None:
+        result += '?' + new_query
+    if new_fragment is not None:
+        result += '#' + new_fragment
+    
+    return result
+```

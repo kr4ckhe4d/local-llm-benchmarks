@@ -1,0 +1,141 @@
+def glob_match(pattern, name):
+    """
+    Match a name against a glob pattern with fnmatch.fnmatchcase semantics.
+    
+    Supports:
+    - * : matches any sequence of characters (including empty)
+    - ? : matches any single character
+    - [seq] : matches any character in seq
+    - [!seq] : matches any character not in seq
+    - ] immediately after [ or [! is a literal ]
+    - Unterminated [ is a literal [
+    
+    Matching is anchored to the whole string.
+    """
+    def parse_pattern(pattern):
+        """
+        Parse the pattern into a list of tokens.
+        Each token is a tuple:
+        ('star',) - for *
+        ('question',) - for ?
+        ('char', c) - for a literal character c
+        ('class', chars) - for [seq] where chars is a set of characters
+        ('not_class', chars) - for [!seq] where chars is a set of characters
+        """
+        tokens = []
+        i = 0
+        n = len(pattern)
+        while i < n:
+            c = pattern[i]
+            if c == '*':
+                tokens.append(('star',))
+                i += 1
+            elif c == '?':
+                tokens.append(('question',))
+                i += 1
+            elif c == '[':
+                # Check for unterminated [
+                # Find the closing ]
+                # ] immediately after [ or [! is a literal
+                j = i + 1
+                negate = False
+                if j < n and pattern[j] == '!':
+                    negate = True
+                    j += 1
+                # Check if ] is immediately after [ or [!
+                if j < n and pattern[j] == ']':
+                    # ] is literal, so [ is also literal
+                    tokens.append(('char', '['))
+                    tokens.append(('char', ']'))
+                    i += 2
+                    continue
+                # Find the closing ]
+                close_j = j
+                while close_j < n and pattern[close_j] != ']':
+                    close_j += 1
+                if close_j >= n:
+                    # Unterminated [
+                    tokens.append(('char', '['))
+                    i += 1
+                else:
+                    # Extract the class content
+                    content = pattern[j:close_j]
+                    # Parse the content into a set of characters
+                    char_set = set()
+                    k = 0
+                    m = len(content)
+                    while k < m:
+                        ch = content[k]
+                        # Check for range
+                        if k + 2 < m and content[k + 1] == '-':
+                            start_ch = content[k]
+                            end_ch = content[k + 2]
+                            # Add all characters in the range
+                            for code in range(ord(start_ch), ord(end_ch) + 1):
+                                char_set.add(chr(code))
+                            k += 3
+                        else:
+                            char_set.add(ch)
+                            k += 1
+                    if negate:
+                        tokens.append(('not_class', char_set))
+                    else:
+                        tokens.append(('class', char_set))
+                    i = close_j + 1
+            else:
+                tokens.append(('char', c))
+                i += 1
+        return tokens
+
+    def match_tokens(tokens, token_idx, name, name_idx):
+        """
+        Recursively match tokens against name starting at name_idx.
+        Returns True if the remaining tokens match the remaining name.
+        """
+        if token_idx == len(tokens):
+            return name_idx == len(name)
+        
+        token = tokens[token_idx]
+        
+        if token[0] == 'star':
+            # * matches any sequence (including empty)
+            # Try matching zero or more characters
+            # First, try matching zero characters
+            if match_tokens(tokens, token_idx + 1, name, name_idx):
+                return True
+            # Then try matching one or more characters
+            # We can also skip consecutive stars
+            # But more efficiently, try each possible length
+            # Since * can match any sequence, we try advancing name_idx
+            # until the rest of the pattern matches
+            # To avoid exponential blowup, we can use a smarter approach
+            # But for correctness, let's try all possibilities
+            # Actually, we can just try advancing name_idx by 1 and recurse
+            # But this could be exponential. Let's think...
+            # Actually, the standard approach is:
+            # For *, try matching the rest of the pattern at each position from name_idx to len(name)
+            # This is O(n^2) in worst case but correct
+            for next_name_idx in range(name_idx, len(name) + 1):
+                if match_tokens(tokens, token_idx + 1, name, next_name_idx):
+                    return True
+            return False
+        elif token[0] == 'question':
+            if name_idx < len(name):
+                return match_tokens(tokens, token_idx + 1, name, name_idx + 1)
+            return False
+        elif token[0] == 'char':
+            if name_idx < len(name) and name[name_idx] == token[1]:
+                return match_tokens(tokens, token_idx + 1, name, name_idx + 1)
+            return False
+        elif token[0] == 'class':
+            if name_idx < len(name) and name[name_idx] in token[1]:
+                return match_tokens(tokens, token_idx + 1, name, name_idx + 1)
+            return False
+        elif token[0] == 'not_class':
+            if name_idx < len(name) and name[name_idx] not in token[1]:
+                return match_tokens(tokens, token_idx + 1, name, name_idx + 1)
+            return False
+        return False
+
+    tokens = parse_pattern(pattern)
+    return match_tokens(tokens, 0, name, 0)

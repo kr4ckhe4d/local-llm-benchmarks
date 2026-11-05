@@ -1,0 +1,49 @@
+def parse_qsl_(qs):
+    """
+    Parse a query string into a list of (key, value) pairs.
+    
+    - Only '&' is used as the separator (not ';').
+    - '+' is decoded as space.
+    - Percent-escapes are decoded.
+    - Blank values are kept (i.e., empty strings are preserved).
+    - A component with no '=' yields a pair with an empty value.
+    """
+    def unquote(s):
+        """Decode percent-escapes and '+' as space."""
+        # Replace '+' with space first
+        s = s.replace('+', ' ')
+        # Decode percent-escapes
+        result = []
+        i = 0
+        n = len(s)
+        while i < n:
+            if s[i] == '%' and i + 2 < n:
+                hex_chars = s[i+1:i+3]
+                try:
+                    code_point = int(hex_chars, 16)
+                    result.append(chr(code_point))
+                    i += 3
+                except ValueError:
+                    # Invalid hex, treat as literal
+                    result.append(s[i])
+                    i += 1
+            else:
+                result.append(s[i])
+                i += 1
+        return ''.join(result)
+    
+    if not qs:
+        return []
+    
+    pairs = []
+    # Split by '&' only
+    components = qs.split('&')
+    for component in components:
+        if '=' in component:
+            key, value = component.split('=', 1)
+        else:
+            key = component
+            value = ''
+        pairs.append((unquote(key), unquote(value)))
+    
+    return pairs

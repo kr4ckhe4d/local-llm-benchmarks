@@ -1,0 +1,140 @@
+```python
+def glob_match(pattern, name):
+    """
+    Match 'name' against 'pattern' using fnmatch.fnmatchcase semantics.
+    
+    Supported:
+      * : matches any sequence of characters (including empty)
+      ? : matches any single character
+      [seq] : matches any character in seq
+      [!seq] : matches any character NOT in seq
+      ] immediately after [ or [! is a literal ]
+      Unterminated [ is treated as literal [
+    
+    The match is anchored: the entire 'name' must match the entire 'pattern'.
+    """
+    # We'll use memoized recursion for clarity, but since patterns and names
+    # can be long, let's use iterative backtracking or dynamic programming.
+    # Actually, let's use a recursive approach with memoization for correctness,
+    # or better, a dynamic programming approach.
+    
+    # Let's think about this more carefully. The pattern has * which makes it
+    # potentially ambiguous. We can use a recursive backtracking approach.
+    
+    # For efficiency and to avoid stack overflow on long inputs, let's use
+    # dynamic programming.
+    
+    # dp[i][j] = True if pattern[i:] matches name[j:]
+    
+    n = len(name)
+    m = len(pattern)
+    
+    # dp will be (m+1) x (n+1)
+    # dp[m][n] = True (empty pattern matches empty name)
+    # dp[m][j] = False for j < n (empty pattern can't match non-empty name)
+    # dp[i][n] needs to be computed based on whether remaining pattern can match empty
+    
+    dp = [[False] * (n + 1) for _ in range(m + 1)]
+    
+    # Base case: empty pattern matches empty name
+    dp[m][n] = True
+    
+    # Fill in the last row: pattern[i:] vs empty name
+    # A pattern ending can match empty only if it's all *'s
+    for i in range(m - 1, -1, -1):
+        if pattern[i] == '*':
+            dp[i][n] = dp[i + 1][n]
+        else:
+            dp[i][n] = False
+    
+    # Fill in dp[i][j] for i from m-1 down to 0, j from n-1 down to 0
+    for i in range(m - 1, -1, -1):
+        for j in range(n - 1, -1, -1):
+            p = pattern[i]
+            if p == '*':
+                # * matches empty, so dp[i][j] = dp[i+1][j]
+                # or * matches name[j] and more, so dp[i][j] = dp[i][j+1]
+                # Actually: * matches any sequence. So either:
+                # 1. * matches zero chars: then pattern[i+1:] must match name[j:]
+                # 2. * matches name[j] and continues: then pattern[i:] (i.e., *) must match name[j+1:]
+                dp[i][j] = dp[i + 1][j] or dp[i][j + 1]
+            elif p == '?':
+                # ? matches exactly one character
+                dp[i][j] = dp[i + 1][j + 1]
+            elif p == '[':
+                # Need to parse the character class
+                # Find the matching ]
+                # ] immediately after [ or [! is literal
+                k = i + 1
+                negated = False
+                if k < m and pattern[k] == '!':
+                    negated = True
+                    k += 1
+                
+                # Check if ] is immediately next (making it literal)
+                if k < m and pattern[k] == ']':
+                    # ] is literal, so we need to find the real ]
+                    k += 1
+                
+                # Find the closing ]
+                end = k
+                while end < m and pattern[end] != ']':
+                    end += 1
+                
+                if end == m:
+                    # Unterminated [ is treated as literal [
+                    # So pattern[i] is literal '['
+                    dp[i][j] = (name[j] == '[') and dp[i + 1][j + 1]
+                else:
+                    # The class is pattern[k:end]
+                    cls = pattern[k:end]
+                    # Check if name[j] is in the class (accounting for negation)
+                    in_class = _char_in_class(name[j], cls, negated)
+                    dp[i][j] = in_class and dp[i + 1][end + 1][j + 1] if False else in_class and dp[i + 1][j + 1] if False else in_class and _match_after_class(pattern, i, end, j, name, dp, m, n)
+                    # Wait, I need to be more careful. After matching the class, 
+                    # the next part of the pattern starts at end + 1, not i + 1.
+                    # Let me restructure.
+                    dp[i][j] = in_class and dp[end + 1][j + 1]
+            else:
+                # Literal character
+                dp[i][j] = (p == name[j]) and dp[i + 1][j + 1]
+    
+    return dp[0][0]
+
+
+def _char_in_class(c, cls, negated):
+    """
+    Check if character c is in the character class defined by cls,
+    accounting for negation.
+    
+    cls can contain:
+      - single characters
+      - ranges like a-z
+    """
+    # Parse the class content
+    # We need to check if c matches any of the ranges or literal chars in cls
+    
+    i = 0
+    length = len(cls)
+    matched = False
+    
+    while i < length:
+        if i + 2 < length and cls[i + 1] == '-':
+            # Possible range: cls[i]-cls[i+2]
+            start = cls[i]
+            end = cls[i + 2]
+            if ord(start) <= ord(c) <= ord(end):
+                matched = True
+                break
+            i += 3
+        else:
+            if cls[i] == c:
+                matched = True
+                break
+            i += 1
+    
+    if negated:
+        return not matched
+    else:
+        return matched
+```

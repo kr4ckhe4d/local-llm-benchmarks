@@ -1,0 +1,29 @@
+import calendar
+
+def add_months(y, m, d, n):
+    """
+    Add n calendar months to the given date (y, m, d).
+    If the resulting day doesn't exist in the target month, clamp to the last day of that month.
+    n can be negative.
+    """
+    # Convert to zero-based month index for easier arithmetic
+    # Total months since year 0
+    total_months = y * 12 + (m - 1)
+    total_months += n
+    
+    # Handle year rollover in both directions
+    new_year = total_months // 12
+    new_month = total_months % 12 + 1
+    
+    # Handle negative years correctly
+    # In Python, // and % with negative numbers:
+    # e.g., -1 // 12 = -1, -1 % 12 = 11 -> new_year = -1, new_month = 12
+    # That's correct: month 0 of year 0 is Jan year 0, month -1 is Dec year -1
+    
+    # Get the last day of the new month
+    last_day = calendar.monthrange(new_year, new_month)[1]
+    
+    # Clamp the day
+    new_day = min(d, last_day)
+    
+    return (new_year, new_month, new_day)

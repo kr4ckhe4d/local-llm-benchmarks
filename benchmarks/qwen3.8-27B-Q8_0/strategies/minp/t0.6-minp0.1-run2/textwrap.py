@@ -1,0 +1,92 @@
+def wrap_(text, width):
+    if width <= 0:
+        raise ValueError("width must be a positive integer")
+    
+    # Expand tabs: replace each tab with spaces to align to next multiple of 8
+    # textwrap expands tabs based on the current column position
+    expanded = []
+    col = 0
+    for ch in text:
+        if ch == '\t':
+            # expand to next multiple of 8
+            spaces = 8 - (col % 8)
+            expanded.append(' ' * spaces)
+            col += spaces
+        else:
+            expanded.append(ch)
+            col += 1
+    text = ''.join(expanded)
+    
+    # Split into words, collapsing whitespace
+    # We need to preserve the structure: split on whitespace, but we want to
+    # handle the case where a word is longer than width by breaking it.
+    
+    # First, let's tokenize: split into sequences of non-whitespace and whitespace
+    tokens = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i].isspace():
+            j = i
+            while j < n and text[j].isspace():
+                j += 1
+            # whitespace run from i to j
+            tokens.append(('ws', text[i:j]))
+            i = j
+        else:
+            j = i
+            while j < n and not text[j].isspace():
+                j += 1
+            tokens.append(('word', text[i:j]))
+            i = j
+    
+    # Now, process tokens to build lines
+    # A "word" may need to be broken if it's longer than width
+    # We'll create a list of "chunks" where each chunk is a piece that can fit in a line
+    # But actually, textwrap.wrap works by:
+    # 1. Splitting into words (collapsing whitespace)
+    # 2. For each word, if it's longer than width, break it into pieces of width
+    # 3. Then pack words into lines
+    
+    # Let's first extract the words (non-whitespace sequences), collapsing whitespace
+    words = []
+    for ttype, tval in tokens:
+        if ttype == 'word':
+            words.append(tval)
+    
+    # Now, break any word that is longer than width into chunks
+    chunks = []
+    for word in words:
+        if len(word) <= width:
+            chunks.append(word)
+        else:
+            # Break into pieces of size width
+            for k in range(0, len(word), width):
+                chunks.append(word[k:k+width])
+    
+    # Now pack chunks into lines
+    lines = []
+    current_line = []
+    current_len = 0
+    
+    for chunk in chunks:
+        if not current_line:
+            # First chunk in line
+            current_line.append(chunk)
+            current_len = len(chunk)
+        else:
+            # Check if adding this chunk (with a space) fits
+            new_len = current_len + 1 + len(chunk)
+            if new_len <= width:
+                current_line.append(chunk)
+                current_len = new_len
+            else:
+                # Start a new line
+                lines.append(' '.join(current_line))
+                current_line = [chunk]
+                current_len = len(chunk)
+    
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    return lines
