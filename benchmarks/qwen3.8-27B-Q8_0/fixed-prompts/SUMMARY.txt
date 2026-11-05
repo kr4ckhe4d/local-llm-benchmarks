@@ -1,0 +1,53 @@
+# Qwen3.8-27B-Q8_0 code-quality on the CORRECTED prompts, 2026-11-05
+# Two prompts contradicted the stdlib they are scored against (see benchmarks/README.md):
+# shlex said a backslash in double quotes escapes $ and `; textwrap said whitespace is
+# collapsed. Both fixed in place in code-quality-test.py. Scores before this folder used
+# the old prompts and can be up to 2 checks low.
+# Harness: benchmarks/code-quality-strategies.py. Every answer and exchange is in the run dirs.
+
+| run                                   | score | clean | textwrap wording | notes |
+| oracle-select                         | 47/50 | 5/7   | final            | misses urljoin dot_only, textwrap empty + random60 |
+| select + repair                       | 45/50 | 5/7   | interim*         | urljoin 9/9; shlex 6/7, textwrap 3/6 |
+| oracle (first run)                    | 45/50 | 5/7   | interim*         | urljoin/textwrap tests never compiled: answers unchanged |
+| baseline: temp 0, thinking off        | 43/50 | 3/7   | final            | was 41 on the old prompts |
+
+* interim wording ("whitespace at each OUTPUT line break...") wrongly implied leading
+  whitespace of the text is dropped; superseded/ holds those baselines (42) and two
+  earlier drafts (promptA 43, promptB 42).
+
+oracle-select: the temp-0 answer plus 5 samples (t0.6, top_p 0.95, top_k 20). The model
+writes a differential test against the REAL stdlib function (edge cases + 300 seeded
+random inputs, prints `MISMATCHES n OF total`). Candidates are ranked by that count,
+then up to 8 fix rounds hill-climb on it, keeping the version with fewest mismatches.
+Hidden checks are never used for selection; an answer importing the reference module
+is voided.
+
+Per task (oracle-select):
+  glob_match   8/8  candidates [5,0,0,1,0,0] -> picked a 0
+  shlex_split  7/7  candidates [150,22,143,150,143,150] -> picked 22, one fix to 0.
+                    First run anywhere to pass dq_escapes and the quoting checks together.
+  urljoin      8/9  candidates [31,302,58,57,64,crash] -> greedy; 8 fixes to 17, dot_only
+                    never fixed. select+repair has hit 9/9, so a 9/9 answer is reachable
+                    by sampling but not by this model's own repair.
+  textwrap     4/6  every candidate "crashed": the test itself had `cases.append("hello", 10)`.
+                    Selection was blind; a fix rewrote the test; climb stuck at 289.
+  csv_rows     7/7  test reported 222 mismatches on a correct answer: a wrong oracle test
+                    is harmless when every candidate is already right.
+  add_months   6/6
+  parse_qsl    7/7
+
+Oracle reruns on urljoin + textwrap only (oracle-rerun*.txt) show the harness fixes
+one at a time: compiling test retries, test-may-be-wrong fix path, "unchanged" nudge
+at t0.6, mismatch counting + keep-best. Best: urljoin 8/9, textwrap 4/6.
+
+Where 50/50 stops:
+- urljoin dot_only (urljoin('http://a/b/c', '.') == 'http://a/b/'): the model's
+  difftest sees it, but no fix in ~40 attempts across runs removes it without breaking
+  something else.
+- textwrap long-word packing / empty input: no answer in ~50 has passed all 6.
+  Best per-task across all corrected-prompt runs is 48/50 (urljoin 9/9 from
+  select+repair) -- but that is picked with the hidden checks, not a method.
+
+Next lever if pursued: when every candidate fails the test at the same line, fix
+the TEST before ranking (textwrap's case here), and rank on several independently
+generated tests rather than one.

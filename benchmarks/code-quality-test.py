@@ -24,6 +24,13 @@ which is the only way to score correctness rather than plausibility.
 import argparse, json, os, re, subprocess, sys, tempfile, textwrap, urllib.request
 from pathlib import Path
 
+# PROMPTS CORRECTED 2026-11-05. Two prompts contradicted the stdlib they are
+# checked against, so following them exactly failed a check. shlex said a
+# backslash in double quotes also escapes $ and ` (POSIX shell, not Python's
+# shlex, which keeps the backslash: "a\$b" -> a\$b), costing dq_escapes;
+# textwrap said whitespace is collapsed (textwrap.wrap keeps runs:
+# 'a   b' -> ['a   b']), costing collapse. Scores before this date were taken
+# on the old prompts and can be up to 2 checks low; see benchmarks/README.md.
 TASKS = [
     # Differential tasks: the model reimplements a stdlib behaviour from
     # scratch, and the checks compare it against the real thing over edge
@@ -68,8 +75,8 @@ CHECKS = [
      "Write a Python function `shlex_split(s)` reproducing shlex.split(s) in "
      "POSIX mode FROM SCRATCH, without importing shlex. Handle: whitespace "
      "splitting; single quotes (everything literal inside, no escapes); "
-     "double quotes (a backslash escapes only another backslash, a double "
-     "quote, a dollar sign or a backtick, and is otherwise literal); "
+     "double quotes (a backslash escapes only another backslash or a double "
+     "quote, and is otherwise literal); "
      "backslash escaping outside quotes; and adjacent quoted and unquoted "
      "runs concatenating into ONE token. Output only the function in one "
      "code block.",
@@ -118,8 +125,12 @@ CHECKS = [
     ("textwrap",
      "Write a Python function `wrap_(text, width)` reproducing "
      "textwrap.wrap(text, width) with default options FROM SCRATCH, without "
-     "importing textwrap. Default options mean: whitespace is collapsed and "
-     "tabs expanded, words longer than width ARE broken, and the result is a "
+     "importing textwrap. Default options mean: tabs are expanded and each "
+     "whitespace character becomes one space (runs are NOT collapsed), "
+     "whitespace at each line break is dropped (trailing whitespace of a "
+     "line and leading whitespace of the next; leading whitespace of the "
+     "whole text is kept), words "
+     "longer than width ARE broken, and the result is a "
      "list of lines none longer than width (except where a single unbreakable "
      "chunk forces it). Output only the function in one code block.",
      '''

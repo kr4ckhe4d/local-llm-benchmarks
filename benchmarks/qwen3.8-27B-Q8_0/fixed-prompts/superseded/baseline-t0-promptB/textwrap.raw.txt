@@ -1,0 +1,184 @@
+```python
+def wrap_(text, width):
+    # Expand tabs: replace each tab with spaces to reach next multiple of 8
+    expanded = []
+    col = 0
+    for ch in text:
+        if ch == '\t':
+            spaces = 8 - (col % 8)
+            expanded.append(' ' * spaces)
+            col += spaces
+        else:
+            expanded.append(ch)
+            col += 1
+    text = ''.join(expanded)
+    
+    # Split into words: each whitespace character becomes one space, runs are NOT collapsed
+    # But we need to identify words and whitespace runs
+    # Actually, the requirement says "each whitespace character becomes one space (runs are NOT collapsed)"
+    # This means we keep the exact whitespace structure but convert all whitespace chars to spaces
+    # Then we split on whitespace to get words, but we need to handle the wrapping properly
+    
+    # Let me re-read: "tabs are expanded and each whitespace character becomes one space (runs are NOT collapsed)"
+    # So after tab expansion, every whitespace char (space, newline, etc.) becomes a single space
+    # Runs of whitespace are NOT collapsed, so "a  b" stays as "a  b" (two spaces)
+    
+    # Convert all whitespace to spaces
+    result_chars = []
+    for ch in text:
+        if ch.isspace():
+            result_chars.append(' ')
+        else:
+            result_chars.append(ch)
+    text = ''.join(result_chars)
+    
+    # Now split into words and whitespace tokens
+    # We need to wrap such that each line is at most width chars
+    # Words longer than width ARE broken
+    
+    # Split into tokens: sequences of non-space chars (words) and sequences of spaces
+    tokens = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == ' ':
+            j = i
+            while j < n and text[j] == ' ':
+                j += 1
+            tokens.append(('space', text[i:j]))
+            i = j
+        else:
+            j = i
+            while j < n and text[j] != ' ':
+                j += 1
+            tokens.append(('word', text[i:j]))
+            i = j
+    
+    # Now build lines
+    lines = []
+    current_line = []
+    current_len = 0
+    
+    for token_type, token_val in tokens:
+        if token_type == 'space':
+            # Whitespace: add to current line if it fits, otherwise it will be dropped
+            # Whitespace at start/end of each line is dropped
+            # So we only add whitespace if there's already content on the line and it fits
+            if current_line and current_len + len(token_val) <= width:
+                current_line.append(token_val)
+                current_len += len(token_val)
+            # If it doesn't fit or line is empty, the whitespace is effectively dropped
+            # (it will be at the start of next line or end of current, both dropped)
+        else:
+            # Word: may need to be broken if longer than width
+            word = token_val
+            if current_line:
+                # There's already content, so we need a space before this word
+                # But wait - the whitespace between words was already handled as space tokens
+                # So if there was whitespace, it was already added (or dropped)
+                # If no whitespace was added (because it didn't fit or line was empty), we need to handle this
+                
+                # Actually, let me reconsider. The space tokens are separate. If a space token was dropped
+                # (because line was empty or it didn't fit), then when we add the next word, we should
+                # start a new line if the space was dropped due to not fitting, or just add to current line
+                # if the space was dropped because line was empty.
+                
+                # Hmm, this is getting complex. Let me think differently.
+                
+                # If current_line is non-empty, the space before this word should have been added
+                # if it fit. If it didn't fit, we should start a new line.
+                # But we already processed the space token. If it was dropped because it didn't fit,
+                # we should start a new line for this word.
+                
+                # Let me check: if current_len + len(space) > width, the space was dropped.
+                # In that case, we should start a new line.
+                
+                # But we don't know if the space was dropped due to not fitting or due to empty line.
+                # If line was empty, space was dropped, and we should just add word to empty line.
+                # If line was non-empty and space didn't fit, we should start new line.
+                
+                # Since current_line is non-empty here, if the space was dropped, it was because it didn't fit.
+                # So we should start a new line.
+                
+                # But wait, we don't have that info. Let me restructure.
+                
+                pass
+            
+            # Let me restart with a cleaner approach
+            
+    # Let me redo this more carefully
+    lines = []
+    current_line = []
+    current_len = 0
+    
+    for token_type, token_val in tokens:
+        if token_type == 'space':
+            if current_line and current_len + len(token_val) <= width:
+                current_line.append(token_val)
+                current_len += len(token_val)
+            # else: space is dropped (either line empty or doesn't fit)
+        else:
+            word = token_val
+            # If current line is empty, just add the word (possibly broken)
+            # If current line is non-empty, we need to check if word fits
+            # But we also need to account for the space that should precede it
+            
+            if not current_line:
+                # Line is empty, add word (break if needed)
+                if len(word) <= width:
+                    current_line.append(word)
+                    current_len = len(word)
+                else:
+                    # Break the word
+                    while word:
+                        chunk = word[:width]
+                        word = word[width:]
+                        lines.append(chunk)
+                        current_line = []
+                        current_len = 0
+                    # After breaking, current_line is empty
+            else:
+                # Line is non-empty. The space before this word was either added or dropped.
+                # If it was added, current_len includes it. If dropped, it didn't fit.
+                # We need to check if the word fits after the current content.
+                # But we don't know if a space was added. Let me check the last token.
+                
+                # Actually, if the space was added, current_len includes it.
+                # If the space was dropped (didn't fit), then current_len + len(word) > width likely.
+                
+                # Let's just check if current_len + len(word) <= width
+                if current_len + len(word) <= width:
+                    current_line.append(word)
+                    current_len += len(word)
+                else:
+                    # Word doesn't fit, start new line
+                    lines.append(''.join(current_line).rstrip())
+                    current_line = []
+                    current_len = 0
+                    # Now add word to new line
+                    if len(word) <= width:
+                        current_line.append(word)
+                        current_len = len(word)
+                    else:
+                        while word:
+                            chunk = word[:width]
+                            word = word[width:]
+                            lines.append(chunk)
+                            current_line = []
+                            current_len = 0
+    
+    # Add remaining line
+    if current_line:
+        lines.append(''.join(current_line).rstrip())
+    
+    # Strip leading/trailing whitespace from each line
+    lines = [line.strip() for line in lines]
+    # Remove empty lines? The problem says "whitespace at the start and end of each line is dropped"
+    # It doesn't say to remove empty lines. But textwrap.wrap doesn't produce empty lines typically.
+    # Let me keep non-empty lines only? Actually, let me check what textwrap does.
+    # textwrap.wrap("hello  world", 10) -> ['hello', 'world']
+    # So empty lines are not produced. Let me filter out empty strings.
+    lines = [line for line in lines if line]
+    
+    return lines
+```

@@ -74,6 +74,16 @@ matching it on the happy path is easy; the gap is the score.
 It is validated: with stdlib wrappers substituted for the model, all 7 tasks
 score 50/50, so a failure belongs to the model and not to the checks.
 
+**That validated the checks, not the prompts.** Two prompts contradicted the
+stdlib they were scored against, found 2026-11-05 while pushing Qwen3.8-27B
+Q8_0 past 46/50, and were corrected in place. The shlex prompt said a
+backslash in double quotes also escapes `$` and `` ` `` (true of a POSIX
+shell, not of Python's `shlex`, which keeps the backslash), so following it
+failed `dq_escapes`. The textwrap prompt said whitespace is collapsed, but
+`textwrap.wrap('a   b', 10)` is `['a   b']`, so following it failed
+`collapse`. **Every code-quality score before 2026-11-05 used the old prompts
+and can be up to 2 checks low**, on those two checks only.
+
 **`cdn-freshness-test.py` had a scoring bug** that was found and fixed
 mid-comparison. Bare-origin URLs are `<link rel=preconnect>` hints, not asset
 loads, and legitimately fail a HEAD — scoring them punished *correct* markup

@@ -184,6 +184,144 @@ def strat_repair(a, name, prompt, log):
     return code, note
 
 
+# ---------------------------------------------------------------- oracle
+# A different tier from the rest: the model may test against the real stdlib
+# function. It still never sees the hidden checks, but it no longer has to
+# know the behaviour, only to debug toward it -- what a developer porting a
+# library would do. Added after textwrap's long-word packing proved to be a
+# misunderstanding the model's own tests shared, so no self-check could fix it.
+ORACLE_TEST_REQ = (
+    "Now write a differential test script for your function. It may import "
+    "the standard-library function you are reproducing and must compare your "
+    "function against it on every edge case the task lists plus at least 300 "
+    "seeded random inputs you generate (random.Random(0)). Treat two "
+    "exceptions of the same type as a match, and guard every call so one "
+    "exception never stops the run. Check every case, print the first 5 "
+    "mismatches (input, your output, reference output), then print exactly "
+    "`MISMATCHES <n> OF <total>` on the last line and exit with status 1 if "
+    "n > 0. Do not redefine the function. One code block.")
+ORACLE_FIX_REQ = (
+    "The differential test found a mismatch:\n```\n{err}\n```\n"
+    "If the function is wrong, output the complete corrected function, and "
+    "nothing else, in one code block; it must still not import the module it "
+    "reproduces. If instead the TEST is wrong (for example it compares "
+    "exception objects with ==, which is never true), output the complete "
+    "corrected test script in one code block, without the function.")
+
+
+def strat_oracle(a, name, prompt, log):
+    fn = fname(prompt)
+    msgs = [{"role": "user", "content": prompt}]
+    body = chat(a, msgs)
+    code = cq.extract_code(body)
+    msgs += [{"role": "assistant", "content": body},
+             {"role": "user", "content": ORACLE_TEST_REQ}]
+    # The model tends to paste its whole function into the test despite being
+    # told not to; at 6144 tokens that truncated glob_match's test mid-line,
+    # and the SyntaxError then burned all four fix rounds.
+    # Retries start from the same base conversation: keeping failed attempts
+    # in history filled the 32K context on urljoin and truncated every retry.
+    base, test, tbody = list(msgs), "", ""
+    for attempt in range(3):
+        if attempt:
+            msgs = base[:-1] + [{"role": "user", "content": base[-1]["content"] +
+                                 " Keep it under 150 lines: generate random cases in a loop "
+                                 "instead of listing them, and do not repeat the function."}]
+        # temp 0 retries reproduced the same looping, truncated urljoin test
+        # byte for byte; vary them, and cap so a loop fails fast.
+        tbody = chat(a, msgs, max_tokens=4096,
+                     temperature=0.6 if attempt else 0.0, top_p=0.95 if attempt else None)
+        raw = tbody.split("```", 1)[-1] if tbody.count("```") == 1 else tbody
+        test = strip_redefs(cq.extract_code(raw).removeprefix("python\n"), fn)
+        log.append({"turn": f"difftest{attempt}", "body": tbody})
+        try:
+            compile(test, "difftest", "exec")
+            msgs.append({"role": "assistant", "content": tbody})
+            break
+        except SyntaxError:
+            test = ""
+    if not test:
+        return code, "no compiling differential test, first answer kept"
+    sel_note = ""
+    if a.strategy == "oracle-select":
+        # Rank sampled candidates by the model's own differential test before
+        # climbing. Repair never reached urljoin's dot_only fix, but sampling
+        # has produced 9/9 answers; the test, not the hidden checks, picks.
+        mod = REF_MODULES.get(fn)
+        def counted(c):
+            if mod and re.search(rf"^\s*(import|from)\s+{mod}\b", c, re.M):
+                return 10**9   # an answer that wraps the reference scores 0; void it
+            ok_, e_, o_ = run_py(c + "\n\n" + test)
+            if ok_:
+                return 0
+            m_ = re.findall(r"MISMATCHES\s+(\d+)\s+OF\s+(\d+)", o_)
+            return int(m_[-1][0]) if m_ else 10**9
+        pool = [(counted(code), 0, code)]
+        for i in range(1, a.k + 1):
+            cb = chat(a, [{"role": "user", "content": prompt}], temperature=a.temperature,
+                      top_p=a.top_p, extra={"top_k": 20, "min_p": 0.0})
+            cc = cq.extract_code(cb)
+            pool.append((counted(cc), i, cc))
+            log.append({"turn": f"cand{i}", "body": cb, "mismatches": pool[-1][0]})
+        n0, pick, code = min(pool, key=lambda t: (t[0], t[1]))
+        sel_note = (f"candidates mismatches {['x' if t[0] == 10**9 else t[0] for t in pool]}, "
+                    f"picked cand{pick}; ")
+        msgs[1] = {"role": "assistant", "content": "```python\n" + code + "\n```"}
+    # Hill-climb on the model's own mismatch count: urljoin oscillated
+    # between two fixes for eight rounds, and textwrap's best version (5/6)
+    # was overwritten by worse ones. Keep the best; it decides nothing from
+    # the hidden checks.
+    def mismatches(o, e, passed):
+        if passed:
+            return 0
+        m = re.findall(r"MISMATCHES\s+(\d+)\s+OF\s+(\d+)", o)
+        return int(m[-1][0]) if m else 10**9   # crash or no count: worst
+    rnd, ok, last_report = 0, False, None
+    best_code, best_n = code, None
+    for rnd in range(a.rounds + 1):
+        ok, err, out = run_py(code + "\n\n" + test)
+        n = mismatches(out, err, ok)
+        log.append({"turn": f"run{rnd}", "ok": ok, "mismatches": n,
+                    "out": out[-1500:], "err": err[-1500:]})
+        if best_n is None or n < best_n:
+            best_code, best_n = code, n
+        if ok or rnd == a.rounds:
+            break
+        report = (out.strip() + "\n" + err.strip()).strip()[-1500:]
+        stuck = report == last_report
+        last_report = report
+        req = ORACLE_FIX_REQ.format(err=report)
+        if stuck:
+            # urljoin: four temp-0 "fixes" left the same '.' mismatch in place.
+            req = ("Your last change did not fix this; the output is unchanged. "
+                   "Trace the failing input through the code step by step and "
+                   "change the logic that produces it.\n\n" + req)
+        msgs.append({"role": "user", "content": req})
+        fbody = chat(a, msgs, temperature=0.6 if stuck else 0.0,
+                     top_p=0.95 if stuck else None)
+        msgs.append({"role": "assistant", "content": fbody})
+        new = cq.extract_code(fbody)
+        if re.search(rf"^def {fn}\(", new, re.M):
+            code = new
+            log.append({"turn": f"fix{rnd + 1}", "kind": "function", "body": fbody})
+        else:
+            # textwrap's test compared ValueError objects with ==, so it
+            # reported its first case as a mismatch forever; let it fix that.
+            try:
+                compile(new, "difftest", "exec")
+                test = new
+                best_n = None   # counts from a different test do not compare
+                log.append({"turn": f"fix{rnd + 1}", "kind": "test", "body": fbody})
+            except SyntaxError:
+                log.append({"turn": f"fix{rnd + 1}", "kind": "unusable", "body": fbody})
+    code = best_code
+    mod = REF_MODULES.get(fn)
+    if mod and re.search(rf"^\s*(import|from)\s+{mod}\b", code, re.M):
+        return "", "solution imported the reference module: voided"
+    nn = "crash" if best_n == 10**9 else best_n
+    return code, sel_note + f"difftest {'pass' if ok else 'FAIL'} after {rnd} fix(es), kept best: {nn} mismatches"
+
+
 # ---------------------------------------------------------------- vote
 def fuzz_inputs(fn, n=150):
     r = random.Random(20261105)
@@ -418,7 +556,7 @@ def strat_review(a, name, prompt, log):
     return code, ""
 
 
-STRATS = {"repair": strat_repair, "vote": strat_vote, "select": strat_select, "plan": strat_plan,
+STRATS = {"oracle": strat_oracle, "oracle-select": strat_oracle, "repair": strat_repair, "vote": strat_vote, "select": strat_select, "plan": strat_plan,
           "checklist": strat_checklist, "review": strat_review}
 cq_checks = {n: c for n, _, c in cq.TASKS}
 
