@@ -1,0 +1,82 @@
+def shlex_split(s):
+    tokens = []
+    token = []
+    state = " "
+    escaped_state = " "
+    i = 0
+    n = len(s)
+
+    def finish_token():
+        nonlocal token
+        if token:
+            tokens.append("".join(token))
+            token = []
+
+    while i < n:
+        c = s[i]
+
+        if state == " ":
+            if c in " \t\r\n":
+                finish_token()
+                i += 1
+                continue
+
+            if c == "\\":
+                i += 1
+                if i < n:
+                    token.append(s[i])
+                    i += 1
+                else:
+                    token.append("\\")
+                continue
+
+            if c == "'":
+                state = "'"
+                i += 1
+                continue
+
+            if c == '"':
+                state = '"'
+                i += 1
+                continue
+
+            token.append(c)
+            i += 1
+            continue
+
+        if state == "'":
+            if c == "'":
+                state = " "
+                i += 1
+                continue
+            token.append(c)
+            i += 1
+            continue
+
+        if state == '"':
+            if c == '"':
+                state = " "
+                i += 1
+                continue
+
+            if c == "\\":
+                i += 1
+                if i < n:
+                    d = s[i]
+                    if d in ('"', "$", "`", "\\"):
+                        token.append(d)
+                        i += 1
+                    else:
+                        token.append("\\")
+                        token.append(d)
+                        i += 1
+                else:
+                    token.append("\\")
+                continue
+
+            token.append(c)
+            i += 1
+            continue
+
+    finish_token()
+    return tokens

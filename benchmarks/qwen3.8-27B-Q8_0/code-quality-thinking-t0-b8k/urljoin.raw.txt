@@ -1,0 +1,152 @@
+```python
+def urljoin_(base, url):
+    def _valid_scheme(s):
+        if not s:
+            return False
+        if not ('a' <= s[0] <= 'z' or 'A' <= s[0] <= 'Z'):
+            return False
+        for ch in s[1:]:
+            if not (
+                'a' <= ch <= 'z'
+                or 'A' <= ch <= 'Z'
+                or '0' <= ch <= '9'
+                or ch in '+-.'
+            ):
+                return False
+        return True
+
+    def _split_url(value):
+        value = value.replace('\\', '/')
+
+        fragment = ''
+        hash_pos = value.find('#')
+        if hash_pos != -1:
+            fragment = value[hash_pos + 1:]
+            value = value[:hash_pos]
+
+        query = ''
+        question_pos = value.find('?')
+        if question_pos != -1:
+            query = value[question_pos + 1:]
+            value = value[:question_pos]
+
+        scheme = ''
+        colon_pos = value.find(':')
+        if colon_pos != -1:
+            candidate = value[:colon_pos]
+            if _valid_scheme(candidate):
+                scheme = candidate.lower()
+                value = value[colon_pos + 1:]
+
+        netloc = ''
+        if value.startswith('//'):
+            rest = value[2:]
+            end = len(rest)
+            for i, ch in enumerate(rest):
+                if ch in '/?#':
+                    end = i
+                    break
+            netloc = rest[:end]
+            value = rest[end:]
+
+        path = value
+        return scheme, netloc, path, query, fragment
+
+    def _remove_last_segment(path):
+        if not path:
+            return ''
+        if path.endswith('/'):
+            idx = path.rfind('/', 0, len(path) - 1)
+            return '' if idx == -1 else path[: idx + 1]
+        idx = path.rfind('/')
+        return '' if idx == -1 else path[:idx]
+
+    def _remove_dot_segments(path):
+        output = ''
+        while path:
+            if path.startswith('../'):
+                path = path[3:]
+                output = _remove_last_segment(output)
+            elif path.startswith('./'):
+                path = path[2:]
+            elif path.startswith('/./'):
+                path = '/' + path[3:]
+            elif path == '/.':
+                path = '/'
+            elif path.startswith('/../'):
+                path = '/' + path[4:]
+                output = _remove_last_segment(output)
+            elif path == '/..':
+                path = '/'
+                output = _remove_last_segment(output)
+            elif path in ('.', '..'):
+                path = ''
+            else:
+                if path.startswith('/'):
+                    idx = path.find('/', 1)
+                else:
+                    idx = path.find('/')
+                if idx == -1:
+                    output += path
+                    path = ''
+                else:
+                    output += path[: idx + 1]
+                    path = path[idx + 1:]
+        return output
+
+    def _merge_paths(base_path, rel_path):
+        if base_path == '':
+            return '/' + rel_path
+        slash = base_path.rfind('/')
+        if slash == -1:
+            return rel_path
+        return base_path[: slash + 1] + rel_path
+
+    def _unsplit(scheme, netloc, path, query, fragment):
+        result = ''
+        if scheme:
+            result += scheme + ':'
+        if netloc:
+            result += '//' + netloc
+        result += path
+        if query:
+            result += '?' + query
+        if fragment:
+            result += '#' + fragment
+        return result
+
+    if url == '':
+        base_scheme, base_netloc, base_path, base_query, _ = _split_url(base)
+        return _unsplit(base_scheme, base_netloc, base_path, base_query, '')
+
+    base_scheme, base_netloc, base_path, base_query, _ = _split_url(base)
+    rel_scheme, rel_netloc, rel_path, rel_query, rel_fragment = _split_url(url)
+
+    if rel_scheme:
+        scheme = rel_scheme
+        netloc = rel_netloc
+        path = _remove_dot_segments(rel_path)
+        query = rel_query
+    elif rel_netloc:
+        scheme = base_scheme
+        netloc = rel_netloc
+        path = _remove_dot_segments(rel_path)
+        query = rel_query
+    elif rel_path == '':
+        scheme = base_scheme
+        netloc = base_netloc
+        path = base_path
+        query = rel_query if rel_query != '' else base_query
+    elif rel_path.startswith('/'):
+        scheme = base_scheme
+        netloc = base_netloc
+        path = _remove_dot_segments(rel_path)
+        query = rel_query
+    else:
+        scheme = base_scheme
+        netloc = base_netloc
+        path = _remove_dot_segments(_merge_paths(base_path, rel_path))
+        query = rel_query
+
+    return _unsplit(scheme, netloc, path, query, rel_fragment)
+```

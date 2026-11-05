@@ -1,0 +1,12 @@
+def add_months(y, m, d, n):
+    total = y * 12 + (m - 1) + n
+    ny, nm = divmod(total, 12)
+    nm += 1
+
+    if nm == 2:
+        leap = (ny % 4 == 0) and (ny % 100 != 0 or ny % 400 == 0)
+        last_day = 29 if leap else 28
+    else:
+        last_day = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)[nm - 1]
+
+    return (ny, nm, min(d, last_day))
