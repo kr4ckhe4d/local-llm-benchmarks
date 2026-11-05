@@ -259,7 +259,7 @@ def extract_code(text):
 
 
 def ask(host, prompt, timeout, max_tokens, model=None, thinking=False, api_key=None,
-        temperature=0.0, top_p=None, effort=None):
+        temperature=0.0, top_p=None, effort=None, budget=None, extra=None):
     payload = {
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens, "temperature": temperature,
@@ -270,6 +270,10 @@ def ask(host, prompt, timeout, max_tokens, model=None, thinking=False, api_key=N
     if effort:
         payload["reasoning_effort"] = effort
         payload["chat_template_kwargs"]["reasoning_effort"] = effort
+    if budget is not None:
+        payload["reasoning_budget_tokens"] = budget
+    if extra:
+        payload.update(extra)
     if model:                       # router mode needs an explicit preset name
         payload["model"] = model
     req = urllib.request.Request(
@@ -334,6 +338,16 @@ def main():
     # Strata and llama.cpp alike.
     ap.add_argument("--reasoning-effort", default=None,
                     help="e.g. low, medium, high (default: the template's own)")
+    # Added 2026-11-05. llama-server reads reasoning_budget_tokens per request,
+    # but -1 there means "use the server's --reasoning-budget", not unlimited,
+    # so a router preset's 1024 cap can only be lifted by naming a number.
+    # Keep it below --max-tokens so the forced </think> leaves room to answer.
+    ap.add_argument("--reasoning-budget", type=int, default=None,
+                    help="per-request reasoning_budget_tokens (llama-server)")
+    # Added 2026-11-05 for sampler sweeps: a JSON object merged into the
+    # request body, e.g. '{"top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}'.
+    ap.add_argument("--extra", default=None,
+                    help="JSON object merged into the request payload")
     ap.add_argument("--api-key-env", default="LLM_API_KEY",
                     help="environment variable holding a bearer key (default LLM_API_KEY)")
     a = ap.parse_args()
@@ -345,7 +359,8 @@ def main():
         try:
             body = ask(a.host, prompt, a.timeout, a.max_tokens, a.model, a.thinking,
                        os.environ.get(a.api_key_env), a.temperature, a.top_p,
-                       a.reasoning_effort)
+                       a.reasoning_effort, a.reasoning_budget,
+                       json.loads(a.extra) if a.extra else None)
         except Exception as e:
             n = n_checks(checks_src)
             print(f"  {name:18s}  0/{n}   REQUEST FAILED {type(e).__name__}")

@@ -1,0 +1,22 @@
+# Qwen3.8-27B-Q8_0 code-quality sampler sweep, thinking off, 2026-11-05
+# router preset qwen3.8-27B-q8-32k, --max-tokens 12288, top_k 20 / min_p 0.0 on every sampled run
+# Each sampled score is one draw; n=3 per config.
+
+| config                          | runs        | avg  | range |
+| temp 0.0 (baseline + repeat)    | 41, 41      | 41.0 | 0  (identical check for check, MTP on) |
+| temp 0.3 / top-p 0.95           | 40, 38, 35  | 37.7 | 5  |
+| temp 0.6 / top-p 0.95           | 36, 37, 37  | 36.7 | 1  |
+| temp 0.7 / top-p 0.8            | 40, 32, 32  | 34.7 | 8  |
+| temp 0.7 / top-p 0.8 + pres 1.5 | 34, 36, 42  | 37.3 | 8  (42 is the single best run) |
+| temp 1.0 / top-p 0.95 (preset)  | 41, 29, 40  | 36.7 | 12 |
+
+Every sampled config averages 3.7-6.3 checks below temp 0. Differences between
+sampled configs are inside run-to-run noise and do not rank them.
+
+The swing is whole-task collapses, not small misses. Sampled runs scored 0 on:
+  csv_rows x3 (7/7 at temp 0; all 7 checks missed), glob_match x1 (generated code
+  hung: timeout), urljoin x2 (one IndentationError, one all-miss). add_months,
+  parse_qsl, textwrap, shlex_split barely move.
+
+Thinking on (temp 0, budget 24000) was killed on task 1 after ~24.7k tokens
+of thinking: code-quality-thinking-temp0-killed.txt.
