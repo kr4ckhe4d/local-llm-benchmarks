@@ -1,0 +1,127 @@
+def glob_match(pattern, name):
+    """
+    Implement fnmatch.fnmatchcase semantics from scratch.
+    Supports:
+      * - matches any sequence of characters (including empty)
+      ? - matches exactly one character
+      [abc] - matches any one of the characters a, b, c
+      [a-z] - matches any character in the range a to z
+      [!abc] - matches any character NOT in a, b, c
+      ] immediately after [ or [! is treated as a literal ]
+      Unterminated [ is treated as a literal [
+    Match is anchored to the whole string.
+    """
+    def match(p_idx, n_idx):
+        # Base case: if pattern is exhausted, name must also be exhausted
+        if p_idx == len(pattern):
+            return n_idx == len(name)
+        
+        ch = pattern[p_idx]
+        
+        if ch == '*':
+            # Try matching * with zero or more characters
+            # First try consuming zero chars from name
+            if match(p_idx + 1, n_idx):
+                return True
+            # Then try consuming one char from name and keep * active
+            if n_idx < len(name):
+                if match(p_idx, n_idx + 1):
+                    return True
+            return False
+        
+        elif ch == '?':
+            # ? matches exactly one character
+            if n_idx < len(name):
+                return match(p_idx + 1, n_idx + 1)
+            return False
+        
+        elif ch == '[':
+            # Parse character class
+            # Find the closing ]
+            # Handle special case: ] immediately after [ or [! is literal
+            j = p_idx + 1
+            negated = False
+            if j < len(pattern) and pattern[j] == '!':
+                negated = True
+                j += 1
+            
+            # Check if ] is the first char after [ or [!
+            if j < len(pattern) and pattern[j] == ']':
+                # ] is literal, so we need to find the real closing ]
+                # Start searching from j+1
+                close_idx = -1
+                k = j + 1
+                while k < len(pattern):
+                    if pattern[k] == ']':
+                        close_idx = k
+                        break
+                    k += 1
+                if close_idx == -1:
+                    # Unterminated [, treat [ as literal
+                    if n_idx < len(name) and name[n_idx] == '[':
+                        return match(p_idx + 1, n_idx + 1)
+                    return False
+                # Parse the character class from j to close_idx (exclusive)
+                # The class content is pattern[j:close_idx], but note that the first ] at position j is literal
+                # So the class includes ] at position j as a literal character
+                class_start = j
+                class_end = close_idx
+                # Build the set of characters in the class
+                matched = _match_char_class(pattern, class_start, class_end, name, n_idx)
+                if negated:
+                    matched = not matched
+                if matched and n_idx < len(name):
+                    return match(close_idx + 1, n_idx + 1)
+                return False
+            else:
+                # Normal case: find closing ]
+                close_idx = -1
+                k = j
+                while k < len(pattern):
+                    if pattern[k] == ']':
+                        close_idx = k
+                        break
+                    k += 1
+                if close_idx == -1:
+                    # Unterminated [, treat [ as literal
+                    if n_idx < len(name) and name[n_idx] == '[':
+                        return match(p_idx + 1, n_idx + 1)
+                    return False
+                # Parse character class from j to close_idx (exclusive)
+                class_start = j
+                class_end = close_idx
+                matched = _match_char_class(pattern, class_start, class_end, name, n_idx)
+                if negated:
+                    matched = not matched
+                if matched and n_idx < len(name):
+                    return match(close_idx + 1, n_idx + 1)
+                return False
+        
+        else:
+            # Literal character match
+            if n_idx < len(name) and name[n_idx] == ch:
+                return match(p_idx + 1, n_idx + 1)
+            return False
+    
+    def _match_char_class(pattern, start, end, name, n_idx):
+        """Check if name[n_idx] matches the character class defined in pattern[start:end]."""
+        if n_idx >= len(name):
+            return False
+        target = name[n_idx]
+        i = start
+        while i < end:
+            if i + 2 < end and pattern[i + 1] == '-':
+                # Range: pattern[i] - pattern[i+2]
+                low = pattern[i]
+                high = pattern[i + 2]
+                if low <= target <= high:
+                    return True
+                i += 3
+            else:
+                # Single character
+                if pattern[i] == target:
+                    return True
+                i += 1
+        return False
+    
+    return match(0, 0)

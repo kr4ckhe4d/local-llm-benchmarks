@@ -1,0 +1,164 @@
+def urljoin_(base, url):
+    """
+    Reproduce urllib.parse.urljoin from scratch, implementing RFC 3986 reference resolution.
+    """
+    # Helper to parse a URL into components: scheme, authority, path, query, fragment
+    def parse_url(s):
+        if s is None:
+            s = ''
+        # Extract fragment
+        frag = ''
+        if '#' in s:
+            s, frag = s.split('#', 1)
+        # Extract query
+        query = ''
+        if '?' in s:
+            s, query = s.split('?', 1)
+        # Extract scheme
+        scheme = ''
+        if ':' in s:
+            # Check if the part before ':' looks like a valid scheme (starts with alpha, then alphanum/+/-/.)
+            colon_idx = s.index(':')
+            prefix = s[:colon_idx]
+            if prefix and prefix[0].isalpha() and all(c.isalnum() or c in '+-.' for c in prefix):
+                scheme = prefix
+                s = s[colon_idx + 1:]
+            # else: the colon is part of the path (e.g., relative path with colon)
+        # Extract authority (starts with //)
+        authority = ''
+        if s.startswith('//'):
+            # Find the end of authority: next '/', '?', '#' or end of string
+            rest = s[2:]
+            end_idx = len(rest)
+            for i, c in enumerate(rest):
+                if c in '/?#':
+                    end_idx = i
+                    break
+            authority = rest[:end_idx]
+            s = rest[end_idx:]
+        # s is now the path (may be empty)
+        path = s
+        return scheme, authority, path, query, frag
+
+    def build_url(scheme, authority, path, query, frag):
+        result = ''
+        if scheme:
+            result += scheme + ':'
+        if authority:
+            result += '//' + authority
+        result += path
+        if query:
+            result += '?' + query
+        if frag:
+            result += '#' + frag
+        return result
+
+    def remove_dot_segments(path):
+        """Implement RFC 3986 Section 5.2.4: Remove Dot Segments."""
+        # Input: path string
+        # Output: normalized path string
+        output = []
+        while path:
+            if path.startswith('./'):
+                path = path[2:]
+            elif path.startswith('../'):
+                path = path[3:]
+                if output:
+                    output.pop()
+            elif path == '.' or path == '..':
+                path = ''
+                if output:
+                    output.pop()
+            elif path.startswith('/./'):
+                path = '/' + path[3:]
+            elif path.startswith('/../'):
+                path = '/' + path[4:]
+                if output:
+                    output.pop()
+            elif path == '/.' or path == '/..':
+                path = '/'
+                if output:
+                    output.pop()
+            else:
+                # Move first path segment to output
+                if path.startswith('/'):
+                    # Find next '/'
+                    next_slash = path.find('/', 1)
+                    if next_slash == -1:
+                        output.append(path)
+                        path = ''
+                    else:
+                        output.append(path[:next_slash])
+                        path = path[next_slash:]
+                else:
+                    # Relative segment (no leading slash) - shouldn't happen in normal flow but handle
+                    next_slash = path.find('/')
+                    if next_slash == -1:
+                        output.append(path)
+                        path = ''
+                    else:
+                        output.append(path[:next_slash])
+                        path = path[next_slash:]
+        return ''.join(output)
+
+    def merge_paths(base_path, ref_path):
+        """RFC 3986 Section 5.2.3: Merge Paths."""
+        if base_authority and not base_path:
+            # If base has authority but empty path, treat as '/'
+            base_path = '/'
+        if ref_path.startswith('/'):
+            return ref_path
+        else:
+            # Find last '/' in base_path
+            last_slash = base_path.rfind('/')
+            if last_slash == -1:
+                return ref_path
+            else:
+                return base_path[:last_slash + 1] + ref_path
+
+    # Parse base and reference URLs
+    base_scheme, base_authority, base_path, base_query, base_frag = parse_url(base)
+    ref_scheme, ref_authority, ref_path, ref_query, ref_frag = parse_url(url)
+
+    # RFC 3986 Section 5.2.2: Transform References
+    if ref_scheme:
+        # Reference has scheme: use reference components, remove dot segments from path
+        target_scheme = ref_scheme
+        target_authority = ref_authority
+        target_path = remove_dot_segments(ref_path)
+        target_query = ref_query
+    elif ref_authority:
+        # Scheme-relative reference
+        target_scheme = base_scheme
+        target_authority = ref_authority
+        target_path = remove_dot_segments(ref_path)
+        target_query = ref_query
+    elif not ref_path:
+        # No path in reference
+        if ref_query:
+            target_scheme = base_scheme
+            target_authority = base_authority
+            target_path = base_path
+            target_query = ref_query
+        else:
+            target_scheme = base_scheme
+            target_authority = base_authority
+            target_path = base_path
+            target_query = base_query
+    elif ref_path.startswith('/'):
+        # Absolute path reference
+        target_scheme = base_scheme
+        target_authority = base_authority
+        target_path = remove_dot_segments(ref_path)
+        target_query = ref_query
+    else:
+        # Relative path reference
+        target_scheme = base_scheme
+        target_authority = base_authority
+        target_path = remove_dot_segments(merge_paths(base_path, ref_path))
+        target_query = ref_query
+
+    # Fragment
+    target_frag = ref_frag
+
+    return build_url(target_scheme, target_authority, target_path, target_query, target_frag)

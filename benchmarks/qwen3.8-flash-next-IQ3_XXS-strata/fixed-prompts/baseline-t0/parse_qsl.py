@@ -1,0 +1,58 @@
+def parse_qsl_(qs):
+    """
+    Parse a query string into a list of (key, value) pairs.
+    
+    - Splits on '&' only.
+    - Decodes percent-escapes (%XX) and '+' as space.
+    - Keeps blank values.
+    - A component with no '=' yields a pair with an empty value.
+    """
+    def decode(s):
+        """Decode percent-escapes and '+' as space."""
+        result = []
+        i = 0
+        n = len(s)
+        while i < n:
+            c = s[i]
+            if c == '+':
+                result.append(' ')
+                i += 1
+            elif c == '%' and i + 2 < n:
+                hex_str = s[i+1:i+3]
+                try:
+                    byte_val = int(hex_str, 16)
+                    result.append(chr(byte_val))
+                    i += 3
+                except ValueError:
+                    # Invalid percent-escape, keep as-is
+                    result.append(c)
+                    i += 1
+            else:
+                result.append(c)
+                i += 1
+        return ''.join(result)
+    
+    if not qs:
+        return []
+    
+    pairs = []
+    # Split on '&' only
+    components = qs.split('&')
+    
+    for component in components:
+        if not component:
+            continue
+        
+        # Find the first '=' to split key and value
+        eq_index = component.find('=')
+        if eq_index == -1:
+            # No '=' means key is the whole component, value is empty
+            key = decode(component)
+            value = ''
+        else:
+            key = decode(component[:eq_index])
+            value = decode(component[eq_index+1:])
+        
+        pairs.append((key, value))
+    
+    return pairs

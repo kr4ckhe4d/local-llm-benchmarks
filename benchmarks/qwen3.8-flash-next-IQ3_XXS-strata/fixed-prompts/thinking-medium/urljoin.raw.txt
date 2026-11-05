@@ -1,0 +1,135 @@
+```python
+def urljoin_(base, url):
+    """Reproduce urllib.parse.urljoin from scratch per RFC 3986 §5.2.2."""
+
+    # ── URI parsing ──────────────────────────────────────────────────
+    def _parse(uri):
+        """Return (scheme, authority, path, query, fragment).
+        query/fragment are None when the delimiter is absent."""
+        scheme = ''
+        authority = ''
+        path = ''
+        query = None
+        fragment = None
+
+        # fragment  (after first '#')
+        i = uri.find('#')
+        if i != -1:
+            fragment = uri[i + 1:]
+            uri = uri[:i]
+
+        # query  (after first '?')
+        i = uri.find('?')
+        if i != -1:
+            query = uri[i + 1:]          # may be ''
+            uri = uri[:i]
+
+        # scheme  (before first ':')
+        i = uri.find(':')
+        if i > 0:
+            cand = uri[:i]
+            if cand[0].isalpha() and all(c.isalnum() or c in '+-.' for c in cand):
+                scheme = cand.lower()
+                uri = uri[i + 1:]
+
+        # authority  (after '//')
+        if uri.startswith('//'):
+            uri = uri[2:]
+            i = uri.find('/')
+            if i != -1:
+                authority = uri[:i]
+                uri = uri[i:]
+            else:
+                authority = uri
+                uri = ''
+
+        path = uri
+        return scheme, authority, path, query, fragment
+
+    # ── remove_dot_segments  (RFC 3986 §5.2.4) ─────────────────────
+    def _remove_dot_segments(path):
+        out = []
+        while path:
+            if path.startswith('../'):
+                path = path[3:]
+            elif path.startswith('./'):
+                path = path[2:]
+            elif path.startswith('/./'):
+                path = '/' + path[3:]
+            elif path == '/.':
+                path = '/'
+            elif path.startswith('/../'):
+                path = '/' + path[4:]
+                if out:
+                    out.pop()
+            elif path == '/..':
+                path = '/'
+                if out:
+                    out.pop()
+            elif path == '.' or path == '..':
+                path = ''
+            else:
+                i = path.find('/', 1)
+                if i == -1:
+                    out.append(path)
+                    path = ''
+                else:
+                    out.append(path[:i])
+                    path = path[i:]
+        return ''.join(out)
+
+    # ── merge_paths  (RFC 3986 §5.2.3) ─────────────────────────────
+    def _merge_paths(base_authority, base_path):
+        if base_authority and not base_path:
+            return '/'
+        i = base_path.rfind('/')
+        return base_path[:i + 1] if i != -1 else ''
+
+    # ── rebuild a URI from components ───────────────────────────────
+    def _build(scheme, authority, path, query, fragment):
+        parts = []
+        if scheme:
+            parts.append(scheme + ':')
+        if authority:
+            parts.append('//' + authority)
+        parts.append(path)
+        if query is not None:
+            parts.append('?' + query)
+        if fragment is not None:
+            parts.append('#' + fragment)
+        return ''.join(parts)
+
+    # ── empty reference → base without fragment ─────────────────────
+    if url == '':
+        s, a, p, q, _ = _parse(base)
+        return _build(s, a, p, q, None)
+
+    # ── parse both sides ────────────────────────────────────────────
+    bs, ba, bp, bq, bf = _parse(base)
+    rs, ra, rp, rq, rf = _parse(url)
+
+    # ── RFC 3986 §5.2.2  (Loose Syntax) ────────────────────────────
+    if rs:
+        # Reference has a scheme → absolute
+        return _build(rs, ra, _remove_dot_segments(rp), rq, rf)
+
+    if ra:
+        # Protocol-relative  //host/path
+        return _build(bs, ra, _remove_dot_segments(rp), rq, rf)
+
+    if not rp:
+        # Empty path  (query-only or fragment-only reference)
+        tp = bp
+        tq = rq if rq is not None else bq
+    elif rp.startswith('/'):
+        # Absolute-path reference
+        tp = _remove_dot_segments(rp)
+        tq = rq
+    else:
+        # Relative-path reference
+        tp = _merge_paths(ba, bp) + rp
+        tp = _remove_dot_segments(tp)
+        tq = rq
+
+    return _build(bs, ba, tp, tq, rf)
+```

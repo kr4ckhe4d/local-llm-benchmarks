@@ -1,0 +1,86 @@
+def wrap_(text, width):
+    # 1. Expand tabs (tabsize=8)
+    text = text.expandtabs(8)
+
+    # 2. Replace each whitespace character with a single space (runs NOT collapsed)
+    text = ''.join(' ' if c.isspace() else c for c in text)
+
+    # 3. Split into alternating whitespace / non-whitespace chunks
+    chunks = []
+    i, n = 0, len(text)
+    while i < n:
+        j = i
+        if text[i] == ' ':
+            while j < n and text[j] == ' ':
+                j += 1
+        else:
+            while j < n and text[j] != ' ':
+                j += 1
+        chunks.append(text[i:j])
+        i = j
+
+    # 4. Wrap chunks into lines
+    lines = []
+    cur = []          # chunks on the current line
+    cur_w = 0         # total length of chunks on the current line
+    first_line = True # leading whitespace of the *whole* text is kept
+
+    for chunk in chunks:
+        ws = chunk[0] == ' '
+
+        if ws:
+            if cur_w == 0 and first_line:
+                # Leading whitespace of the entire text – keep it
+                cur.append(chunk)
+                cur_w += len(chunk)
+            elif cur_w + len(chunk) <= width:
+                cur.append(chunk)
+                cur_w += len(chunk)
+            else:
+                # Line break: drop trailing whitespace, discard this ws chunk
+                while cur and cur[-1][0] == ' ':
+                    cur_w -= len(cur[-1])
+                    cur.pop()
+                if cur:
+                    lines.append(''.join(cur))
+                cur = []
+                cur_w = 0
+                first_line = False
+        else:
+            if cur_w + len(chunk) <= width:
+                cur.append(chunk)
+                cur_w += len(chunk)
+            else:
+                # Break current line (drop trailing whitespace)
+                if cur_w > 0:
+                    while cur and cur[-1][0] == ' ':
+                        cur_w -= len(cur[-1])
+                        cur.pop()
+                    if cur:
+                        lines.append(''.join(cur))
+                    cur = []
+                    cur_w = 0
+                    first_line = False
+
+                if len(chunk) <= width:
+                    cur.append(chunk)
+                    cur_w = len(chunk)
+                else:
+                    # Word longer than width – break it into pieces
+                    rest = chunk
+                    while len(rest) > width:
+                        lines.append(rest[:width])
+                        rest = rest[width:]
+                    if rest:
+                        cur = [rest]
+                        cur_w = len(rest)
+
+    # Flush the last line (drop trailing whitespace)
+    if cur:
+        while cur and cur[-1][0] == ' ':
+            cur_w -= len(cur[-1])
+            cur.pop()
+        if cur:
+            lines.append(''.join(cur))
+
+    return lines

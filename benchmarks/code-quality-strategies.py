@@ -21,7 +21,8 @@ Added 2026-11-05 after csv_rows collapsed 7 -> 0 on a missing `field = []`, a
 slip one run of the code would have caught. Runs model-written code, see
 code-quality-test.py.
 """
-import argparse, importlib.util, json, os, random, re, subprocess, sys, tempfile, time
+import argparse
+import importlib.util, json, os, random, re, subprocess, sys, tempfile, time
 import urllib.request
 from pathlib import Path
 
@@ -85,7 +86,9 @@ def chat(a, messages, thinking=False, temperature=0.0, top_p=None, extra=None,
         payload.update(extra)
     req = urllib.request.Request(a.host + "/v1/chat/completions",
                                  data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json",
+                                          **({"Authorization": f"Bearer {os.environ[a.api_key_env]}"}
+                                             if os.environ.get(a.api_key_env) else {})})
     with urllib.request.urlopen(req, timeout=a.timeout) as r:
         return json.load(r)["choices"][0]["message"]["content"] or ""
 
@@ -677,6 +680,8 @@ def main():
     ap.add_argument("--budget", type=int, default=8000, help="plan: reasoning budget")
     ap.add_argument("--reviewer", default=None, help="review: router preset of the reviewer")
     ap.add_argument("--only", default=None, help="comma-separated task names")
+    ap.add_argument("--api-key-env", default="LLM_API_KEY",
+                    help="env var holding a bearer token (Strata on :8095 needs one)")
     a = ap.parse_args()
     if a.strategy == "review" and not a.reviewer:
         ap.error("review needs --reviewer")

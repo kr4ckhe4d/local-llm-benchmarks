@@ -1,0 +1,29 @@
+# Qwen3.8-Flash-Next IQ3_XXS on Strata (7695859a, :8095, 200K, both cards), 2026-11-05
+# Code quality on the CORRECTED prompts (shlex $/` escapes, textwrap no collapsing;
+# see benchmarks/README.md). Same 7 tasks / 50 hidden checks.
+
+| run                                        | score | clean | old prompts | misses |
+| baseline: thinking off, temp 0             | 48/50 | 5/7   | 43/50       | urljoin dot_only, textwrap random60 |
+| thinking medium, temp 0.6 (one sample)     | 44/50 | 4/7   | 47/50       | glob rbracket, shlex 3/7, textwrap random60 |
+| oracle-select v2, thinking off             | 44/50 | 5/7   | --          | urljoin 4/9, textwrap random60 |
+
+Baseline 48/50 is the best single answer-per-task score in the repo; Qwen3.8-27B Q8_0's
+best with any strategy is 47 (qwen3.8-27B-Q8_0/fixed-prompts/SUMMARY.txt).
+
+thinking medium: shlex_split raises "No closing quotation" on every double-quoted
+string (a one-line slip, not a misreading of the rules); urljoin 9/9 this time.
+
+oracle-select v2 LOST 4 checks on urljoin, and the reason is a limit of ranking by raw
+mismatch count, not a bug. The model's difftest is valid against the real urljoin
+(411 cases). The baseline answer (8/9 hidden) scores 193 mismatches on it, mostly ONE
+bug class: an empty url must keep the base's #fragment, and the random generator
+produces that case constantly. cand1 fixed that class (127 mismatches) but broke
+abs_path / rel_path / dotdot, which few random inputs exercise. The climb went from
+there to 126 and stayed. Count measures how often a bug fires on the test's input
+distribution, not how many distinct behaviours are wrong.
+glob_match, shlex_split, csv_rows, parse_qsl clean under oracle-select; glob needed two
+fresh test drafts before one passed against fnmatch.
+
+Fix if pursued: rank by the number of distinct failing case CLASSES (or the edge-case
+list, weighted above random inputs) rather than total mismatches, and never accept a
+candidate that fails an edge case the greedy answer passed.
