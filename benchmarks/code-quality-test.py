@@ -348,9 +348,16 @@ def main():
     # request body, e.g. '{"top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}'.
     ap.add_argument("--extra", default=None,
                     help="JSON object merged into the request payload")
+    # Added 2026-11-05. The checks swallow exceptions and the answer was never
+    # kept, so a task that scores 0/n left no trace of why: csv_rows collapsed
+    # 7 -> 0 in 4 of 19 sampled runs and none of the four answers survived.
+    ap.add_argument("--save-dir", default=None,
+                    help="write each task's raw answer and extracted code here")
     ap.add_argument("--api-key-env", default="LLM_API_KEY",
                     help="environment variable holding a bearer key (default LLM_API_KEY)")
     a = ap.parse_args()
+    if a.save_dir:
+        Path(a.save_dir).mkdir(parents=True, exist_ok=True)
 
     tot_ok = tot = 0
     full = 0
@@ -367,6 +374,9 @@ def main():
             tot += n
             continue
         code = extract_code(body)
+        if a.save_dir:
+            Path(a.save_dir, f"{name}.raw.txt").write_text(body)
+            Path(a.save_dir, f"{name}.py").write_text(code)
         if a.show_code:
             print(f"\n----- {name} -----\n{code}\n")
         results, err = run_checks(code, checks_src, a.exec_timeout)
