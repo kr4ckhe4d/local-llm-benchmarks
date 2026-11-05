@@ -6,6 +6,7 @@
 # Harness: benchmarks/code-quality-strategies.py. Every answer and exchange is in the run dirs.
 
 | run                                   | score | clean | textwrap wording | notes |
+| oracle-select v2 (test checked vs stdlib) | 47/50 | 5/7 | final          | urljoin 9/9; misses glob class (tests truncated), textwrap empty + random60 |
 | oracle-select                         | 47/50 | 5/7   | final            | misses urljoin dot_only, textwrap empty + random60 |
 | select + repair                       | 45/50 | 5/7   | interim*         | urljoin 9/9; shlex 6/7, textwrap 3/6 |
 | oracle (first run)                    | 45/50 | 5/7   | interim*         | urljoin/textwrap tests never compiled: answers unchanged |
@@ -31,8 +32,9 @@ Per task (oracle-select):
                     by sampling but not by this model's own repair.
   textwrap     4/6  every candidate "crashed": the test itself had `cases.append("hello", 10)`.
                     Selection was blind; a fix rewrote the test; climb stuck at 289.
-  csv_rows     7/7  test reported 222 mismatches on a correct answer: a wrong oracle test
-                    is harmless when every candidate is already right.
+  csv_rows     7/7  test reported 222 mismatches. The test is valid against csv.reader
+                    (checked afterwards), so these are real differences the hidden checks
+                    do not cover.
   add_months   6/6
   parse_qsl    7/7
 
@@ -48,6 +50,34 @@ Where 50/50 stops:
   Best per-task across all corrected-prompt runs is 48/50 (urljoin 9/9 from
   select+repair) -- but that is picked with the hidden checks, not a method.
 
-Next lever if pursued: when every candidate fails the test at the same line, fix
+oracle-select v2 -- is fixing the test legitimate? Only if the test is graded by
+something other than the candidate. v2 grades it by the stdlib: the real function is
+substituted for the candidate and the test must report MISMATCHES 0 over 300+ cases
+(up to 3 test fixes, then up to 2 fresh tests at t0.6). If no test passes, the greedy
+answer is kept with no ranking and no repair. During repair a rewritten test is accepted
+only if the stdlib still passes it with no fewer cases. add_months has no stdlib function
+and stays unvalidated (its only reference is the benchmark's own, which is off limits).
+Run against v1's saved tests, the check rejects textwrap's crashing test and parse_qsl's
+first test and accepts the rest.
+An aborted first v2 run (superseded/oracle-select-v2-aborted*) showed why "never use an
+invalid test" matters: glob's test called fnmatchcase(pattern, name) with arguments
+swapped, survived 3 fixes, and the climb bent a correct answer toward it (lost `class`).
+
+Per task (v2):
+  glob_match   7/8  all 3 test drafts cut off at the 4096-token cap mid edge-case list
+                    -> greedy answer. Harness limit, not the model.
+  shlex_split  7/7  test valid (378 cases); best 180 -> 0 in 2 fixes
+  urljoin      9/9  test valid (411); ranking picked a sampled answer (23) over greedy (31),
+                    which gets dot_only right; climb to 21
+  textwrap     4/6  test valid (375); greedy at 5 mismatches, 8 fixes clear none:
+                    '  hello  '@5 -> ['', 'hello', ''], width <= 0 must raise ValueError,
+                    long-word packing ('1 wo').
+  csv_rows     7/7  10 -> 1 mismatch vs csv.reader
+  add_months   6/6  parse_qsl 7/7
+
+v1 and v2 together solve every task except textwrap with methods that never see the
+hidden checks: 48/50. No single run has passed 47.
+
+Next lever if pursued: raise the test-draft cap to 8192 (glob). Earlier idea, now done in v2: when every candidate fails the test at the same line, fix
 the TEST before ranking (textwrap's case here), and rank on several independently
 generated tests rather than one.

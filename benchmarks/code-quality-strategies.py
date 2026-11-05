@@ -36,6 +36,37 @@ REF_MODULES = {"glob_match": "fnmatch", "shlex_split": "shlex", "urljoin_": "url
                "parse_qsl_": "urllib"}
 
 
+# The real stdlib function under the task's name. Running the model's
+# differential test against it grades the TEST: a correct test reports 0
+# mismatches. This uses only the stdlib, never the hidden checks. add_months
+# has no stdlib equivalent, so its test is left unvalidated.
+REF_IMPL = {
+    "glob_match": "import fnmatch as _r\ndef glob_match(pattern, name): return _r.fnmatchcase(name, pattern)\n",
+    "shlex_split": "import shlex as _r\ndef shlex_split(s): return _r.split(s)\n",
+    "urljoin_": "import urllib.parse as _r\ndef urljoin_(base, url): return _r.urljoin(base, url)\n",
+    "wrap_": "import textwrap as _r\ndef wrap_(text, width): return _r.wrap(text, width)\n",
+    "csv_rows": "import csv as _r, io as _io\ndef csv_rows(text): return [r for r in _r.reader(_io.StringIO(text))]\n",
+    "parse_qsl_": "import urllib.parse as _r\ndef parse_qsl_(qs): return _r.parse_qsl(qs, keep_blank_values=True)\n",
+}
+MIN_CASES = 300
+
+
+def ref_check(fn, test):
+    """(problem or None, total cases) for the test run against the real stdlib."""
+    src = REF_IMPL.get(fn)
+    if not src:
+        return None, None
+    ok, err, out = run_py(src + "\n\n" + test)
+    m = re.findall(r"MISMATCHES\s+(\d+)\s+OF\s+(\d+)", out)
+    total = int(m[-1][1]) if m else None
+    if ok and m and int(m[-1][0]) == 0 and total >= MIN_CASES:
+        return None, total
+    why = ("it reports mismatches" if m and int(m[-1][0]) else
+           f"it checks only {total} cases (need {MIN_CASES}+)" if m and total < MIN_CASES else
+           "it crashes or prints no MISMATCHES line")
+    return (why + ":\n" + (out.strip() + "\n" + err.strip()).strip()[-1500:]), total
+
+
 def fname(prompt):
     return re.search(r"`(\w+)\(", prompt).group(1)
 
@@ -209,6 +240,20 @@ ORACLE_FIX_REQ = (
     "corrected test script in one code block, without the function.")
 
 
+TEST_BAD_REQ = (
+    "Your test was run with the REAL standard-library function substituted "
+    "for yours, and {err}\n\nIn that run the function your test treats as "
+    "yours WAS the real one, so every mismatch shown comes from the test "
+    "itself: how it calls the reference (argument order, keyword arguments) "
+    "or how it compares results and exceptions. A correct differential test "
+    "reports MISMATCHES 0 against the real function. Output the complete "
+    "corrected test script in one code block, without the function.")
+TEST_REJECTED = (
+    "Your corrected test was rejected: with the real standard-library "
+    "function substituted, {err}\nThe previous test stays. Fix the function "
+    "instead.")
+
+
 def strat_oracle(a, name, prompt, log):
     fn = fname(prompt)
     msgs = [{"role": "user", "content": prompt}]
@@ -242,6 +287,50 @@ def strat_oracle(a, name, prompt, log):
             test = ""
     if not test:
         return code, "no compiling differential test, first answer kept"
+    # Fix the TEST before ranking, against the stdlib only: textwrap's test
+    # crashed on its own `cases.append("hello", 10)`, every candidate scored
+    # "crash" and selection was blind.
+    # glob_match: a test calling fnmatchcase(pattern, name) survived 3 fixes,
+    # and the climb then bent a correct answer toward it (lost `class`). An
+    # invalid test is never used: fresh tests are drawn, and if none passes
+    # against the stdlib the greedy answer is returned untouched.
+    tnote, valid = "test unvalidated (no stdlib reference)", fn not in REF_IMPL
+    for fresh in range(3):
+        if fresh:
+            tb = chat(a, base, max_tokens=4096, temperature=0.6, top_p=0.95)
+            log.append({"turn": f"freshtest{fresh}", "body": tb})
+            raw = tb.split("```", 1)[-1] if tb.count("```") == 1 else tb
+            test = strip_redefs(cq.extract_code(raw).removeprefix("python\n"), fn)
+            try:
+                compile(test, "difftest", "exec")
+            except SyntaxError:
+                continue
+            msgs = base + [{"role": "assistant", "content": tb}]
+        for vfix in range(4):
+            bad, ref_total = ref_check(fn, test)
+            log.append({"turn": f"refcheck{fresh}.{vfix}", "problem": bad, "total": ref_total})
+            if valid or bad is None:
+                if not valid:
+                    valid = True
+                    tnote = (f"test valid vs stdlib ({ref_total} cases, "
+                             f"{fresh} fresh draw(s), {vfix} test fix(es))")
+                break
+            if vfix == 3:
+                break
+            msgs.append({"role": "user", "content": TEST_BAD_REQ.format(err=bad)})
+            vb = chat(a, msgs, max_tokens=4096)
+            msgs.append({"role": "assistant", "content": vb})
+            new_t = strip_redefs(cq.extract_code(vb).removeprefix("python\n"), fn)
+            log.append({"turn": f"testfix{fresh}.{vfix + 1}", "body": vb})
+            try:
+                compile(new_t, "difftest", "exec")
+                test = new_t
+            except SyntaxError:
+                pass
+        if valid:
+            break
+    if not valid:
+        return code, "no test passed against the stdlib in 3 draws x 3 fixes: greedy answer kept, no ranking or repair"
     sel_note = ""
     if a.strategy == "oracle-select":
         # Rank sampled candidates by the model's own differential test before
@@ -277,7 +366,7 @@ def strat_oracle(a, name, prompt, log):
         m = re.findall(r"MISMATCHES\s+(\d+)\s+OF\s+(\d+)", o)
         return int(m[-1][0]) if m else 10**9   # crash or no count: worst
     rnd, ok, last_report = 0, False, None
-    best_code, best_n = code, None
+    best_code, best_n, pending = code, None, ""
     for rnd in range(a.rounds + 1):
         ok, err, out = run_py(code + "\n\n" + test)
         n = mismatches(out, err, ok)
@@ -291,6 +380,8 @@ def strat_oracle(a, name, prompt, log):
         stuck = report == last_report
         last_report = report
         req = ORACLE_FIX_REQ.format(err=report)
+        if pending:
+            req, pending = pending + "\n\n" + req, ""
         if stuck:
             # urljoin: four temp-0 "fixes" left the same '.' mismatch in place.
             req = ("Your last change did not fix this; the output is unchanged. "
@@ -307,11 +398,21 @@ def strat_oracle(a, name, prompt, log):
         else:
             # textwrap's test compared ValueError objects with ==, so it
             # reported its first case as a mismatch forever; let it fix that.
+            # A rewritten test is accepted only if the real stdlib still
+            # passes it with at least as many cases: the model may not make
+            # the test easier to make its function pass.
             try:
                 compile(new, "difftest", "exec")
-                test = new
-                best_n = None   # counts from a different test do not compare
-                log.append({"turn": f"fix{rnd + 1}", "kind": "test", "body": fbody})
+                bad, t2 = ref_check(fn, new)
+                if fn in REF_IMPL and (bad or (ref_total and t2 < ref_total)):
+                    rejected = bad or f"it checks {t2} cases, fewer than the {ref_total} before"
+                    log.append({"turn": f"fix{rnd + 1}", "kind": "test-rejected", "body": fbody,
+                                "why": rejected})
+                    pending = TEST_REJECTED.format(err=rejected)
+                else:
+                    test, ref_total = new, t2 or ref_total
+                    best_n = None   # counts from a different test do not compare
+                    log.append({"turn": f"fix{rnd + 1}", "kind": "test", "body": fbody})
             except SyntaxError:
                 log.append({"turn": f"fix{rnd + 1}", "kind": "unusable", "body": fbody})
     code = best_code
@@ -319,7 +420,7 @@ def strat_oracle(a, name, prompt, log):
     if mod and re.search(rf"^\s*(import|from)\s+{mod}\b", code, re.M):
         return "", "solution imported the reference module: voided"
     nn = "crash" if best_n == 10**9 else best_n
-    return code, sel_note + f"difftest {'pass' if ok else 'FAIL'} after {rnd} fix(es), kept best: {nn} mismatches"
+    return code, tnote + "; " + sel_note + f"difftest {'pass' if ok else 'FAIL'} after {rnd} fix(es), kept best: {nn} mismatches"
 
 
 # ---------------------------------------------------------------- vote
