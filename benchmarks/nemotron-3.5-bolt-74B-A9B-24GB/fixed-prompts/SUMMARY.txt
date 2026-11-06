@@ -1,0 +1,34 @@
+# NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf (NVIDIA's own GGUF: QAT, experts IQ2_XXS, Mamba NVFP4,
+# 22.0 GB) + DFlash draft LiLiCorr (1.0 GB, 6 draft tokens), router preset
+# nemotron-3.5-bolt-74B-A9B-128k, llama.cpp b12165 (4b77dee05), R9700 + RX 9070 XT.
+# Code quality on the CORRECTED prompts, temperature 0, one answer per task, 2026-11-06.
+
+| thinking                                   | score | clean | check request (Claude Code shape)
+| off (router started 'nothink', budget 0)   | 28/50 | 2/7   | 0 thinking chars, 9 s incl. load, glob 4/8
+| on  (router plain, no budget, 65K max)     | 39/50 | 5/7   | 53,524 thinking chars (~16K tokens), 177 s, glob 7/8
+
+Per task:        glob  shlex  urljoin  textwrap  csv  add_m  qsl
+  thinking off    4     5      4        2         7    6      0*
+  thinking on     8     7      0**      4         7    6      7
+
+*  parse_qsl (off): named the function parse_qsl_ and called __import__('urllib.parse').unquote,
+   which both uses the forbidden stdlib and fails (__import__ returns the top-level package).
+** urljoin (on): empty answer after ~9.3 minutes of thinking, most likely the 65,000-token cap
+   (no answer text was produced; the server log did not keep the token count).
+textwrap (on) misses longword + random60, the same two most models miss.
+
+Thinking is the useful mode for Bolt, unlike Qwen3.8/Gemma: +11 checks, and 5 of 7 tasks clean.
+Compared with Lightning 30B-A3B (21 off, thinking void at 32K) it is the better Nemotron by a wide
+margin, and unlike Lightning its thinking usually finishes (~16K tokens on glob). The cost is time:
+~3 min per task thinking, and one task in seven ran away.
+
+Speed (../speed/, llama.cpp b12165, both cards, temp 0 probe as in preset_probe.py):
+| preset                                   | generation (700-token probe, n=3) | prefill (18K-token prompt) | VRAM peak |
+| Bolt 128K + DFlash LiLiCorr (as written) | 126.5 tok/s                       | 1,590 tok/s (11.3 s)       | 28.7 GB   |
+| Bolt 128K, draft removed                 |  55.3 tok/s                       | --                         | 26.0 GB   |
+| Qwen3.8-27B-q6-128k-nothink (+ MTP)      |  58.3 tok/s                       | 1,076 tok/s (16.1 s)       | 30.1 GB   |
+DFlash is worth 2.3x. Draft acceptance 74.8% (413/552), mean accepted length 5.49 on the first
+code request. Load + first answer in 9 s.
+
+Context: Qwen3.8-27B Q6 thinking off 48/50 and QFN 48/50 remain the best single-answer scores
+(cross-model table: qwen3.8-27B-UD-Q6_K/fixed-prompts/SUMMARY.txt).

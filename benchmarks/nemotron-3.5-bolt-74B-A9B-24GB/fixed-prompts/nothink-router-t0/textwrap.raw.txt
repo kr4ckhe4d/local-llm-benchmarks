@@ -1,0 +1,133 @@
+```python
+def wrap_(text, width):
+    if width < 1:
+        raise ValueError("invalid wrap width")
+    
+    # 1. Expand tabs to 8 spaces
+    text = text.expandtabs(8)
+    
+    # 2. Normalize whitespace: every whitespace character becomes a single space
+    #    (runs are NOT collapsed, so "a  b" becomes "a  b")
+    normalized = []
+    for char in text:
+        if char.isspace():
+            normalized.append(' ')
+        else:
+            normalized.append(char)
+    text = ''.join(normalized)
+    
+    # 3. Split into words and spaces to preserve exact spacing
+    #    We split on spaces but keep the spaces as separate tokens
+    tokens = []
+    current_word = []
+    for char in text:
+        if char == ' ':
+            if current_word:
+                tokens.append(''.join(current_word))
+                current_word = []
+            tokens.append(' ')
+        else:
+            current_word.append(char)
+    if current_word:
+        tokens.append(''.join(current_word))
+    
+    # 4. Process tokens to build lines
+    lines = []
+    current_line = []
+    current_length = 0
+    
+    for token in tokens:
+        if token == ' ':
+            # Space token: if we are at the start of a line, drop it (leading whitespace)
+            # Otherwise, add it to the current line
+            if current_line:
+                # Check if adding this space would exceed width
+                if current_length + 1 <= width:
+                    current_line.append(token)
+                    current_length += 1
+                else:
+                    # Space doesn't fit, finalize current line
+                    lines.append(''.join(current_line))
+                    current_line = []
+                    current_length = 0
+                    # Don't add the space to the new line (leading whitespace dropped)
+            # If current_line is empty, we drop the space (leading whitespace of line)
+        else:
+            # Word token
+            word_len = len(token)
+            
+            if current_line:
+                # We have content on the current line
+                # Check if word fits with a preceding space
+                if current_length + 1 + word_len <= width:
+                    current_line.append(' ')
+                    current_line.append(token)
+                    current_length += 1 + word_len
+                else:
+                    # Word doesn't fit on current line
+                    # Finalize current line (trailing whitespace is already handled by not adding space)
+                    lines.append(''.join(current_line))
+                    current_line = []
+                    current_length = 0
+                    
+                    # Now try to place the word on a new line
+                    if word_len <= width:
+                        current_line.append(token)
+                        current_length = word_len
+                    else:
+                        # Word is longer than width, break it
+                        # Add as much as fits
+                        current_line.append(token[:width])
+                        current_length = width
+                        lines.append(''.join(current_line))
+                        current_line = []
+                        current_length = 0
+                        
+                        # Continue with the rest of the word
+                        remaining = token[width:]
+                        while remaining:
+                            if len(remaining) <= width:
+                                current_line.append(remaining)
+                                current_length = len(remaining)
+                                remaining = ''
+                            else:
+                                current_line.append(remaining[:width])
+                                current_length = width
+                                lines.append(''.join(current_line))
+                                current_line = []
+                                current_length = 0
+                                remaining = remaining[width:]
+            else:
+                # Current line is empty
+                if word_len <= width:
+                    current_line.append(token)
+                    current_length = word_len
+                else:
+                    # Word longer than width, break it
+                    current_line.append(token[:width])
+                    current_length = width
+                    lines.append(''.join(current_line))
+                    current_line = []
+                    current_length = 0
+                    
+                    # Continue with the rest of the word
+                    remaining = token[width:]
+                    while remaining:
+                        if len(remaining) <= width:
+                            current_line.append(remaining)
+                            current_length = len(remaining)
+                            remaining = ''
+                        else:
+                            current_line.append(remaining[:width])
+                            current_length = width
+                            lines.append(''.join(current_line))
+                            current_line = []
+                            current_length = 0
+                            remaining = remaining[width:]
+    
+    # Add the last line if it has content
+    if current_line:
+        lines.append(''.join(current_line))
+    
+    return lines
+```

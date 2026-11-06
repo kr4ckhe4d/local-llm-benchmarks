@@ -1,0 +1,27 @@
+def parse_qsl_(qs):
+    def unquote(s):
+        s = s.replace('+', ' ')
+        result = bytearray()
+        i = 0
+        while i < len(s):
+            if s[i] == '%' and i + 2 < len(s):
+                try:
+                    result.append(int(s[i + 1:i + 3], 16))
+                    i += 3
+                    continue
+                except ValueError:
+                    pass
+            result.extend(s[i].encode('utf-8', errors='replace'))
+            i += 1
+        return result.decode('utf-8', errors='replace')
+
+    pairs = []
+    for component in qs.split('&'):
+        if not component:
+            continue
+        if '=' in component:
+            key, value = component.split('=', 1)
+        else:
+            key, value = component, ''
+        pairs.append((unquote(key), unquote(value)))
+    return pairs

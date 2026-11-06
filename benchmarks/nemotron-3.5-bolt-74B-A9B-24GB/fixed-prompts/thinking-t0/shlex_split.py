@@ -1,0 +1,71 @@
+def shlex_split(s):
+    tokens = []
+    current = []
+    in_single = False
+    in_double = False
+    in_token = False
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if in_single:
+            if c == "'":
+                in_single = False
+            else:
+                current.append(c)
+            i += 1
+        elif in_double:
+            if c == '\\':
+                i += 1
+                if i < n:
+                    nc = s[i]
+                    if nc == '\\' or nc == '"':
+                        current.append(nc)
+                        i += 1
+                    else:
+                        current.append('\\')
+                        # i already points to nc; it will be processed next iteration
+                else:
+                    current.append('\\')
+            elif c == '"':
+                in_double = False
+                i += 1
+            else:
+                current.append(c)
+                i += 1
+        else:
+            if c == "'":
+                in_single = True
+                in_token = True
+                i += 1
+            elif c == '"':
+                in_double = True
+                in_token = True
+                i += 1
+            elif c == '\\':
+                in_token = True
+                i += 1
+                if i < n:
+                    current.append(s[i])
+                    i += 1
+                else:
+                    current.append('\\')
+                    i += 1
+            elif c.isspace():
+                if in_token:
+                    tokens.append(''.join(current))
+                    current = []
+                    in_token = False
+                i += 1
+            else:
+                in_token = True
+                current.append(c)
+                i += 1
+
+    if in_single or in_double:
+        raise ValueError("No closing quotation")
+
+    if in_token:
+        tokens.append(''.join(current))
+
+    return tokens

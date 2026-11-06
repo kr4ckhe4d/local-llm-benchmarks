@@ -1,0 +1,91 @@
+```python
+def glob_match(pattern, name):
+    def make_class_pred(content, negated):
+        ranges = []
+        literals = set()
+        idx = 0
+        clen = len(content)
+        while idx < clen:
+            ch = content[idx]
+            if ch == '-' and 0 < idx < clen - 1:
+                lo = ord(content[idx - 1])
+                hi = ord(content[idx + 1])
+                if lo <= hi:
+                    ranges.append((lo, hi))
+                    idx += 2
+                    continue
+            literals.add(ord(ch))
+            idx += 1
+
+        def pred(ch):
+            code = ord(ch)
+            in_class = code in literals or any(lo <= code <= hi for lo, hi in ranges)
+            return not in_class if negated else in_class
+
+        return pred
+
+    # Tokenize the pattern
+    tokens = []
+    i = 0
+    n = len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == '*':
+            tokens.append(('any',))
+            i += 1
+        elif c == '?':
+            tokens.append(('one',))
+            i += 1
+        elif c == '[':
+            start = i
+            i += 1
+            negated = False
+            if i < n and pattern[i] == '!':
+                negated = True
+                i += 1
+            # A literal ] immediately after [ or [!] is part of the class
+            if i < n and pattern[i] == ']':
+                i += 1
+            # Scan for the closing ]
+            while i < n and pattern[i] != ']':
+                i += 1
+            if i >= n:
+                # Unterminated: treat [ as a literal
+                tokens.append(('char', '['))
+                i = start + 1
+            else:
+                content = pattern[start + 1:i]
+                class_content = content[1:] if negated else content
+                tokens.append(('class', make_class_pred(class_content, negated)))
+                i += 1  # skip the closing ]
+        else:
+            tokens.append(('char', c))
+            i += 1
+
+    # Dynamic programming match (anchored to whole string)
+    m = len(tokens)
+    k = len(name)
+    dp = [[False] * (k + 1) for _ in range(m + 1)]
+    dp[0][0] = True
+
+    for i in range(1, m + 1):
+        token = tokens[i - 1]
+        if token[0] == 'any':
+            for j in range(k + 1):
+                dp[i][j] = dp[i - 1][j] or (j > 0 and dp[i][j - 1])
+        elif token[0] == 'one':
+            for j in range(1, k + 1):
+                dp[i][j] = dp[i - 1][j - 1]
+        elif token[0] == 'char':
+            c = token[1]
+            for j in range(1, k + 1):
+                if name[j - 1] == c:
+                    dp[i][j] = dp[i - 1][j - 1]
+        elif token[0] == 'class':
+            pred = token[1]
+            for j in range(1, k + 1):
+                if pred(name[j - 1]):
+                    dp[i][j] = dp[i - 1][j - 1]
+
+    return dp[m][k]
+```

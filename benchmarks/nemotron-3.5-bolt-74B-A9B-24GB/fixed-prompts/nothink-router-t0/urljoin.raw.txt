@@ -1,0 +1,72 @@
+```python
+def urljoin_(base, url):
+    if not url:
+        return base
+
+    # 1. Absolute URL: replace base entirely
+    if '://' in url:
+        return url
+
+    # 2. Scheme-relative URL: keep scheme, replace rest
+    if url.startswith('//'):
+        scheme = base.split('://', 1)[0] if '://' in base else ''
+        return scheme + '://' + url[2:]
+
+    # 3. Absolute path: keep scheme and authority, replace path
+    if url.startswith('/'):
+        scheme, rest = base.split('://', 1) if '://' in base else ('', base)
+        authority = rest.split('/', 1)[0] if '/' in rest else rest
+        return scheme + '://' + authority + url
+
+    # 4. Relative path resolution
+    # Determine the base path (everything after authority up to last '/')
+    if '://' in base:
+        _, rest = base.split('://', 1)
+        authority = rest.split('/', 1)[0] if '/' in rest else rest
+        path_part = rest[len(authority):] if '/' in rest else ''
+    else:
+        authority = ''
+        path_part = base
+
+    # If base path is empty or doesn't end with '/', use directory of last segment
+    if not path_part or not path_part.endswith('/'):
+        if '/' in path_part:
+            path_part = path_part.rsplit('/', 1)[0] + '/'
+        else:
+            path_part = '/'
+
+    # Handle query-only and fragment-only references
+    if url.startswith('?'):
+        return path_part + url
+    if url.startswith('#'):
+        return path_part + url
+
+    # Resolve relative path with . and .. normalization
+    segments = path_part.split('/')
+    # Remove the trailing empty string from split if path ends with /
+    if segments and segments[-1] == '':
+        segments.pop()
+    
+    # Add segments from the relative URL
+    ref_segments = url.split('/')
+    
+    for seg in ref_segments:
+        if seg == '.':
+            continue
+        elif seg == '..':
+            if len(segments) > 1:
+                segments.pop()
+            # If at root, .. stays at root (do nothing)
+        else:
+            segments.append(seg)
+    
+    resolved_path = '/' + '/'.join(segments)
+    
+    # Reconstruct URL
+    if '://' in base:
+        scheme, rest = base.split('://', 1)
+        authority = rest.split('/', 1)[0] if '/' in rest else rest
+        return scheme + '://' + authority + resolved_path
+    else:
+        return resolved_path
+```
