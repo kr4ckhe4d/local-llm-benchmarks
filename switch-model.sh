@@ -206,8 +206,12 @@ usage() {
 Usage: $(basename "$0") router [nothink]  serve ALL presets, switchable from the
                                           Open WebUI dropdown (recommended);
                                           also starts Strata on :8095, unloaded.
-                                          'nothink': thinking off for every preset
-                                          (best for Qwen3.8; Qwen3.5-27B needs it on)
+                                          'nothink': thinking OFF BY DEFAULT; each
+                                          client turns it on per request (Claude Code
+                                          thinking toggle + /effort, Pi thinking level,
+                                          aider --reasoning-effort, Open WebUI Reasoning
+                                          Effort). Needs patches/llama-per-request-
+                                          thinking.patch. Recommended mode.
        $(basename "$0") strata            start only Strata (if it is not up)
        $(basename "$0") strata off|low|medium|default
                                           ...and set its thinking for EVERY client
@@ -317,11 +321,17 @@ start_router() {
   # 'nothink': --reasoning-budget 0 on the router's own command line. Router
   # arguments outrank every preset's settings (llama.cpp server README,
   # "precedence rule for preset options") and are passed to each child, so
-  # every model loads with thinking off. Thinking off scored 48/50 against 35
+  # every model's DEFAULT is thinking off. Thinking off scored 48/50 against 35
   # on Qwen3.8 Q6 and 43 against 42 on Q8 (benchmarks/qwen3.8-27B-UD-Q6_K/
-  # fixed-prompts/SUMMARY.txt). NOT for Qwen3.5-27B: it scored 24 with thinking
-  # off against 41 with it on, so start plain when using it. Clients cannot do
-  # this: llama.cpp ignores Claude Code's thinking fields.
+  # fixed-prompts/SUMMARY.txt); Qwen3.5-27B and Nemotron Bolt want it on.
+  # Since 2026-11-06 it is only a default: with patches/llama-per-request-
+  # thinking.patch applied to ~/llama.cpp, a request turns thinking on or off:
+  #   OpenAI  reasoning_effort none = off, minimal 1K, low 2K, medium 8K, high
+  #           unlimited; or an explicit reasoning_budget_tokens. No field = default.
+  #   Anthropic  no "thinking" or "disabled" = off; "enabled" = its budget_tokens;
+  #           "adaptive" (Claude Code) = on, budget from output_config.effort.
+  # Keep 'nothink': Pi's "off" and aider's unset send NO field, so the default
+  # must be off. Unpatched llama.cpp ignores Claude Code's thinking fields.
   local mode="${1:-}" think_args=()
   case "$mode" in
     "")      ;;
@@ -351,7 +361,7 @@ start_router() {
   fi
   mkdir -p "$(dirname "$STATE")"
   printf 'router %s\n' "$mode" > "$STATE"
-  [[ "$mode" == nothink ]] && echo "    thinking: OFF for every preset (--reasoning-budget 0)"
+  [[ "$mode" == nothink ]] && echo "    thinking: OFF by default (--reasoning-budget 0); clients turn it on per request"
   cd "$LLAMA_DIR"
   nohup "$bin" --models-preset "$PRESET" --models-max "$MODELS_MAX" \
     --sleep-idle-seconds "$SLEEP_IDLE" ${think_args[@]+"${think_args[@]}"} \

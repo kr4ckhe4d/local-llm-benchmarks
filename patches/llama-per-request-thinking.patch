@@ -1,0 +1,81 @@
+diff --git a/tools/server/server-chat.cpp b/tools/server/server-chat.cpp
+index a7431800b..63abd4eeb 100644
+--- a/tools/server/server-chat.cpp
++++ b/tools/server/server-chat.cpp
+@@ -622,12 +622,29 @@ json server_chat_convert_anthropic_to_oai(const json & body) {
+     }
+ 
+     // Handle Anthropic-specific thinking param
+-    if (body.contains("thinking")) {
+-        json thinking = json_value(body, "thinking", json::object());
+-        std::string thinking_type = json_value(thinking, "type", std::string());
+-        if (thinking_type == "enabled") {
+-            int budget_tokens = json_value(thinking, "budget_tokens", 10000);
+-            oai_body["thinking_budget_tokens"] = budget_tokens;
++    // LOCAL PATCH (local-llm-benchmarks/patches/llama-per-request-thinking.patch): follow the
++    // Anthropic API's semantics so the client decides, whatever --reasoning-budget the server
++    // started with: no "thinking" (or type "disabled") = no thinking; "enabled" = its
++    // budget_tokens; "adaptive" (what Claude Code sends) = thinking on, sized by
++    // output_config.effort, which the OAI layer maps to a budget (see server-common.cpp).
++    {
++        std::string thinking_type;
++        if (body.contains("thinking")) {
++            json thinking = json_value(body, "thinking", json::object());
++            thinking_type = json_value(thinking, "type", std::string());
++            if (thinking_type == "enabled") {
++                int budget_tokens = json_value(thinking, "budget_tokens", 10000);
++                oai_body["thinking_budget_tokens"] = budget_tokens;
++            }
++        }
++        if (thinking_type == "adaptive") {
++            std::string effort = "high";
++            if (body.contains("output_config") && body.at("output_config").is_object()) {
++                effort = json_value(body.at("output_config"), "effort", effort);
++            }
++            oai_body["reasoning_effort"] = effort;
++        } else if (thinking_type != "enabled") {
++            oai_body["reasoning_effort"] = "none";
+         }
+     }
+ 
+diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
+index 311eb4f12..8c67b203c 100644
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -1501,7 +1501,11 @@ json oaicompat_chat_params_parse(
+             inputs.enable_thinking = false;
+             inputs.chat_template_kwargs.erase("reasoning_effort");
+         } else if (!reasoning_effort.empty()) {
+-            inputs.chat_template_kwargs["reasoning_effort"] = json(reasoning_effort).dump();
++            // LOCAL PATCH: "minimal" (Pi, OpenAI) is not a level chat templates know; Qwen3.8's
++            // raises "Unexpected reasoning effort minimal" (HTTP 500). Template gets "low"; the
++            // budget below still uses "minimal".
++            inputs.chat_template_kwargs["reasoning_effort"] =
++                json(reasoning_effort == "minimal" ? std::string("low") : reasoning_effort).dump();
+         }
+     }
+ 
+@@ -1519,7 +1523,22 @@ json oaicompat_chat_params_parse(
+         int reasoning_budget = json_value(body, "reasoning_budget_tokens",
+                                json_value(body, "thinking_budget_tokens", -1));
+         if (reasoning_budget == -1) {
+-            reasoning_budget = opt.reasoning_budget;
++            // LOCAL PATCH (local-llm-benchmarks/patches/llama-per-request-thinking.patch):
++            // without an explicit budget, the standard "reasoning_effort" decides, so a client
++            // can turn thinking on even when the server started with --reasoning-budget 0
++            // ("none" already disabled it above). Anything else keeps the server default.
++            const std::string effort = json_value(body, "reasoning_effort", std::string());
++            if (effort == "minimal") {
++                reasoning_budget = 1024;
++            } else if (effort == "low") {
++                reasoning_budget = 2048;
++            } else if (effort == "medium") {
++                reasoning_budget = 8192;
++            } else if (effort == "high" || effort == "xhigh" || effort == "max") {
++                reasoning_budget = -1; // unlimited
++            } else {
++                reasoning_budget = opt.reasoning_budget;
++            }
+         }
+ 
+         if (!out_session.thinking_end_tags().empty()) {
