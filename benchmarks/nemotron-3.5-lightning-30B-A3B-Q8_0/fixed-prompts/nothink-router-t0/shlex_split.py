@@ -1,0 +1,76 @@
+def shlex_split(s):
+    """
+    Reproduce shlex.split(s) in POSIX mode from scratch.
+    Handles:
+      - whitespace splitting
+      - single quotes (everything literal inside, no escapes)
+      - double quotes (backslash escapes only another backslash or a double quote,
+        otherwise literal)
+      - backslash escaping outside quotes
+      - adjacent quoted and unquoted runs concatenating into ONE token
+    """
+    i = 0
+    n = len(s)
+    tokens = []
+
+    while i < n:
+        # Skip leading whitespace
+        while i < n and s[i] in ' \t\n\r':
+            i += 1
+        if i >= n:
+            break
+
+        # Single-quoted string
+        if s[i] == "'":
+            i += 1  # skip opening quote
+            start = i
+            # collect until the next single quote
+            while i < n and s[i] != "'":
+                i += 1
+            tokens.append(s[start:i])
+            if i < n:
+                i += 1  # skip closing quote
+            continue
+
+        # Double-quoted string
+        if s[i] == '"':
+            i += 1  # skip opening quote
+            start = i
+            while i < n:
+                if s[i] == '\\':
+                    # backslash escape: only \ or " are escaped
+                    if i + 1 < n and s[i + 1] in '\\"':
+                        i += 2  # skip escaped char
+                    else:
+                        # backslash is literal
+                        i += 1
+                elif s[i] == '"':
+                    i += 1  # skip closing quote
+                    break
+                else:
+                    i += 1
+            tokens.append(s[start:i])
+            continue
+
+        # Unquoted token (may contain backslash escapes)
+        start = i
+        while i < n:
+            c = s[i]
+            if c in ' \t\n\r':
+                break
+            if c == '\\':
+                if i + 1 < n:
+                    nxt = s[i + 1]
+                    if nxt in ' \t\n\r"\\':
+                        # backslash escapes the following character (literal)
+                        i += 2
+                    else:
+                        # backslash is literal
+                        i += 1
+                else:
+                    i += 1
+            else:
+                i += 1
+        tokens.append(s[start:i])
+
+    return tokens

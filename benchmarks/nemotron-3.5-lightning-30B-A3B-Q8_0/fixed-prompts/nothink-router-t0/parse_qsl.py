@@ -1,0 +1,40 @@
+def parse_qsl_(qs):
+    """Reproduce urllib.parse.parse_qsl(qs, keep_blank_values=True) from scratch."""
+    # Split on '&' only (not ';')
+    parts = qs.split('&')
+    result = []
+    for part in parts:
+        if not part:
+            # Empty segment (e.g., trailing '&' or '&&') yields key='', value=''
+            result.append(('', ''))
+            continue
+        # Split on the first '=' only
+        if '=' in part:
+            key, value = part.split('=', 1)
+        else:
+            key = part
+            value = ''
+        # Decode '+' to space
+        key = key.replace('+', ' ')
+        value = value.replace('+', ' ')
+        # Decode percent-escaped sequences (%XX)
+        def _decode(s):
+            i = 0
+            out = []
+            while i < len(s):
+                if s[i] == '%' and i + 2 < len(s):
+                    hex_str = s[i+1:i+3]
+                    try:
+                        char = chr(int(hex_str, 16))
+                        out.append(char)
+                        i += 3
+                        continue
+                    except ValueError:
+                        pass
+                out.append(s[i])
+                i += 1
+            return ''.join(out)
+        key = _decode(key)
+        value = _decode(value)
+        result.append((key, value))
+    return result

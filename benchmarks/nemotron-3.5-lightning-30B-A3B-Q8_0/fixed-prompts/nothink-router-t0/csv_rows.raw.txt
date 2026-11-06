@@ -1,0 +1,70 @@
+</think>```python
+def csv_rows(text):
+    """Parse RFC 4180 CSV text into a list of rows, each a list of fields.
+    Handles quoted fields with commas and newlines, doubled quotes as escaped quotes,
+    and CRLF or LF line endings.
+    """
+    # Normalize line endings to LF
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    rows = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        # Skip leading newlines (blank lines between records)
+        if text[i] == '\n':
+            i += 1
+            continue
+
+        row = []
+        field_start = i
+
+        while i < n:
+            # --- Field parsing ---
+            if text[i] == '"':
+                # Quoted field
+                i += 1  # skip opening quote
+                field_chars = []
+                while i < n:
+                    if text[i] == '"':
+                        if i + 1 < n and text[i + 1] == '"':
+                            # Escaped quote: doubled quote
+                            field_chars.append('"')
+                            i += 2
+                        else:
+                            # Closing quote
+                            i += 1
+                            break
+                    else:
+                        field_chars.append(text[i])
+                        i += 1
+                # i now points at the character after the closing quote
+                field = ''.join(field_chars)
+            else:
+                # Unquoted field: read until delimiter or end/line
+                field_chars = []
+                while i < n and text[i] not in (',', '\n'):
+                    field_chars.append(text[i])
+                    i += 1
+                field = ''.join(field_chars)
+
+            row.append(field)
+
+            # After a field, expect comma, newline, or end
+            if i >= n:
+                break
+            if text[i] == ',':
+                i += 1  # skip comma, move to next field
+                # If next char is newline, the outer loop will skip it
+                continue
+            if text[i] == '\n':
+                # End of this row
+                i += 1
+                break
+            # Any other character is unexpected but we break to avoid infinite loop
+            break
+
+        rows.append(row)
+
+    return rows
+```

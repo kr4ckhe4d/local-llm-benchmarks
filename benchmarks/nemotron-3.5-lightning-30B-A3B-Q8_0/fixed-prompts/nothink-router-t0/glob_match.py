@@ -1,0 +1,189 @@
+def glob_match(pattern, name):
+    """
+    fnmatch.fnmatchcase semantics implemented from scratch.
+    Supports *, ?, [abc], [a-z], [!abc].
+    A ] immediately after [ or [!] is a literal.
+    An unterminated [ is a literal [.
+    Match is anchored to the whole string.
+    """
+    # ---------- helper: parse a character class ----------
+    def _parse_class(pat, i):
+        """
+        Parse [ ... ] or [! ... ] starting at index i (the '[').
+        Returns (set_of_allowed_chars, new_index) where new_index points
+        to the character right after the closing ']'.
+        If the class is unterminated, returns (None, i+1) meaning the '['
+        is treated as a literal.
+        """
+        # Determine negation
+        negate = False
+        if pat[i] == '!':
+            negate = True
+            i += 1
+        # Now pat[i] should be '['
+        if i >= len(pat) or pat[i] != '[':
+            # Not a real class; treat '[' as literal (should not happen here)
+            return None, i + 1
+
+        i += 1  # skip '['
+        allowed = set()
+        while i < len(pat):
+            ch = pat[i]
+            if ch == ']':
+                # End of class
+                i += 1
+                break
+            if ch == '\\' and i + 1 < len(pat):
+                # Escape next character (treat as literal)
+                allowed.add(pat[i + 1])
+                i += 2
+                continue
+            # Check for range a-z
+            if i + 2 < len(pat) and pat[i + 1] == '-' and pat[i + 2] != ']':
+                start = ch
+                end = pat[i + 2]
+                for code in range(ord(start), ord(end) + 1):
+                    allowed.add(chr(code))
+                i += 3
+                continue
+            # Single character
+            allowed.add(ch)
+            i += 1
+        else:
+            # Loop finished without finding closing ']'
+            # Unterminated '[' -> treat as literal
+            return None, i  # i is past the end of pattern
+
+        # Apply negation if needed
+        if negate:
+            # The universe of possible characters is all ASCII letters/digits
+            # plus common symbols. We'll build the complement relative to
+            # the set of characters that could appear in a filename.
+            # For simplicity and correctness, we compute the complement
+            # from a broad set of typical filename characters.
+            # Here we use all printable ASCII except '[' and ']'.
+            all_chars = set(
+                chr(c) for c in range(32, 127)  # space..~
+            )
+            allowed = all_chars - allowed
+
+        return allowed, i
+
+    # ---------- main matching logic ----------
+    n = len(name)
+    m = len(pattern)
+    i = 0  # index in name
+    j = 0  # index in pattern
+
+    while j < m:
+        pch = pattern[j]
+
+        if pch == '*':
+            # '*' matches any sequence (including empty)
+            # Advance j past this '*'
+            j += 1
+            # If pattern is exhausted, '*' matches the rest of name
+            if j >= m:
+                return True
+            # Try to match the remainder of pattern against suffixes of name
+            # We can skip any number of characters in name.
+            # Simple backtracking: try each possible split.
+            # To avoid exponential blow‑up, we use a greedy approach with backtrack.
+            # Find the earliest position where the rest of the pattern matches.
+            suffix = pattern[j:]
+            # Try all possible split points in name
+            for k in range(i, n + 1):
+                # Check if suffix matches name[k:]
+                if _match_rest(name, k, suffix):
+                    return True
+            return False
+
+        elif pch == '?':
+            # '?' matches exactly one character
+            if i >= n:
+                return False
+            i += 1
+            j += 1
+
+        elif pch == '[':
+            allowed, new_j = _parse_class(pattern, j)
+            if allowed is None:
+                # Unterminated '[' – treat as literal '['
+                if i >= n or name[i] != '[':
+                    return False
+                i += 1
+                j = new_j  # new_j points after the parsed (or unparsed) '['
+                continue
+            # Check if current name character is in the class
+            if i >= n:
+                return False
+            if name[i] in allowed:
+                i += 1
+                j = new_j
+            else:
+                return False
+
+        elif pch == '!':
+            # '!' outside a character class is not special; treat as literal
+            # (fnmatch treats it as literal unless followed by '[')
+            if i >= n or name[i] != '!':
+                return False
+            i += 1
+            j += 1
+
+        else:
+            # Literal character
+            if i >= n or name[i] != pch:
+                return False
+            i += 1
+            j += 1
+
+    # Pattern consumed; name must also be fully consumed (anchored match)
+    return i == n
+
+
+def _match_rest(name, start, pat):
+    """
+    Helper: check if pattern `pat` matches name[start:] with no trailing
+    wildcards that consume characters (i.e. the pattern must exactly match
+    the remainder, but may contain '*' inside).
+    """
+    i = start
+    j = 0
+    m = len(pat)
+    while j < m:
+        pch = pat[j]
+        if pch == '*':
+            j += 1
+            if j >= m:
+                return True  # remaining '*' matches rest
+            suffix = pat[j:]
+            # Try all split points
+            for k in range(i, len(name) + 1):
+                if _match_rest(name, k, suffix):
+                    return True
+            return False
+        elif pch == '?':
+            if i >= len(name):
+                return False
+            i += 1
+            j += 1
+        elif pch == '[':
+            allowed, new_j = _parse_class(pat, j)
+            if allowed is None:
+                # literal '['
+                if i >= len(name) or name[i] != '[':
+                    return False
+                i += 1
+                j = new_j
+                continue
+            if i >= len(name) or name[i] not in allowed:
+                return False
+            i += 1
+            j = new_j
+        else:
+            if i >= len(name) or name[i] != pch:
+                return False
+            i += 1
+            j += 1
+    return i == len(name)

@@ -1,0 +1,16 @@
+import calendar
+
+def add_months(y, m, d, n):
+    # Calculate total months from a fixed reference (year 0, month 1)
+    total_months = y * 12 + (m - 1) + n
+    # Normalize to a non-negative total and extract year and month
+    total_months %= 12 * 400  # 400-year cycle keeps numbers bounded
+    year = total_months // 12
+    month = total_months % 12 + 1
+    
+    # Determine the last day of the target month
+    last_day = calendar.monthrange(year, month)[1]
+    # Clamp the day if it exceeds the month's length
+    day = min(d, last_day)
+    
+    return (year, month, day)

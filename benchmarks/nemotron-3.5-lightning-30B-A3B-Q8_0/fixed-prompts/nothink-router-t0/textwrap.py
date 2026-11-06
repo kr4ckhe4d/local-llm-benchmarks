@@ -1,0 +1,58 @@
+def wrap_(text, width):
+    # Expand tabs to spaces (default tab size of 8)
+    text = text.expandtabs(8)
+    
+    # Split the text into lines preserving leading whitespace of the whole text
+    lines = text.split('\n')
+    
+    result = []
+    
+    for line in lines:
+        # Strip trailing whitespace from the current line
+        line = line.rstrip()
+        
+        # If the line is empty, add an empty string to result
+        if not line:
+            result.append('')
+            continue
+        
+        # Split the line into words (any whitespace becomes one space)
+        words = line.split()
+        
+        # Process words to fit within width
+        current_line = []
+        current_length = 0
+        
+        for word in words:
+            # Check if the word can fit on the current line
+            if current_line:
+                # Need a space before the word
+                potential_length = current_length + 1 + len(word)
+            else:
+                potential_length = len(word)
+            
+            if potential_length <= width:
+                # Word fits, add it
+                current_line.append(word)
+                current_length = potential_length
+            else:
+                # Word does not fit
+                if current_line:
+                    # Flush the current line
+                    result.append(' '.join(current_line))
+                    current_line = [word]
+                    current_length = len(word)
+                else:
+                    # Single word longer than width, break it
+                    # Break the word into chunks of at most width
+                    while word:
+                        chunk = word[:width]
+                        result.append(chunk)
+                        word = word[width:]
+                    # current_line remains empty, current_length is 0
+        
+        # Add any remaining words in current_line
+        if current_line:
+            result.append(' '.join(current_line))
+    
+    return result
