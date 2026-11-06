@@ -1,0 +1,103 @@
+def parse_qsl_(qs, keep_blank_values=True):
+    def _unquote(s):
+        # Handle '+' as space
+        s = s.replace('+', ' ')
+        # Handle percent-escapes
+        res = []
+        i = 0
+        while i < len(s):
+            if s[i] == '%' and i + 2 < len(s):
+                try:
+                    # Convert hex to integer
+                    byte = int(s[i+1:i+3], 16)
+                    res.append(chr(byte))
+                    i += 3
+                except ValueError:
+                    res.append(s[i])
+                    i += 1
+            else:
+                res.append(s[i])
+                i += 1
+        return "".join(res)
+
+    result = []
+    if not qs:
+        return result
+
+    # Split by '&' only
+    parts = qs.split('&')
+    for part in parts:
+        if not part:
+            continue
+        if '=' in part:
+            key, value = part.split('=', 1)
+        else:
+            key, value = part, ''
+        
+        if not keep_blank_values and not value:
+            # Note: urllib.parse.parse_qsl behavior for blank values:
+            # If keep_blank_values is False, only keys with no '=' are 
+            # usually kept if they have content, but standard behavior 
+            # is to drop pairs where the value is empty.
+            if not key: continue
+            # Standard parse_qsl actually keeps the key if it exists 
+            # even if value is empty, unless keep_blank_values is False.
+            # However, the specific rule is: if value is empty string, 
+            # and keep_blank_values is False, skip it.
+            if value == '':
+                continue
+        
+        result.append((_unquote(key), _unquote(value)))
+    
+    # Re-evaluating standard urllib behavior: 
+    # If keep_blank_values=False, pairs with empty values are omitted.
+    # Let's refine the loop to match exactly.
+    
+    final_result = []
+    parts = qs.split('&')
+    for part in parts:
+        if not part: continue
+        if '=' in part:
+            k, v = part.split('=', 1)
+        else:
+            k, v = part, ''
+        
+        if not keep_blank_values and v == '':
+            continue
+            
+        final_result.append((_unquote(k), _unquote(v)))
+        
+    return final_result
+
+# Corrected implementation to match urllib.parse.parse_qsl exactly:
+def parse_qsl_(qs, keep_blank_values=True):
+    def _unquote(s):
+        s = s.replace('+', ' ')
+        res = []
+        i = 0
+        while i < len(s):
+            if s[i] == '%' and i + 2 < len(s):
+                try:
+                    res.append(chr(int(s[i+1:i+3], 16)))
+                    i += 3
+                except ValueError:
+                    res.append(s[i])
+                    i += 1
+            else:
+                res.append(s[i])
+                i += 1
+        return "".join(res)
+
+    result = []
+    if qs:
+        for part in qs.split('&'):
+            if not part: continue
+            if '=' in part:
+                k, v = part.split('=', 1)
+            else:
+                k, v = part, ''
+            
+            if not keep_blank_values and v == '':
+                continue
+            result.append((_unquote(k), _unquote(v)))
+    return result

@@ -1,0 +1,109 @@
+```python
+def urljoin_(base, url):
+    def parse_url(u):
+        scheme = ""
+        netloc = ""
+        path = ""
+        query = ""
+        fragment = ""
+        
+        if not u:
+            return scheme, netloc, path, query, fragment
+            
+        # Extract fragment
+        if "#" in u:
+            u, fragment = u.split("#", 1)
+            fragment = "#" + fragment
+            
+        # Extract query
+        if "?" in u:
+            u, query = u.split("?", 1)
+            query = "?" + query
+            
+        # Extract scheme
+        if "://" in u:
+            scheme, u = u.split("://", 1)
+            scheme += "://"
+        elif ":" in u and "://" not in u:
+            # Handle cases like 'mailto:foo' or 'file:foo'
+            parts = u.split(":", 1)
+            scheme = parts[0] + ":"
+            u = parts[1]
+            
+        # Extract netloc and path
+        if "//" in u:
+            netloc, path = u.split("//", 1)
+            netloc = "//" + netloc
+        else:
+            netloc = ""
+            path = u
+
+        if not path.startswith("/") and not netloc:
+            # It's a relative path, but we need to handle the leading slash logic
+            pass
+        
+        # If there was no // but it started with / it's an absolute path
+        if not netloc and path.startswith("/"):
+            pass
+            
+        return scheme, netloc, path, query, fragment
+
+    def normalize_path(path):
+        parts = []
+        for part in path.split("/"):
+            if part == "..":
+                if parts:
+                    parts.pop()
+            elif part == "." or part == "":
+                continue
+            else:
+                parts.append(part)
+        
+        # If original path was absolute, keep it absolute
+        res = "/".join(parts)
+        if path.startswith("/") and not res.startswith("/"):
+            res = "/" + res
+        return res
+
+    b_scheme, b_netloc, b_path, b_query, b_frag = parse_url(base)
+    u_scheme, u_netloc, u_path, u_query, u_frag = parse_url(url)
+
+    # 1. Absolute URL (has scheme or //)
+    if u_scheme or u_netloc.startswith("//"):
+        return u_scheme + u_netloc + u_path + u_query + u_frag
+
+    # 2. Scheme-relative (e.g., //example.com/path)
+    if u_netloc.startswith("//"):
+        return b_scheme + u_netloc + u_path + u_query + u_frag
+
+    # 3. Absolute path (starts with /)
+    if u_path.startswith("/"):
+        return b_scheme + b_netloc + u_path + u_query + u_frag
+
+    # 4. Relative path, query, or fragment
+    # Determine the base directory
+    if b_path == "" or b_path == "/":
+        base_dir = b_netloc if b_netloc else ""
+        # If no netloc and no path, it's a relative base (e.g., "dir/file.html")
+        # But urljoin treats empty base as root for relative paths
+        if not b_netloc and not b_path:
+            base_dir = ""
+    else:
+        # Find last slash to determine directory
+        last_slash = b_path.rfind("/")
+        if last_slash == -1:
+            base_dir = ""
+        else:
+            base_dir = b_path[:last_slash + 1]
+
+    # Construct new path
+    new_path = base_dir + u_path
+    # Normalize .. and .
+    new_path = normalize_path(new_path)
+    
+    # If the result is empty but we had a netloc, it should be /
+    if not new_path and b_netloc:
+        new_path = "/"
+
+    return b_scheme + b_netloc + new_path + u_query + u_frag
+```

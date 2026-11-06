@@ -1,0 +1,133 @@
+```python
+def wrap_(text, width):
+    # 1. Expand tabs (default tab size is 8)
+    expanded_text = ""
+    for char in text:
+        if char == '\t':
+            current_pos = len(expanded_text) % 8
+            expanded_text += ' ' * (8 - current_pos)
+        else:
+            expanded_text += char
+
+    # 2. Replace all whitespace characters with a single space
+    # Note: The prompt specifies "runs are NOT collapsed", meaning 
+    # every individual whitespace character becomes exactly one space.
+    processed_chars = []
+    for char in expanded_text:
+        if char.isspace():
+            processed_chars.append(' ')
+        else:
+            processed_chars.append(char)
+    
+    # Join and handle the "whitespace at each line break is dropped" rule.
+    # Since we replaced newlines with spaces, we need to simulate the 
+    # behavior where leading/trailing whitespace of lines is removed.
+    # In textwrap.wrap, this effectively means we treat the text as a 
+    # sequence of words separated by one or more spaces.
+    full_text = "".join(processed_chars)
+    
+    # To respect "runs are NOT collapsed" but "whitespace at line breaks dropped",
+    # we split into words. However, since we replaced all whitespace with 
+    # single spaces, we just need to handle the word wrapping logic.
+    words = full_text.split(' ')
+    # Filter out empty strings caused by multiple spaces (which were 
+    # converted to single spaces, but if there were multiple whitespaces 
+    # originally, they might result in empty strings depending on implementation).
+    # Actually, the prompt says "each whitespace character becomes one space".
+    # If input was "a  b", it becomes "a  b". split(' ') gives ['a', '', 'b'].
+    
+    lines = []
+    current_line = []
+    current_length = 0
+
+    for word in words:
+        # If the word itself is longer than width, it must be broken.
+        if len(word) > width:
+            # If there's content in current_line, flush it first.
+            if current_line:
+                lines.append(" ".join(current_line))
+                current_line = []
+                current_length = 0
+            
+            # Break the long word into chunks of 'width'
+            for i in range(0, len(word), width):
+                chunk = word[i:i + width]
+                # If chunk is not the first part of a broken word, 
+                # it shouldn't have a leading space unless it's a new line.
+                # But textwrap.wrap breaks long words without adding spaces.
+                lines.append(chunk)
+            continue
+
+        # Check if adding this word (plus a space if not first) exceeds width
+        space_needed = 1 if current_line else 0
+        if current_length + space_needed + len(word) <= width:
+            current_line.append(word)
+            current_length += space_needed + len(word)
+        else:
+            # Flush current line and start new one with the word
+            if current_line:
+                lines.append(" ".join(current_line))
+            current_line = [word]
+            current_length = len(word)
+
+    if current_line:
+        lines.append(" ".join(current_line))
+
+    # Final cleanup: textwrap.wrap drops leading/trailing whitespace of the 
+    # resulting lines. Since we joined by " ", and words are split, 
+    # we just ensure no empty strings are in the list (except if input was empty).
+    return [line for line in lines if line] if any(c.strip() for c in text) else []
+
+# Re-evaluating the "runs are NOT collapsed" vs "whitespace at line break dropped" 
+# logic to be strictly compliant with the prompt's specific constraints:
+def wrap_(text, width):
+    # Step 1: Expand tabs
+    expanded = ""
+    for char in text:
+        if char == '\t':
+            expanded += ' ' * (8 - (len(expanded) % 8))
+        else:
+            expanded += char
+            
+    # Step 2: Each whitespace becomes one space
+    chars = []
+    for char in expanded:
+        chars.append(' ' if char.isspace() else char)
+    text_with_spaces = "".join(chars)
+    
+    # Step 3: "Whitespace at each line break is dropped"
+    # This implies we treat the text as a stream of words.
+    # Because we replaced all whitespace with spaces, we split by space.
+    words = text_with_spaces.split(' ')
+    
+    res = []
+    cur_line = []
+    cur_len = 0
+    
+    for w in words:
+        if not w: continue # This handles the "dropped" whitespace logic
+        
+        if len(w) > width:
+            if cur_line:
+                res.append(" ".join(cur_line))
+                cur_line = []
+                cur_len = 0
+            for i in range(0, len(w), width):
+                res.append(w[i:i+width])
+        else:
+            # If cur_line is empty, we don't add a space.
+            # Otherwise, we check if adding " " + w exceeds width.
+            added_len = len(w) + (1 if cur_line else 0)
+            if cur_len + added_len <= width:
+                cur_line.append(w)
+                cur_len += added_len
+            else:
+                res.append(" ".join(cur_line))
+                cur_line = [w]
+                cur_len = len(w)
+                
+    if cur_line:
+        res.append(" ".join(cur_line))
+        
+    return res
+```

@@ -1,0 +1,19 @@
+import calendar
+
+def add_months(y, m, d, n):
+    # Calculate the total number of months from year 0
+    # (m - 1) converts the 1-indexed month to a 0-indexed value for calculation
+    total_months = (y * 12) + (m - 1) + n
+    
+    # Determine the new year and month
+    new_y = total_months // 12
+    new_m = (total_months % 12) + 1
+    
+    # Get the maximum number of days in the target month/year
+    # calendar.monthrange returns a tuple (weekday of first day, number of days)
+    _, max_days = calendar.monthrange(new_y, new_m)
+    
+    # Clamp the day to the maximum allowed for that specific month
+    new_d = min(d, max_days)
+    
+    return (new_y, new_m, new_d)

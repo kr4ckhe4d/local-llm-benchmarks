@@ -1,0 +1,98 @@
+```python
+def wrap_(text, width):
+    # Expand tabs to spaces (default tabsize is 8)
+    text = text.expandtabs()
+    
+    # Replace all whitespace characters with a single space
+    # Note: The prompt specifies "each whitespace character becomes one space"
+    # but also says "runs are NOT collapsed". This implies a 1-to-1 mapping.
+    # However, standard textwrap behavior treats any sequence of whitespace as 
+    # potential break points. To strictly follow "each whitespace becomes one space":
+    chars = []
+    for char in text:
+        if char.isspace():
+            chars.append(' ')
+        else:
+            chars.append(char)
+    text = "".join(chars)
+
+    # Handle leading whitespace of the whole text (preserved)
+    leading_whitespace = ""
+    for char in text:
+        if char.isspace():
+            leading_whitespace += char
+        else:
+            break
+    
+    # Strip leading whitespace for processing, but we will re-attach it 
+    # to the first line if it was there.
+    content = text[len(leading_whitespace):]
+    
+    lines = []
+    current_line = ""
+    
+    # Split into words/chunks. Since we replaced whitespace with spaces,
+    # we can split by space but keep track of the "words".
+    # Because "runs are NOT collapsed", we treat every character as part 
+    # of a potential word unless it's a space.
+    words = content.split(' ')
+    # Re-joining with spaces to handle the "not collapsed" logic correctly:
+    # Actually, if every whitespace became a space, 'word' is just 
+    # anything between spaces.
+    
+    # Standard textwrap logic for words longer than width:
+    # We iterate through the characters to build lines.
+    i = 0
+    while i < len(content):
+        # If we are at a space, it's a potential break point
+        if content[i] == ' ':
+            if len(current_line) + 1 <= width:
+                # If current_line is empty, we don't want a leading space
+                if current_line == "":
+                    pass 
+                else:
+                    current_line += " "
+                i += 1
+            else:
+                # Line is full, push it
+                lines.append(current_line)
+                current_line = ""
+                # Don't increment i, re-evaluate this space
+        else:
+            # It's a non-space character
+            # Check if adding this char exceeds width
+            if len(current_line) + 1 <= width:
+                current_line += content[i]
+                i += 1
+            else:
+                # Word is too long or line is full
+                if current_line:
+                    lines.append(current_line)
+                    current_line = ""
+                
+                # If the single character itself is > width (impossible here)
+                # or if we are breaking a long word:
+                # We must take as many chars as possible
+                chunk = content[i:i+width]
+                current_line = chunk
+                i += width
+
+    if current_line:
+        lines.append(current_line)
+
+    # Final pass: textwrap drops trailing whitespace of a line 
+    # and leading whitespace of the next (except first line's leading).
+    # Since we replaced all whitespace with ' ', we just need to strip 
+    # the ends of the lines.
+    processed_lines = []
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        if stripped:
+            processed_lines.append(stripped)
+            
+    # Re-attach leading whitespace to the first line
+    if processed_lines:
+        processed_lines[0] = leading_whitespace + processed_lines[0]
+        
+    return processed_lines
+```
