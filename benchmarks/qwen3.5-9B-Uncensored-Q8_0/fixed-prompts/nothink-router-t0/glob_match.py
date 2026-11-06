@@ -1,0 +1,89 @@
+def glob_match(pattern, name):
+    i = 0  # pattern index
+    j = 0  # name index
+    n = len(name)
+    m = len(pattern)
+
+    def match_char():
+        nonlocal i, j
+        if i < m and j < n:
+            if pattern[i] == '?' or pattern[i] == '*':
+                i += 1
+                j += 1
+                return True
+            elif pattern[i] == '[':
+                return match_bracket()
+            elif pattern[i] == name[j]:
+                i += 1
+                j += 1
+                return True
+        return False
+
+    def match_bracket():
+        nonlocal i, j
+        i += 1  # skip '['
+        if i < m and pattern[i] == '!':
+            i += 1  # skip '!'
+        if i < m and pattern[i] == ']':
+            i += 1
+            j += 1
+            return True
+        if i >= m:
+            return False
+
+        char_class = []
+        while i < m and pattern[i] != ']':
+            if pattern[i] == '\\' and i + 1 < m:
+                # Escape next char
+                char_class.append(pattern[i + 1])
+                i += 2
+            elif pattern[i] == '-' and len(char_class) > 0:
+                # Range
+                prev = char_class[-1]
+                curr = pattern[i]
+                if prev <= curr:
+                    for c in range(ord(prev), ord(curr) + 1):
+                        char_class.append(chr(c))
+                i += 1
+            else:
+                char_class.append(pattern[i])
+                i += 1
+
+        if i >= m:
+            return False
+
+        # Check if current name char matches any in char_class
+        if j < n:
+            c = name[j]
+            if pattern[i] == '!' or pattern[i] == '^':
+                negated = True
+                i += 1
+            else:
+                negated = False
+                i += 1
+
+            matched = c in char_class
+            if negated:
+                matched = not matched
+
+            if matched:
+                j += 1
+                return True
+            else:
+                return False
+        else:
+            # No more chars in name, but bracket pattern might expect more?
+            # Actually, if we are inside a bracket and name is exhausted,
+            # it only matches if the bracket consumed exactly one char.
+            # Since we are here, we tried to match one char.
+            # If matched is True, we consumed one char.
+            if matched:
+                j += 1
+                return True
+            return False
+
+    while i < m:
+        if not match_char():
+            return False
+
+    return j == n

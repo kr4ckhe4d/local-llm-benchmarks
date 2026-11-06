@@ -1,0 +1,94 @@
+def glob_match(pattern, name):
+    tokens = []
+    i = 0
+    n = len(pattern)
+
+    while i < n:
+        c = pattern[i]
+
+        if c == '*':
+            if not tokens or tokens[-1][0] != 'star':
+                tokens.append(('star', None))
+            i += 1
+
+        elif c == '?':
+            tokens.append(('any', None))
+            i += 1
+
+        elif c == '[':
+            j = i + 1
+            negated = False
+
+            if j < n and pattern[j] == '!':
+                negated = True
+                j += 1
+
+            if j < n and pattern[j] == ']':
+                j += 1
+
+            while j < n and pattern[j] != ']':
+                j += 1
+
+            if j >= n:
+                tokens.append(('lit', c))
+                i += 1
+            else:
+                body = pattern[i + 1:j]
+                if negated:
+                    body = body[1:]
+
+                allowed = set()
+                k = 0
+                m = len(body)
+
+                while k < m:
+                    ch = body[k]
+
+                    if k + 2 < m and body[k + 1] == '-':
+                        lo = ch
+                        hi = body[k + 2]
+                        if lo <= hi:
+                            allowed.update(chr(x) for x in range(ord(lo), ord(hi) + 1))
+                        k += 3
+                    else:
+                        allowed.add(ch)
+                        k += 1
+
+                tokens.append(('class', (allowed, negated)))
+                i = j + 1
+
+        else:
+            tokens.append(('lit', c))
+            i += 1
+
+    m = len(name)
+    dp = [[False] * (m + 1) for _ in range(len(tokens) + 1)]
+    dp[0][0] = True
+
+    for pi in range(len(tokens)):
+        if tokens[pi][0] == 'star':
+            dp[pi + 1][0] = dp[pi][0]
+            for ni in range(1, m + 1):
+                dp[pi + 1][ni] = dp[pi][ni] or dp[pi + 1][ni - 1]
+
+    for pi in range(1, len(tokens) + 1):
+        kind, value = tokens[pi - 1]
+
+        if kind == 'star':
+            continue
+
+        for ni in range(1, m + 1):
+            ch = name[ni - 1]
+
+            if kind == 'any':
+                ok = True
+            elif kind == 'lit':
+                ok = ch == value
+            else:
+                allowed, negated = value
+                ok = (ch in allowed) != negated
+
+            if ok:
+                dp[pi][ni] = dp[pi - 1][ni - 1]
+
+    return dp[len(tokens)][m]

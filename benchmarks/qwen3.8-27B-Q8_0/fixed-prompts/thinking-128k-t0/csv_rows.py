@@ -1,0 +1,66 @@
+def csv_rows(text):
+    rows = []
+    row = []
+    field = []
+    in_quotes = False
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+
+        if in_quotes:
+            if ch == '"':
+                if i + 1 < n and text[i + 1] == '"':
+                    field.append('"')
+                    i += 2
+                    continue
+                in_quotes = False
+                i += 1
+                continue
+            field.append(ch)
+            i += 1
+            continue
+
+        if ch == '"':
+            if not field:
+                in_quotes = True
+                i += 1
+                continue
+            field.append(ch)
+            i += 1
+            continue
+
+        if ch == ',':
+            row.append(''.join(field))
+            field = []
+            i += 1
+            continue
+
+        if ch == '\r':
+            if i + 1 < n and text[i + 1] == '\n':
+                i += 2
+            else:
+                i += 1
+            row.append(''.join(field))
+            field = []
+            rows.append(row)
+            row = []
+            continue
+
+        if ch == '\n':
+            row.append(''.join(field))
+            field = []
+            rows.append(row)
+            row = []
+            i += 1
+            continue
+
+        field.append(ch)
+        i += 1
+
+    if field or row:
+        row.append(''.join(field))
+        rows.append(row)
+
+    return rows

@@ -1,0 +1,229 @@
+def wrap_(text, width):
+    # Normalize tabs to spaces (1 tab = 1 space as per "each whitespace character becomes one space")
+    # Note: Standard textwrap expands tabs to 8 spaces, but the prompt says "each whitespace character becomes one space".
+    # However, to strictly follow "tabs are expanded" usually implies standard behavior. 
+    # But the prompt explicitly says "each whitespace character becomes one space". 
+    # Let's interpret "tabs are expanded" as replacing \t with a single space to satisfy "each whitespace... becomes one space".
+    # If the user meant standard tab expansion (8 spaces), they usually don't add the "each whitespace... one space" clause.
+    # Given the constraint "each whitespace character becomes one space", we replace \t with ' '.
+    text = text.replace('\t', ' ')
+    
+    # Split into chunks based on whitespace, but keep the whitespace info? 
+    # The prompt says "runs are NOT collapsed". This implies we treat every whitespace char as a separator 
+    # but we don't merge multiple spaces into one. 
+    # Actually, "runs are NOT collapsed" usually means if there are 3 spaces, they stay 3 spaces.
+    # But "each whitespace character becomes one space" implies we normalize all whitespace types (space, tab, newline) to ' '.
+    # So: Replace all whitespace chars (except newlines which act as breaks? No, textwrap treats newlines as breaks).
+    # Wait, textwrap.wrap treats newlines as breaks. The prompt says "whitespace at each line break is dropped".
+    # This implies we process the text as a stream of words separated by whitespace.
+    
+    # Let's parse the text into a list of "words" and "whitespace runs".
+    # Actually, simpler approach: 
+    # 1. Replace all whitespace characters (space, tab, newline, etc) with a single space? 
+    #    No, "runs are NOT collapsed" means if input is "a  b", output should have "a  b" (two spaces).
+    #    But "each whitespace character becomes one space" contradicts "runs not collapsed" if we interpret "whitespace character" as the type.
+    #    Re-reading: "tabs are expanded and each whitespace character becomes one space". 
+    #    This likely means: \t -> ' ', \n -> ' ', \r -> ' '. 
+    #    So "a  b" (two spaces) stays "a  b". "a\tb" becomes "a b".
+    #    "runs are NOT collapsed" means we don't do "a   b" -> "a b".
+    
+    # So step 1: Normalize non-space whitespace to space.
+    # We will iterate char by char or use regex to replace \t, \n, \r with ' '.
+    # But wait, textwrap treats \n as a break point. The prompt says "whitespace at each line break is dropped".
+    # This implies \n acts as a break, and the space before/after it is dropped?
+    # "whitespace at each line break is dropped (trailing whitespace of a line and leading whitespace of the next)"
+    # This suggests we should split by \n first?
+    # Let's assume the input text is a single string.
+    # Strategy:
+    # 1. Replace all whitespace characters (except \n) with ' '.
+    # 2. Split by \n to get lines? No, textwrap.wrap treats the whole string as one block.
+    #    Actually, textwrap.wrap splits on whitespace.
+    #    Let's stick to the prompt's specific rules:
+    #    - Tabs expanded -> ' '
+    #    - Each whitespace char -> ' ' (so \t, \n, \r, etc become ' ')
+    #    - Runs NOT collapsed (so "a  b" remains "a  b")
+    #    - Whitespace at line breaks dropped: This is tricky. If we convert \n to ' ', then we have a space.
+    #      The rule says "trailing whitespace of a line and leading whitespace of the next" are dropped.
+    #      This implies we should treat \n as a hard break, and remove spaces immediately surrounding it.
+    
+    # Revised Plan:
+    # 1. Replace \t with ' '.
+    # 2. Split the text by \n (and other line breaks like \r\n) to get raw lines.
+    # 3. For each raw line, strip trailing spaces.
+    # 4. Join these lines with a space? No, the prompt says "whitespace at each line break is dropped".
+    #    This means if we have "A \n B", the space after A and before B is dropped.
+    #    So "A \n B" -> "A B" (one space between A and B).
+    #    But "runs are NOT collapsed" applies to spaces WITHIN a line.
+    #    So "A  \n  B" -> "A  B" (two spaces from first line, one space from second line? No).
+    #    "trailing whitespace of a line" -> drop. "leading whitespace of the next" -> drop.
+    #    So "A  \n  B" -> "A" + " " + "B" -> "A B"? 
+    #    Wait, if we drop trailing of line 1 and leading of line 2, we are left with "A" and "B".
+    #    Then we join them with a single space? Or just concatenate?
+    #    textwrap behavior: "A  \n  B" -> "A  B" (if runs not collapsed).
+    #    But the rule says "whitespace at each line break is dropped".
+    #    This implies the space that was at the end of line 1 and start of line 2 is gone.
+    #    So "A  \n  B" -> "A" + " " + "B" -> "A B"? 
+    #    Let's assume the standard textwrap behavior where \n is a break and spaces around it are removed.
+    #    So we split by \n, strip each part, then join with a single space?
+    #    But "runs are NOT collapsed" means if we have "A  B" (two spaces) in one line, they stay.
+    #    So:
+    #    - Split text by \n.
+    #    - For each segment, strip trailing whitespace.
+    #    - Join segments with a single space? 
+    #    - But wait, if we have "A  \n  B", stripping gives "A  " and " B".
+    #      If we join with space: "A   B" (3 spaces).
+    #      But the rule says "whitespace at each line break is dropped".
+    #      This usually means the space *caused* by the break is dropped.
+    #      Let's assume the input is processed as a single stream where \n acts as a separator that removes surrounding spaces.
+    #      So "A  \n  B" -> "A  B" (2 spaces from first line, 0 from second, plus 1 join space? No).
+    #      Actually, textwrap.wrap treats \n as a break. The space before \n is trailing, space after is leading.
+    #      Both are dropped. Then a single space is inserted between the words?
+    #      No, textwrap doesn't insert a space if the words are adjacent.
+    #      Let's look at the "runs are NOT collapsed" rule again.
+    #      If input is "A  \n  B", and we drop trailing/leading, we get "A" and "B".
+    #      Then we join them. Do we add a space? 
+    #      If we don't add a space, "AB". If we do, "A B".
+    #      Standard textwrap: "A  \n  B" -> "A  B" (if width allows).
+    #      Why? Because the space after A is kept (it's not trailing if it's before the break? No, it is trailing).
+    #      Wait, "trailing whitespace of a line" means spaces at the end of the line.
+    #      So "A  \n" -> "A". "  B" -> "B".
+    #      Then we join "A" and "B". How?
+    #      If we just concatenate, "AB". If we join with space, "A B".
+    #      The prompt says "whitespace at each line break is dropped".
+    #      This implies the space that would normally exist between the lines is dropped.
+    #      But textwrap usually puts a space between words.
+    #      Let's assume the text is normalized to a single string where \n is replaced by ' ', 
+    #      but we must handle the "dropped" part.
+    #      Actually, the simplest interpretation of "whitespace at each line break is dropped" is:
+    #      Split by \n, strip each part, then join with a single space.
+    #      Why? Because the "break" itself is replaced by a space, but the spaces *around* the break are dropped.
+    #      So "A  \n  B" -> "A" + " " + "B" -> "A B".
+    #      But "runs are NOT collapsed" means "A  B" (two spaces) stays "A  B".
+    #      So if input is "A  \n  B", output is "A B" (one space).
+    #      If input is "A  B", output is "A  B" (two spaces).
+    #      This seems consistent.
+    
+    # Step 1: Replace \t with ' '.
+    # Step 2: Split by \n (and \r\n).
+    # Step 3: Strip trailing whitespace from each segment.
+    # Step 4: Join segments with a single space.
+    # Step 5: Now we have a string with spaces.
+    # Step 6: Split this string into "words" where a word is a sequence of non-space chars.
+    #         But wait, "runs are NOT collapsed" means we cannot just split by space.
+    #         We need to keep the spaces as part of the "word" or as separators?
+    #         Actually, textwrap.wrap splits on whitespace.
+    #         If "runs are NOT collapsed", then "A  B" is treated as "A", "  ", "B"?
+    #         No, textwrap treats whitespace as separators.
+    #         If runs are not collapsed, then "A  B" has two spaces.
+    #         So we should split the string into tokens: [word, space, word, space...].
+    #         But textwrap logic: it accumulates words until width is exceeded.
+    #         If we have "A  B", the space is a separator.
+    #         So we can split the string by whitespace, but keep the whitespace?
+    #         No, standard split() collapses runs.
+    #         We need to parse the string manually.
+    
+    # Let's parse the normalized string (after step 4) into a list of tokens:
+    # Token types: 'word' (non-space), 'space' (one or more spaces).
+    # But the prompt says "each whitespace character becomes one space".
+    # So "A  B" -> "A", " ", " ", "B"? No, "runs are NOT collapsed" means the two spaces are kept.
+    # So we have "A", "  ", "B".
+    # But textwrap treats whitespace as a separator.
+    # So "A  B" is "A", "  ", "B".
+    # When wrapping, we add "A", then "  ", then "B".
+    # If width is 3: "A  " (len 3) -> line 1. "B" -> line 2.
+    # If width is 4: "A  B" (len 4) -> line 1.
+    
+    # So algorithm:
+    # 1. Normalize text: replace \t with ' ', split by \n, strip trailing, join with ' '.
+    # 2. Parse the resulting string into a list of chunks: [word, space_run, word, ...].
+    #    Where space_run is a string of one or more spaces.
+    # 3. Iterate through chunks, building lines.
+    #    - If current line + chunk <= width, add.
+    #    - Else, start new line.
+    #    - Special case: if a single chunk (word or space) is longer than width, it forces a new line (and might exceed width).
+    #    - But the prompt says "words longer than width ARE broken".
+    #      This implies if a word is longer than width, we break it.
+    #      How? "words longer than width ARE broken".
+    #      Usually means we split the word into chunks of size 'width'.
+    #      But what about spaces? Spaces are not broken.
+    #      So if we have a word "abcde" and width=2: "ab", "cd", "e".
+    #      If we have "a  b" (two spaces) and width=1: "a", "  ", "b".
+    #      The spaces are not broken.
+    
+    # So:
+    # - Parse into tokens: words and space-runs.
+    # - For each token:
+    #   - If it's a word: break it into chunks of size 'width'.
+    #   - If it's a space-run: keep as is (it won't be broken).
+    # - Then wrap these sub-chunks.
+    
+    # Let's implement.
+    
+    # Step 1: Normalize
+    text = text.replace('\t', ' ')
+    lines = text.splitlines()
+    # Strip trailing whitespace from each line
+    lines = [line.rstrip() for line in lines]
+    # Join with a single space
+    normalized_text = ' '.join(lines)
+    
+    # Step 2: Parse into tokens (words and space-runs)
+    # We need to split by spaces but keep the spaces.
+    # Use regex to find non-space runs and space runs.
+    import re
+    # Pattern: (\S+|\s+)
+    tokens = re.findall(r'\S+|\s+', normalized_text)
+    
+    # Step 3: Break long words
+    # We will create a new list of "atomic" chunks.
+    # Words are broken into width-sized chunks.
+    # Space runs are kept as is.
+    atomic_chunks = []
+    for token in tokens:
+        if token.isspace():
+            atomic_chunks.append(token)
+        else:
+            # It's a word. Break it.
+            i = 0
+            while i < len(token):
+                chunk = token[i:i+width]
+                atomic_chunks.append(chunk)
+                i += width
+    
+    # Step 4: Wrap atomic_chunks into lines
+    result = []
+    current_line = []
+    current_len = 0
+    
+    for chunk in atomic_chunks:
+        chunk_len = len(chunk)
+        # If current line is empty, just add
+        if not current_line:
+            current_line.append(chunk)
+            current_len = chunk_len
+        else:
+            # Check if adding this chunk exceeds width
+            # Note: If current_line has content, we need a space?
+            # Wait, the prompt says "whitespace at each line break is dropped".
+            # But within a line, spaces are part of the tokens.
+            # If we have "A" and "B" (separated by space in original), the space is a token.
+            # So if current_line ends with a word, and next is a space token, we add space.
+            # If next is a word, we add word.
+            # The "space" between words is already in the tokens.
+            # So we don't add extra space.
+            # But wait, if we break a word, do we add a space? No.
+            # So we just concatenate.
+            
+            if current_len + chunk_len <= width:
+                current_line.append(chunk)
+                current_len += chunk_len
+            else:
+                # Start new line
+                result.append(''.join(current_line))
+                current_line = [chunk]
+                current_len = chunk_len
+    
+    if current_line:
+        result.append(''.join(current_line))
+        
+    return result

@@ -1,0 +1,119 @@
+```python
+def wrap_(text, width):
+    if width <= 0:
+        raise ValueError("invalid width %r (must be > 0)" % (width,))
+
+    # Expand tabs and replace every whitespace character by a single space.
+    # Runs of whitespace are intentionally not collapsed.
+    expanded = []
+    tabsize = 8
+    for ch in text:
+        if ch == "\t":
+            expanded.append(" " * (tabsize - len(expanded[-1]) % tabsize))
+        elif ch.isspace():
+            expanded.append(" ")
+        else:
+            expanded.append(ch)
+    text = "".join(expanded)
+
+    # Split into words, keeping hyphenated pieces as separate chunks.
+    chunks = []
+    for part in text.split(" "):
+        if not part:
+            continue
+        if "-" in part:
+            pieces = part.split("-")
+            for i, piece in enumerate(pieces):
+                if piece:
+                    chunks.append(piece)
+                if i != len(pieces) - 1:
+                    chunks.append("-")
+        else:
+            chunks.append(part)
+
+    # Drop whitespace at line breaks:
+    # - leading whitespace of the whole text is kept;
+    # - trailing whitespace before a break and leading whitespace after it are dropped.
+    if chunks:
+        first = chunks[0]
+        if first and first[0] == " ":
+            i = 0
+            while i < len(first) and first[i] == " ":
+                i += 1
+            if i == len(first):
+                chunks.pop(0)
+            else:
+                chunks[0] = first[i:]
+
+        for i in range(len(chunks) - 1, 0, -1):
+            if chunks[i] == " ":
+                del chunks[i]
+            elif chunks[i] and chunks[i][-1] == " ":
+                j = len(chunks[i]) - 1
+                while j >= 0 and chunks[i][j] == " ":
+                    j -= 1
+                if j < 0:
+                    del chunks[i]
+                else:
+                    chunks[i] = chunks[i][:j + 1]
+
+        for i in range(1, len(chunks)):
+            if chunks[i] == " ":
+                del chunks[i]
+                i -= 1
+            elif chunks[i] and chunks[i][0] == " ":
+                j = 0
+                while j < len(chunks[i]) and chunks[i][j] == " ":
+                    j += 1
+                if j == len(chunks[i]):
+                    del chunks[i]
+                    i -= 1
+                else:
+                    chunks[i] = chunks[i][j:]
+
+    lines = []
+
+    def handle_long_word(word):
+        if not word:
+            return
+        if len(word) <= width:
+            lines.append(word)
+            return
+        i = 0
+        n = len(word)
+        while i < n:
+            j = min(i + width, n)
+            if j < n:
+                k = word.rfind("-", i, j)
+                if k > i:
+                    j = k + 1
+            lines.append(word[i:j])
+            i = j
+
+    cur_line = []
+    cur_len = 0
+    spaceleft = width
+
+    for word in chunks:
+        wordlen = len(word)
+        word_space_len = wordlen + (1 if cur_line else 0)
+
+        if cur_line and cur_len + word_space_len > spaceleft:
+            lines.append("".join(cur_line))
+            cur_line = []
+            cur_len = 0
+            spaceleft = width
+            word_space_len = wordlen
+
+        if not cur_line and wordlen > width:
+            handle_long_word(word)
+            continue
+
+        cur_line.append(word)
+        cur_len += word_space_len
+
+    if cur_line:
+        lines.append("".join(cur_line))
+
+    return lines
+```

@@ -1,0 +1,63 @@
+from datetime import date, timedelta
+
+def add_months(y, m, d, n):
+    """
+    Returns a (year, month, day) tuple representing the date n calendar months 
+    after the given date (y, m, d). If the day does not exist in the target month,
+    it is clamped to the last day of that month. Handles negative n and year rollover.
+    
+    :param y: Year (int)
+    :param m: Month (int, 1-12)
+    :param d: Day (int, 1-31)
+    :param n: Number of months to add (int, can be negative)
+    :return: Tuple (new_year, new_month, new_day)
+    """
+    # Create a date object. We use a large year to avoid overflow issues during intermediate steps,
+    # but since Python's datetime handles arbitrary years, we can start directly.
+    try:
+        start_date = date(y, m, d)
+    except ValueError:
+        # Handle cases like Feb 30 or Apr 31 by clamping to the last day of the original month first
+        # This ensures we have a valid starting point before adding months.
+        # Find the last day of the original month
+        if m in [1, 3, 5, 7, 8, 10, 12]:
+            last_day = 31
+        elif m in [4, 6, 9, 11]:
+            last_day = 30
+        elif m == 2:
+            # Check for leap year
+            if (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0):
+                last_day = 29
+            else:
+                last_day = 28
+        
+        start_date = date(y, m, last_day)
+
+    # Calculate the target year and month
+    target_year = y + (n // 12)
+    target_month = m + (n % 12)
+    
+    # Adjust for negative months
+    if target_month <= 0:
+        target_month += 12
+        target_year -= 1
+    elif target_month > 12:
+        target_month -= 12
+        target_year += 1
+
+    # Determine the last day of the target month to handle clamping
+    if target_month in [1, 3, 5, 7, 8, 10, 12]:
+        last_day_target = 31
+    elif target_month in [4, 6, 9, 11]:
+        last_day_target = 30
+    elif target_month == 2:
+        # Check for leap year in the target year
+        if (target_year % 4 == 0 and target_year % 100 != 0) or (target_year % 400 == 0):
+            last_day_target = 29
+        else:
+            last_day_target = 28
+
+    # Clamp the day if necessary
+    new_day = min(d, last_day_target)
+
+    return (target_year, target_month, new_day)

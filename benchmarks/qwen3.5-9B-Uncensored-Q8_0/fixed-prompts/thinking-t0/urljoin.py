@@ -1,0 +1,150 @@
+import re
+
+def urljoin_(base, url):
+    """
+    Reproduce urllib.parse.urljoin behavior from scratch.
+    Implements RFC 3986 reference resolution.
+    """
+    
+    # Helper to parse a URL into components
+    def parse_url(u):
+        # 1. Scheme
+        scheme = None
+        if u.startswith('://'):
+            # Find end of scheme
+            match = re.match(r'^([a-zA-Z][a-zA-Z0-9+.-]*):', u)
+            if match:
+                scheme = match.group(1)
+                u = u[len(scheme)+3:] # +3 for "://"
+        
+        # 2. Netloc (Host:Port)
+        netloc = None
+        if u.startswith('//'):
+            netloc_match = re.match(r'^//([^/?#]*)', u)
+            if netloc_match:
+                netloc = netloc_match.group(1)
+                u = u[len(netloc)+2:] # +2 for "//"
+        
+        # 3. Path
+        path = u
+        # 4. Query
+        query = None
+        if '?' in u:
+            q_idx = u.index('?')
+            path = u[:q_idx]
+            query = u[q_idx+1:]
+        
+        # 5. Fragment
+        fragment = None
+        if '#' in u:
+            f_idx = u.index('#')
+            path = u[:f_idx]
+            fragment = u[f_idx+1:]
+            
+        # Normalize path: remove trailing slash if empty, but keep if present
+        # RFC 3986: If path is empty, it's treated as "/" for resolution purposes usually,
+        # but strictly speaking, path is the string.
+        # urllib behavior: "http://a" -> path is "/"
+        if path == '':
+            path = '/'
+            
+        return {
+            'scheme': scheme,
+            'netloc': netloc,
+            'path': path,
+            'query': query,
+            'fragment': fragment
+        }
+
+    # Helper to normalize path segments (RFC 3986 Section 5.2.4)
+    def normalize_path(path):
+        if not path:
+            return '/'
+        
+        # Split by /
+        segments = path.split('/')
+        result = []
+        
+        for seg in segments:
+            if seg == '..':
+                if result:
+                    result.pop()
+            elif seg == '.':
+                pass
+            elif seg:
+                result.append(seg)
+        
+        # Reconstruct
+        if not result:
+            return '/'
+        return '/' + '/'.join(result)
+
+    # Parse inputs
+    base_parsed = parse_url(base)
+    url_parsed = parse_url(url)
+    
+    # Determine resolution type
+    if url_parsed['scheme']:
+        # Absolute URI: Replace everything
+        return f"{url_parsed['scheme']}://{url_parsed['netloc']}{url_parsed['path']}" + \
+               (f"?{url_parsed['query']}" if url_parsed['query'] else "") + \
+               (f"#{url_parsed['fragment']}" if url_parsed['fragment'] else "")
+    
+    if url_parsed['netloc']:
+        # Scheme-relative (starts with //)
+        # Use base scheme, url netloc, url path
+        return f"{base_parsed['scheme']}://{url_parsed['netloc']}{url_parsed['path']}" + \
+               (f"?{url_parsed['query']}" if url_parsed['query'] else "") + \
+               (f"#{url_parsed['fragment']}" if url_parsed['fragment'] else "")
+    
+    # Relative path
+    # Use base scheme, base netloc, resolve path
+    
+    # Resolve path
+    # If base path is empty (e.g. "http://a"), treat as "/"
+    if base_parsed['path'] == '/':
+        base_path = '/'
+    else:
+        base_path = base_parsed['path']
+        
+    # If url path is absolute (starts with /), replace base path
+    if url_parsed['path'].startswith('/'):
+        resolved_path = normalize_path(url_parsed['path'])
+    else:
+        # Relative path resolution
+        # Split base path into segments, remove last segment (directory)
+        base_segments = base_path.split('/')
+        if base_segments[-1] == '':
+            base_segments = base_segments[:-1]
+        
+        url_segments = url_parsed['path'].split('/')
+        
+        # Combine and normalize
+        # Start with base segments (minus last)
+        current = base_segments[:-1]
+        
+        for seg in url_segments:
+            if seg == '..':
+                if current:
+                    current.pop()
+            elif seg == '.':
+                pass
+            elif seg:
+                current.append(seg)
+        
+        resolved_path = '/' + '/'.join(current)
+        if not resolved_path:
+            resolved_path = '/'
+
+    # Construct result
+    result = f"{base_parsed['scheme']}://{base_parsed['netloc']}{resolved_path}"
+    
+    # Append query from url (if any)
+    if url_parsed['query']:
+        result += f"?{url_parsed['query']}"
+    
+    # Append fragment from url (if any)
+    if url_parsed['fragment']:
+        result += f"#{url_parsed['fragment']}"
+        
+    return result

@@ -1,0 +1,117 @@
+def glob_match(pattern, name):
+    def match(p_idx, n_idx):
+        # If pattern is exhausted, name must also be exhausted
+        if p_idx == len(pattern):
+            return n_idx == len(name)
+        
+        # If name is exhausted, pattern must only contain '*'
+        if n_idx == len(name):
+            # Check if remaining pattern is all '*'
+            while p_idx < len(pattern) and pattern[p_idx] == '*':
+                p_idx += 1
+            return p_idx == len(pattern)
+
+        # Handle '*'
+        if pattern[p_idx] == '*':
+            # Try matching 0 chars (consume nothing from name)
+            # OR try matching 1+ chars (consume 1 from name)
+            # We need to find the next non-'*' char to anchor the next match
+            # Optimization: Find the next non-'*' char in pattern
+            next_non_star = p_idx + 1
+            while next_non_star < len(pattern) and pattern[next_non_star] == '*':
+                next_non_star += 1
+            
+            # If the rest of the pattern is all '*', it matches anything
+            if next_non_star == len(pattern):
+                return True
+            
+            # Try matching '*' against 0 chars, then recurse
+            if match(p_idx + 1, n_idx):
+                return True
+            
+            # Try matching '*' against 1+ chars
+            # We can optimize by jumping to the next non-'*' char in pattern
+            # But standard backtracking is safer for correctness
+            return match(p_idx + 1, n_idx + 1)
+
+        # Handle '?'
+        if pattern[p_idx] == '?':
+            if n_idx + 1 < len(name):
+                return match(p_idx + 1, n_idx + 1)
+            return False
+
+        # Handle Character Class [...]
+        if pattern[p_idx] == '[':
+            # Find the closing bracket
+            class_start = p_idx + 1
+            class_end = -1
+            negation = False
+            i = class_start
+            
+            # Handle negation
+            if i < len(pattern) and pattern[i] in '!^':
+                negation = True
+                i += 1
+            
+            # Find closing bracket
+            while i < len(pattern):
+                if pattern[i] == ']':
+                    class_end = i
+                    break
+                i += 1
+            
+            if class_end == -1:
+                # Unterminated [, treat as literal
+                return match(p_idx + 1, n_idx)
+            
+            # Parse the class content
+            chars = []
+            ranges = []
+            j = class_start + 1 if negation else class_start
+            
+            while j < class_end:
+                if j + 1 < class_end and pattern[j + 1] == '-':
+                    # Range
+                    if j + 2 < class_end and pattern[j + 2] != ']':
+                        start_char = pattern[j]
+                        end_char = pattern[j + 2]
+                        ranges.append((start_char, end_char))
+                        j += 3
+                    else:
+                        # Hyphen not part of range, treat as literal
+                        chars.append(pattern[j])
+                        j += 1
+                else:
+                    chars.append(pattern[j])
+                    j += 1
+            
+            # Check if current name char matches the class
+            current_char = name[n_idx]
+            is_match = False
+            
+            for start, end in ranges:
+                if start <= current_char <= end:
+                    is_match = True
+                    break
+            
+            if not is_match:
+                for c in chars:
+                    if c == current_char:
+                        is_match = True
+                        break
+            
+            if negation:
+                is_match = not is_match
+            
+            if is_match:
+                return match(p_idx + 1, n_idx + 1)
+            else:
+                return False
+
+        # Handle Literal Character
+        if pattern[p_idx] == name[n_idx]:
+            return match(p_idx + 1, n_idx + 1)
+        
+        return False
+
+    return match(0, 0)

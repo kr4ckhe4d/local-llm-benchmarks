@@ -1,0 +1,88 @@
+import io
+
+def csv_rows(text):
+    """
+    Parses RFC 4180 CSV from a string and returns a list of rows.
+    Each row is a list of string fields.
+    Handles:
+      - Quoted fields containing commas, newlines, and carriage returns.
+      - Escaped quotes (doubled quotes inside quoted fields).
+      - CRLF and LF line endings.
+    """
+    lines = []
+    current_row = []
+    current_field = []
+    in_quotes = False
+    i = 0
+    n = len(text)
+
+    while i < n:
+        char = text[i]
+
+        if in_quotes:
+            if char == '"':
+                # Check for escaped quote ("")
+                if i + 1 < n and text[i + 1] == '"':
+                    current_field.append('"')
+                    i += 2
+                    continue
+                else:
+                    # End of quoted field
+                    in_quotes = False
+                    i += 1
+                    continue
+            else:
+                current_field.append(char)
+                i += 1
+                continue
+
+        # Not in quotes
+        if char == '"':
+            # Start of a quoted field
+            in_quotes = True
+            i += 1
+            continue
+
+        if char == ',':
+            # End of field
+            current_row.append(''.join(current_field))
+            current_field = []
+            i += 1
+            continue
+
+        if char == '\r':
+            # Handle CRLF or standalone CR (though RFC 4180 specifies CRLF)
+            if i + 1 < n and text[i + 1] == '\n':
+                i += 2  # Skip both \r and \n
+            else:
+                i += 1  # Skip standalone \r
+            # End of row
+            if current_field:
+                current_row.append(''.join(current_field))
+                current_field = []
+            lines.append(current_row)
+            current_row = []
+            continue
+
+        if char == '\n':
+            # End of row
+            if current_field:
+                current_row.append(''.join(current_field))
+                current_field = []
+            lines.append(current_row)
+            current_row = []
+            i += 1
+            continue
+
+        # Regular character
+        current_field.append(char)
+        i += 1
+
+    # Handle last row if text doesn't end with newline
+    if current_field or current_row:
+        if current_field:
+            current_row.append(''.join(current_field))
+        if current_row:
+            lines.append(current_row)
+
+    return lines

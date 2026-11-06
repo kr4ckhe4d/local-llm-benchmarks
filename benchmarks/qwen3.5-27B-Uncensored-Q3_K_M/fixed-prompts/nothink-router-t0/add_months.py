@@ -1,0 +1,15 @@
+def add_months(y, m, d, n):
+    import calendar
+    
+    # Calculate new year and month
+    new_m = m + n
+    new_y = y + (new_m - 1) // 12
+    new_m = ((new_m - 1) % 12) + 1
+    
+    # Determine the last day of the target month
+    last_day = calendar.monthrange(new_y, new_m)[1]
+    
+    # Clamp the day if it exceeds the last day of the target month
+    new_d = min(d, last_day)
+    
+    return (new_y, new_m, new_d)

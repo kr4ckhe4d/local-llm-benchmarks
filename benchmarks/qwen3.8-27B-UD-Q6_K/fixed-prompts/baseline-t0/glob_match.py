@@ -1,0 +1,138 @@
+def glob_match(pattern, name):
+    """
+    Implement fnmatch.fnmatchcase semantics from scratch.
+    
+    Supports:
+    - * : matches any run of characters (including empty)
+    - ? : matches exactly one character
+    - [seq] : matches any character in seq
+    - [!seq] : matches any character NOT in seq
+    - ] immediately after [ or [! is a literal ]
+    - Unterminated [ is a literal [
+    
+    Matching is anchored to the whole string.
+    """
+    def match_here(pattern, name):
+        """
+        Match pattern against name, both starting at their current positions.
+        Returns True if the entire remaining pattern matches the entire remaining name.
+        """
+        while pattern:
+            if pattern[0] == '*':
+                # Skip consecutive stars
+                while pattern and pattern[0] == '*':
+                    pattern = pattern[1:]
+                if not pattern:
+                    return True
+                # Try matching the rest of the pattern against every possible
+                # suffix of name (including empty)
+                for i in range(len(name) + 1):
+                    if match_here(pattern, name[i:]):
+                        return True
+                return False
+            elif pattern[0] == '?':
+                if not name:
+                    return False
+                pattern = pattern[1:]
+                name = name[1:]
+            elif pattern[0] == '[':
+                # Parse the bracket expression
+                i = 1
+                negate = False
+                if i < len(pattern) and pattern[i] == '!':
+                    negate = True
+                    i += 1
+                # Check if ] is immediately after [ or [!
+                if i < len(pattern) and pattern[i] == ']':
+                    # ] is a literal, so it's part of the set
+                    # We need to find the closing ]
+                    j = i + 1
+                    while j < len(pattern) and pattern[j] != ']':
+                        j += 1
+                    if j >= len(pattern):
+                        # Unterminated [ - treat [ as literal
+                        if not name:
+                            return False
+                        if name[0] != '[':
+                            return False
+                        pattern = pattern[1:]
+                        name = name[1:]
+                        continue
+                    # The set includes ] as a literal
+                    set_start = i
+                    set_end = j
+                    # Build the set of characters
+                    chars = set()
+                    k = set_start
+                    while k < set_end:
+                        if k + 2 <= set_end and pattern[k + 1] == '-':
+                            # Range
+                            start_char = pattern[k]
+                            end_char = pattern[k + 2]
+                            if start_char <= end_char:
+                                for c in range(ord(start_char), ord(end_char) + 1):
+                                    chars.add(chr(c))
+                            k += 3
+                        else:
+                            chars.add(pattern[k])
+                            k += 1
+                    if not name:
+                        return False
+                    c = name[0]
+                    if negate:
+                        if c in chars:
+                            return False
+                    else:
+                        if c not in chars:
+                            return False
+                    pattern = pattern[set_end + 1:]
+                    name = name[1:]
+                else:
+                    # Normal case: find the closing ]
+                    j = i
+                    while j < len(pattern) and pattern[j] != ']':
+                        j += 1
+                    if j >= len(pattern):
+                        # Unterminated [ - treat [ as literal
+                        if not name:
+                            return False
+                        if name[0] != '[':
+                            return False
+                        pattern = pattern[1:]
+                        name = name[1:]
+                        continue
+                    # Build the set of characters from pattern[i:j]
+                    chars = set()
+                    k = i
+                    while k < j:
+                        if k + 2 <= j and pattern[k + 1] == '-':
+                            # Range
+                            start_char = pattern[k]
+                            end_char = pattern[k + 2]
+                            if start_char <= end_char:
+                                for c in range(ord(start_char), ord(end_char) + 1):
+                                    chars.add(chr(c))
+                            k += 3
+                        else:
+                            chars.add(pattern[k])
+                            k += 1
+                    if not name:
+                        return False
+                    c = name[0]
+                    if negate:
+                        if c in chars:
+                            return False
+                    else:
+                        if c not in chars:
+                            return False
+                    pattern = pattern[j + 1:]
+                    name = name[1:]
+            else:
+                # Literal character
+                if not name or name[0] != pattern[0]:
+                    return False
+                pattern = pattern[1:]
+                name = name[1:]
+        return not name
+    
+    return match_here(pattern, name)

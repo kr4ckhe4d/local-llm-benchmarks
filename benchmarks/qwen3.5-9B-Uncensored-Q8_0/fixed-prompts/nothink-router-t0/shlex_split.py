@@ -1,0 +1,84 @@
+def shlex_split(s):
+    """
+    Reproduce shlex.split(s) in POSIX mode from scratch.
+    
+    Rules:
+    - Whitespace splits tokens.
+    - Single quotes: everything inside is literal (no escapes).
+    - Double quotes: backslash escapes only another backslash or a double quote; otherwise literal.
+    - Backslash escaping outside quotes: escapes the next character.
+    - Adjacent quoted and unquoted runs concatenate into ONE token.
+    """
+    tokens = []
+    current_token = []
+    i = 0
+    n = len(s)
+    
+    while i < n:
+        char = s[i]
+        
+        # Handle whitespace
+        if char in ' \t\n\r\f\v':
+            if current_token:
+                tokens.append(''.join(current_token))
+                current_token = []
+            i += 1
+            continue
+        
+        # Handle single quotes
+        if char == "'":
+            # Find the end of the single-quoted string
+            j = i + 1
+            while j < n and s[j] != "'":
+                j += 1
+            # Everything from i+1 to j is part of the token
+            current_token.append(s[i+1:j])
+            i = j + 1
+            continue
+        
+        # Handle double quotes
+        if char == '"':
+            j = i + 1
+            while j < n:
+                if s[j] == '"':
+                    # End of double-quoted string
+                    break
+                elif s[j] == '\\' and j + 1 < n:
+                    # Escape sequence: backslash escapes next char or another backslash/quote
+                    next_char = s[j+1]
+                    if next_char == '\\' or next_char == '"':
+                        current_token.append(next_char)
+                        j += 2
+                    else:
+                        # Otherwise, backslash is literal and next char is literal
+                        current_token.append(s[j])
+                        current_token.append(next_char)
+                        j += 2
+                else:
+                    # Regular character inside double quotes
+                    current_token.append(s[j])
+                    j += 1
+            else:
+                # Reached end of string without closing quote
+                current_token.append(s[i+1:j])
+            i = j + 1 if j < n else j
+            continue
+        
+        # Handle backslash outside quotes
+        if char == '\\' and current_token:
+            # Check if next char exists
+            if i + 1 < n:
+                next_char = s[i+1]
+                current_token.append(next_char)
+                i += 2
+                continue
+        
+        # Regular character
+        current_token.append(char)
+        i += 1
+    
+    # Don't forget the last token
+    if current_token:
+        tokens.append(''.join(current_token))
+    
+    return tokens

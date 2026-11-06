@@ -1,0 +1,77 @@
+```python
+def glob_match(pattern, name):
+    def match(p, n):
+        if not p:
+            return not n
+        
+        if p[0] == '*':
+            # * matches empty or any sequence
+            # Try matching empty (consume *) or consume one char from name
+            if match(p[1:], n):
+                return True
+            if n:
+                return match(p, n[1:])
+            return False
+        
+        if p[0] == '?':
+            if not n:
+                return False
+            return match(p[1:], n[1:])
+        
+        if p[0] == '[':
+            # Parse bracket expression
+            i = 1
+            neg = False
+            if i < len(p) and p[i] in ('!', '^'):
+                neg = True
+                i += 1
+            
+            # Find closing ]
+            start = i
+            if i < len(p) and p[i] == ']':
+                # Literal ]
+                i += 1
+            
+            while i < len(p) and p[i] != ']':
+                i += 1
+            
+            if i >= len(p):
+                # Unterminated [, treat as literal [
+                if not n or n[0] != '[':
+                    return False
+                return match(p[1:], n[1:])
+            
+            bracket_content = p[start:i]
+            # Check if n[0] is in bracket_content
+            # Handle ranges a-z
+            in_set = False
+            if n:
+                char = n[0]
+                # Check literal chars
+                for j in range(len(bracket_content)):
+                    if bracket_content[j] == char:
+                        in_set = True
+                        break
+                    # Check ranges
+                    if j + 2 < len(bracket_content) and bracket_content[j+1] == '-':
+                        start_char = bracket_content[j]
+                        end_char = bracket_content[j+2]
+                        if start_char <= char <= end_char:
+                            in_set = True
+                            break
+            
+            if neg:
+                in_set = not in_set
+            
+            if in_set:
+                return match(p[i+1:], n[1:])
+            else:
+                return False
+        
+        # Literal character
+        if not n or p[0] != n[0]:
+            return False
+        return match(p[1:], n[1:])
+
+    return match(pattern, name)
+```

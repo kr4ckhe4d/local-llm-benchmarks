@@ -1,0 +1,25 @@
+def add_months(y, m, d, n):
+    # Calculate total months from year 0 (0-indexed)
+    total_months = y * 12 + m - 1
+    total_months += n
+
+    # Convert back to year and month
+    new_y = total_months // 12
+    new_m = total_months % 12 + 1
+
+    # Determine days in the target month
+    if new_m in [1, 3, 5, 7, 8, 10, 12]:
+        days_in_month = 31
+    elif new_m in [4, 6, 9, 11]:
+        days_in_month = 30
+    else: # February
+        # Leap year check
+        if (new_y % 4 == 0 and new_y % 100 != 0) or (new_y % 400 == 0):
+            days_in_month = 29
+        else:
+            days_in_month = 28
+
+    # Clamp day if it exceeds days in the target month
+    new_d = min(d, days_in_month)
+
+    return (new_y, new_m, new_d)

@@ -1,0 +1,174 @@
+```python
+def urljoin_(base, url):
+    """
+    Resolve a possibly relative URL against a base URL.
+
+    This is a from-scratch implementation of the common behaviour of
+    urllib.parse.urljoin, following RFC 3986 reference resolution.
+    """
+    if base is None:
+        base = ""
+    if url is None:
+        url = ""
+    if not isinstance(base, str):
+        base = str(base)
+    if not isinstance(url, str):
+        url = str(url)
+
+    if not base:
+        return url
+    if not url:
+        # RFC 3986 5.2.2: an empty reference resolves to the base
+        # with its fragment removed.
+        if "#" in base:
+            return base.split("#", 1)[0]
+        return base
+
+    def _split_reference(ref):
+        scheme = ""
+        netloc = ""
+        path = ""
+        query = ""
+        fragment = ""
+
+        i = 0
+        n = len(ref)
+
+        # scheme
+        if i < n and ref[i].isalpha():
+            j = i + 1
+            while j < n:
+                c = ref[j]
+                if c.isalnum() or c in "+-." :
+                    j += 1
+                else:
+                    break
+            if j < n and ref[j] == ":":
+                scheme = ref[i:j]
+                i = j + 1
+
+        # authority
+        if i + 1 < n and ref[i] == "/" and ref[i + 1] == "/":
+            i += 2
+            start = i
+            while i < n and ref[i] not in "/?#":
+                i += 1
+            netloc = ref[start:i]
+
+        # path
+        start = i
+        while i < n and ref[i] not in "?#":
+            i += 1
+        path = ref[start:i]
+
+        # query
+        if i < n and ref[i] == "?":
+            i += 1
+            start = i
+            while i < n and ref[i] != "#":
+                i += 1
+            query = ref[start:i]
+
+        # fragment
+        if i < n and ref[i] == "#":
+            i += 1
+            fragment = ref[i:]
+
+        return scheme, netloc, path, query, fragment
+
+    def _remove_dot_segments(path):
+        # RFC 3986 5.2.4
+        output = []
+        while path:
+            if path.startswith("../"):
+                path = path[3:]
+            elif path.startswith("./"):
+                path = path[2:]
+            elif path.startswith("/./"):
+                path = "/" + path[3:]
+            elif path == "/.":
+                path = "/"
+            elif path.startswith("/../"):
+                path = "/" + path[4:]
+                if output:
+                    output.pop()
+            elif path == "/..":
+                path = "/"
+                if output:
+                    output.pop()
+            elif path in (".", ".."):
+                path = ""
+            else:
+                if path.startswith("/"):
+                    i = path.find("/", 1)
+                    if i == -1:
+                        output.append(path)
+                        path = ""
+                    else:
+                        output.append(path[:i])
+                        path = path[i:]
+                else:
+                    i = path.find("/")
+                    if i == -1:
+                        output.append(path)
+                        path = ""
+                    else:
+                        output.append(path[:i])
+                        path = path[i:]
+        return "".join(output)
+
+    def _merge_paths(base_path, ref_path):
+        # RFC 3986 5.2.2
+        if base_path and base_path[-1] != "/":
+            slash = "/"
+        else:
+            slash = ""
+        if ref_path.startswith("/"):
+            merged = ref_path
+        else:
+            merged = base_path + slash + ref_path
+        return _remove_dot_segments(merged)
+
+    def _rebuild(scheme, netloc, path, query, fragment):
+        out = ""
+        if scheme:
+            out += scheme + ":"
+        if netloc:
+            out += "//" + netloc
+        out += path
+        if query:
+            out += "?" + query
+        if fragment:
+            out += "#" + fragment
+        return out
+
+    b_scheme, b_netloc, b_path, b_query, b_fragment = _split_reference(base)
+    r_scheme, r_netloc, r_path, r_query, r_fragment = _split_reference(url)
+
+    # Absolute reference: the reference replaces the base entirely.
+    if r_scheme:
+        return _rebuild(r_scheme, r_netloc, r_path, r_query, r_fragment)
+
+    # Scheme-relative reference: keep the base scheme, replace the rest.
+    if r_netloc:
+        return _rebuild(b_scheme, r_netloc, r_path, r_query, r_fragment)
+
+    # Absolute-path reference: keep scheme and netloc, replace path onward.
+    if r_path.startswith("/"):
+        return _rebuild(b_scheme, b_netloc, r_path, r_query, r_fragment)
+
+    # Query-only or fragment-only reference.
+    if not r_path:
+        if r_query:
+            return _rebuild(b_scheme, b_netloc, b_path, r_query, r_fragment)
+        if r_fragment:
+            return _rebuild(b_scheme, b_netloc, b_path, b_query, r_fragment)
+        # Should not happen because url is non-empty, but keep it safe.
+        return _rebuild(b_scheme, b_netloc, b_path, b_query, b_fragment)
+
+    # Relative-path reference.
+    merged_path = _merge_paths(b_path, r_path)
+    query = r_query if r_query else b_query
+    fragment = r_fragment if r_fragment else b_fragment
+    return _rebuild(b_scheme, b_netloc, merged_path, query, fragment)
+```

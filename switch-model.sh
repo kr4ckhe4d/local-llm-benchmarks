@@ -203,9 +203,11 @@ declare -A YARN=()
 
 usage() {
   cat <<USAGE
-Usage: $(basename "$0") router            serve ALL presets, switchable from the
+Usage: $(basename "$0") router [nothink]  serve ALL presets, switchable from the
                                           Open WebUI dropdown (recommended);
-                                          also starts Strata on :8095, unloaded
+                                          also starts Strata on :8095, unloaded.
+                                          'nothink': thinking off for every preset
+                                          (best for Qwen3.8; Qwen3.5-27B needs it on)
        $(basename "$0") strata            start only Strata (if it is not up)
        $(basename "$0") strata off|low|medium|default
                                           ...and set its thinking for EVERY client
@@ -312,6 +314,20 @@ stop_server() {
 }
 
 start_router() {
+  # 'nothink': --reasoning-budget 0 on the router's own command line. Router
+  # arguments outrank every preset's settings (llama.cpp server README,
+  # "precedence rule for preset options") and are passed to each child, so
+  # every model loads with thinking off. Thinking off scored 48/50 against 35
+  # on Qwen3.8 Q6 and 43 against 42 on Q8 (benchmarks/qwen3.8-27B-UD-Q6_K/
+  # fixed-prompts/SUMMARY.txt). NOT for Qwen3.5-27B: it scored 24 with thinking
+  # off against 41 with it on, so start plain when using it. Clients cannot do
+  # this: llama.cpp ignores Claude Code's thinking fields.
+  local mode="${1:-}" think_args=()
+  case "$mode" in
+    "")      ;;
+    nothink) think_args=(--reasoning-budget 0) ;;
+    *) echo "Error: router takes no option or 'nothink' (got '$mode')." >&2; exit 1 ;;
+  esac
   local bin="$LLAMA_DIR/$ROUTER_BACKEND/bin/llama-server"
   if [[ ! -x "$bin" ]]; then
     echo "Error: $bin not found or not executable." >&2; exit 1
@@ -334,10 +350,11 @@ start_router() {
     echo "    idle sleep: ${SLEEP_IDLE}s (inherited by each spawned model)"
   fi
   mkdir -p "$(dirname "$STATE")"
-  printf 'router\n' > "$STATE"
+  printf 'router %s\n' "$mode" > "$STATE"
+  [[ "$mode" == nothink ]] && echo "    thinking: OFF for every preset (--reasoning-budget 0)"
   cd "$LLAMA_DIR"
   nohup "$bin" --models-preset "$PRESET" --models-max "$MODELS_MAX" \
-    --sleep-idle-seconds "$SLEEP_IDLE" \
+    --sleep-idle-seconds "$SLEEP_IDLE" ${think_args[@]+"${think_args[@]}"} \
     --host "$HOST" --port "$PORT" > "$LOG" 2>&1 < /dev/null &
   disown
 
@@ -457,8 +474,8 @@ start_last() {
   local model ctx
   read -r model ctx < "$STATE"
   if [[ "${model:-}" == "router" ]]; then
-    echo "==> Restarting last config: router"
-    start_router
+    echo "==> Restarting last config: router ${ctx:-}"
+    start_router "${ctx:-}"
     return
   fi
   if [[ -z "${model:-}" || -z "${ctx:-}" ]]; then
@@ -628,7 +645,7 @@ case "${1:-}" in
   list) list_combos ;;
   stop) stop_server ;;
   start) start_last ;;
-  router) start_router ;;
+  router) start_router "${2:-}" ;;
   strata) start_strata
           if [[ -n "${2:-}" ]]; then strata_think "$2"; fi ;;
   *)

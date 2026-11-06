@@ -1,0 +1,657 @@
+```python
+def wrap_(text, width):
+    # Default options simulation:
+    # - tabs expanded to spaces (default 8, but textwrap uses 8)
+    # - whitespace runs NOT collapsed (each whitespace char becomes one space, except leading/trailing at breaks)
+    # - trailing/leading whitespace at line breaks dropped
+    # - leading whitespace of whole text kept
+    # - words longer than width ARE broken
+    # - result is list of lines <= width (unless unbreakable chunk)
+
+    if not text:
+        return []
+
+    # Expand tabs: default tab size is 8
+    tab_size = 8
+    text = text.expandtabs(tab_size)
+
+    # Split into words and whitespace runs, but we need to preserve structure for "runs not collapsed"
+    # However, the requirement says: "each whitespace character becomes one space"
+    # AND "runs are NOT collapsed". This implies consecutive spaces become multiple spaces?
+    # Let's re-read: "each whitespace character becomes one space (runs are NOT collapsed)"
+    # Example: "a  b" -> "a  b" (two spaces remain two spaces), but "a\nb" -> "a b" (newline becomes space? or dropped?)
+    # Actually, textwrap behavior:
+    # - Consecutive whitespace characters are replaced by a single space, EXCEPT:
+    #   - Leading whitespace of the whole text is kept.
+    #   - Trailing whitespace of a line and leading whitespace of the next are dropped.
+    #   - But the prompt says "runs are NOT collapsed", which contradicts standard textwrap.
+    # Let's check the exact wording: "each whitespace character becomes one space (runs are NOT collapsed)"
+    # This likely means: "a  b" becomes "a  b" (two spaces), not "a b".
+    # But standard textwrap does collapse runs. The prompt says "FROM SCRATCH... Default options... runs are NOT collapsed".
+    # So we follow the prompt: consecutive whitespace chars become consecutive spaces.
+
+    # Steps:
+    # 1. Split text into tokens: words and whitespace sequences.
+    # 2. Process to handle line breaks and width.
+
+    # Let's tokenize: (type, content) where type is 'word' or 'ws'
+    tokens = []
+    current_ws = ""
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if char == '\t':
+            # Expand tab immediately
+            expanded = ' ' * (tab_size - (len(current_ws) + i) % tab_size)
+            if current_ws:
+                tokens.append(('ws', current_ws + expanded))
+            else:
+                tokens.append(('ws', expanded))
+            current_ws = ""
+            i += 1
+        elif char.isspace():
+            current_ws += char
+            i += 1
+        else:
+            if current_ws:
+                tokens.append(('ws', current_ws))
+                current_ws = ""
+            tokens.append(('word', char))
+            i += 1
+    if current_ws:
+        tokens.append(('ws', current_ws))
+
+    # Now we have a list of tokens. We need to build lines.
+    # Rules:
+    # - Leading whitespace of whole text is kept.
+    # - Trailing whitespace of a line and leading whitespace of the next are dropped.
+    # - Words longer than width ARE broken.
+    # - Runs of whitespace are NOT collapsed (so "  " stays "  ").
+
+    lines = []
+    current_line = []
+    current_length = 0
+
+    def get_line_length():
+        # Calculate current line length considering whitespace runs
+        total = 0
+        for token_type, token in current_line:
+            if token_type == 'word':
+                total += len(token)
+            else:
+                total += len(token)
+        return total
+
+    def append_token(token_type, token):
+        nonlocal current_line, current_length
+        if token_type == 'word':
+            # Check if adding this word exceeds width
+            # If current line is empty, we just add it (leading whitespace already handled or this is first word)
+            # But we need to consider if we need to break the word
+            if current_line:
+                # There's already content, so we need a space before this word?
+                # Actually, the previous token might have been a word, so we need a space.
+                # Or the previous token was whitespace, which is already in current_line.
+                # Let's think: current_line contains tokens. The last token could be 'word' or 'ws'.
+                # If last token is 'word', we need a space.
+                # If last token is 'ws', it's already a space (or multiple spaces).
+                # But wait, if last token was 'ws', it's part of the current line's whitespace.
+                # So if we have ["word", "ws"], and we add a new "word", we need to know if the "ws" is trailing or leading.
+                # Actually, simpler: when we add a new word, if the line is not empty, we add a space separator?
+                # But the whitespace tokens already account for spaces.
+                # Example: "a  b" -> tokens: [('word','a'), ('ws','  '), ('word','b')]
+                # Line 1: add 'a' -> len=1
+                # Then add '  ' -> len=1+2=3
+                # Then add 'b' -> len=3+1=4. But we need a space between 'a' and 'b'? 
+                # The '  ' is between them, so yes.
+                # What if "a\nb"? tokens: [('word','a'), ('ws','\n'), ('word','b')]
+                # Line 1: 'a' -> len=1. Then '\n' -> we break line.
+                # So when adding a word, if current_line is not empty, we check the last token.
+                # If last token is 'word', we need a space? Not necessarily, because the whitespace token might be next.
+                # Actually, the whitespace token separates words.
+                # So: 
+                #   - If current_line is empty, just add the word.
+                #   - If current_line is not empty, the last token is either 'word' or 'ws'.
+                #     - If last token is 'word', we need to add a space? 
+                #       But the next token might be 'ws', which will be added next.
+                #       So we can just add the word and the whitespace will come later?
+                #       No, because we might break the line before adding the whitespace.
+                # Let's change approach: 
+                #   We iterate tokens. For each token:
+                #     - If it's a 'ws' token:
+                #         - If current_line is not empty, we consider adding this whitespace.
+                #         - But if this whitespace is at a line break (i.e., it's the last thing on the current line and we break), 
+                #           then it's trailing whitespace -> drop it.
+                #         - Similarly, if it's the first thing on the new line, it's leading whitespace -> keep it (but only for the whole text? or per line?)
+                #         - The prompt says: "whitespace at each line break is dropped (trailing whitespace of a line and leading whitespace of the next)"
+                #         - So if we break the line, the current line's trailing whitespace is dropped, and the next line's leading whitespace is dropped.
+                #         - Exception: leading whitespace of the whole text is kept.
+                #     - If it's a 'word' token:
+                #         - We try to add it to the current line.
+                #         - If it fits, add it.
+                #         - If not, break the line (if possible) and try again.
+                #         - If the word is longer than width, break it.
+
+                # Let's refine: 
+                #   We maintain current_line as a list of tokens.
+                #   When adding a token:
+                #     - Calculate new length if we add this token.
+                #     - If it fits, add it.
+                #     - If not, we break the line.
+                #       - Before breaking, we check if the current line has trailing whitespace. If so, drop it (pop from end if it's 'ws' and it's trailing).
+                #       - Then start a new line with the current token.
+                #       - But what about leading whitespace of the new line? 
+                #         - If the current token is 'ws', it becomes the leading whitespace of the new line.
+                #         - If it's the first line of the whole text, keep it. Otherwise, drop it?
+                #         - The prompt says: "leading whitespace of the whole text is kept". 
+                #         - So if we are starting the very first line, keep leading whitespace.
+                #         - If we are starting a subsequent line, drop leading whitespace.
+
+                # Implementation:
+                #   We'll keep a flag `is_first_line` for the whole text.
+                #   When breaking a line:
+                #     - Pop trailing whitespace from current_line if exists.
+                #     - Start new line with the current token.
+                #     - If the current token is 'ws' and not the first line of the whole text, then it's leading whitespace of the new line -> drop it?
+                #       But wait, if we break the line, the whitespace token that caused the break might be the trailing one of the old line.
+                #       Let's trace: "a  b" with width=2.
+                #       Tokens: [('word','a'), ('ws','  '), ('word','b')]
+                #       Line 1: add 'a' -> current_line = [('word','a')], len=1.
+                #       Next token: ('ws','  '). 
+                #         - If we add it, len=1+2=3 > 2. So we break.
+                #         - Before breaking, check trailing whitespace of current_line: last token is 'word', so no trailing whitespace? 
+                #           But the '  ' is the next token. So the current line doesn't have trailing whitespace yet.
+                #         - So we break: current_line becomes [], then add '  '? 
+                #         - But '  ' is leading whitespace of the new line. Since not first line, drop it?
+                #         - Then add 'b'? 
+                #         - Result: ["a", "b"] -> but we lost the two spaces.
+                #       What if we consider the whitespace token as part of the previous line?
+                #       Alternative: when adding a word, if it doesn't fit, we break the line, and the whitespace token that was next becomes the leading of the new line.
+                #       So:
+                #         current_line = [('word','a')]
+                #         next token: ('ws','  ')
+                #         try to add '  ' to current_line: len=1+2=3 > 2 -> break.
+                #         Pop trailing whitespace from current_line: last is 'word', so no pop.
+                #         Now current_line = [('word','a')]. We break, so we start a new line.
+                #         The whitespace token ('  ') is now the first token of the new line.
+                #         Since not first line of whole text, drop it? -> current_line = []
+                #         Then add the next token ('word','b') to the new line.
+                #         Result: ["a", "b"] -> correct? But we lost the two spaces.
+                #       What if the whitespace was at the end of the first line? 
+                #         Example: "a  " with width=2.
+                #         Tokens: [('word','a'), ('ws','  ')]
+                #         Line 1: add 'a' -> len=1.
+                #         Next: ('ws','  '). Add it? len=1+2=3>2 -> break.
+                #         Pop trailing whitespace: last is 'word', so no pop.
+                #         Start new line with '  '. Since not first line, drop it? -> current_line = []
+                #         End of tokens.
+                #         Result: ["a"] -> but we lost the trailing spaces. Correct per "trailing whitespace of a line is dropped".
+                #       Example: "  a" with width=2.
+                #         Tokens: [('ws','  '), ('word','a')]
+                #         Line 1: add '  '. First line, so keep. current_line = [('ws','  ')], len=2.
+                #         Next: ('word','a'). Add it? len=2+1=3>2 -> break.
+                #         Pop trailing whitespace: last is 'ws', so pop it. current_line = [].
+                #         Start new line with 'a'. current_line = [('word','a')], len=1.
+                #         Result: ["  ", "a"]? But we popped the leading whitespace of the new line? 
+                #         Wait, the '  ' was the trailing of the old line? 
+                #         Actually, when we break, the current_line has the '  ' as the last token. So it's trailing whitespace of the old line -> drop it.
+                #         Then we start a new line with 'a'.
+                #         Result: ["a"] -> but we lost the leading spaces of the whole text? 
+                #         No, the '  ' was added to the first line, so it was kept. Then when breaking, it became trailing of the first line -> dropped.
+                #         So "  a" with width=2 becomes ["a"]? 
+                #         But the prompt says: "leading whitespace of the whole text is kept". 
+                #         So the first line should have the leading spaces.
+                #         How to fix?
+                #         When we break the line, the current_line's last token is the trailing whitespace of the old line.
+                #         So if current_line ends with 'ws', we pop it (drop trailing whitespace).
+                #         Then we start a new line with the next token.
+                #         In "  a": 
+                #           Line 1: add '  ' -> current_line = [('ws','  ')]
+                #           Next: 'a'. Try to add: len=2+1=3>2 -> break.
+                #           Pop trailing: current_line.pop() -> current_line = []
+                #           Now start new line with 'a'.
+                #           Result: ["a"] -> but we lost the leading spaces of the first line? 
+                #           No, the '  ' was in the first line, then popped when breaking. So the first line becomes empty? 
+                #           Then we add 'a' to the new line (which is the second line).
+                #           So lines = ["a"] -> but the first line was empty? 
+                #           We should have: first line = "  ", second line = "a". But we broke the first line to make room for 'a'.
+                #           So the first line becomes "  " (with the spaces) and then we break, so the spaces are trailing -> dropped.
+                #           So the first line becomes empty? 
+                #           Let's re-simulate:
+                #             current_line = []
+                #             Token 1: ('ws','  '). 
+                #               - If current_line is empty, and it's the first line, we add it? 
+                #               - But we need to check if it fits. len=2 <= 2 -> add.
+                #               - current_line = [('ws','  ')]
+                #             Token 2: ('word','a').
+                #               - Try to add: len=2+1=3>2 -> break.
+                #               - Before breaking, check trailing whitespace of current_line: last is 'ws', so pop it.
+                #               - current_line = []
+                #               - Now start new line with 'a'.
+                #               - current_line = [('word','a')]
+                #             End of tokens.
+                #             Now, we have current_line = [('word','a')]. We need to add it to lines.
+                #             But what about the first line? It was popped, so it's empty.
+                #             So lines = ["a"]? 
+                #             But the first line had "  ", which was trailing when breaking, so dropped.
+                #             So the result is ["a"]. 
+                #             Is that correct? 
+                #             The prompt: "leading whitespace of the whole text is kept". 
+                #             So the first line should have the leading spaces.
+                #             How to keep them? 
+                #             When we break, the trailing whitespace of the old line is dropped. 
+                #             So if the first line ends with whitespace, and we break, that whitespace is dropped.
+                #             So "  a" with width=2: 
+                #               First line: "  " (length 2). Then we try to add 'a', it doesn't fit, so we break.
+                #               The "  " becomes trailing whitespace of the first line -> dropped.
+                #               So the first line becomes empty? 
+                #               Then we start a new line with 'a'.
+                #               So lines = ["a"].
+                #             But the leading whitespace of the whole text was "  ", which was on the first line.
+                #             So it was kept initially, but then dropped when breaking.
+                #             This seems correct per "whitespace at each line break is dropped".
+                #             So "  a" -> ["a"] is correct.
+
+                # Another example: "a  b" with width=2.
+                #   Tokens: [('word','a'), ('ws','  '), ('word','b')]
+                #   Line 1: add 'a' -> current_line = [('word','a')], len=1.
+                #   Next: ('ws','  '). 
+                #     - Try to add: len=1+2=3>2 -> break.
+                #     - Pop trailing: last is 'word', so no pop. current_line = [('word','a')]
+                #     - Start new line with '  '. 
+                #       - Is it the first line of the whole text? No (we already have one line).
+                #       - So it's leading whitespace of the new line -> drop it?
+                #       - current_line = []
+                #   Next: ('word','b').
+                #     - Add to current_line: len=1 <= 2 -> add.
+                #     - current_line = [('word','b')]
+                #   End: lines = ["a", "b"] -> correct.
+
+                # So the rule for whitespace tokens:
+                #   - If current_line is not empty, and we are adding a whitespace token:
+                #       - If it fits, add it.
+                #       - If not, break the line:
+                #         - Pop trailing whitespace from current_line (if last token is 'ws').
+                #         - Then start a new line with the whitespace token.
+                #         - If this is not the first line of the whole text, and the whitespace token is the first token of the new line, drop it?
+                #           But wait, if we break, the whitespace token is the first token of the new line.
+                #           So if not first line of whole text, drop it.
+                #   - If current_line is empty, and we are adding a whitespace token:
+                #       - If it's the first line of the whole text, keep it.
+                #       - Otherwise, it's leading whitespace of a new line -> drop it? 
+                #         But if current_line is empty, it means we just broke a line or started.
+                #         If we just broke a line, then this whitespace is leading of the new line.
+                #         If we started (first token), then it's leading of the whole text.
+
+                # Let's define `is_first_line` for the whole text.
+                #   Initially True.
+                #   When we break a line, we set `is_first_line = False` for the new line? 
+                #   Actually, we can use a flag `on_first_line` that is True only for the very first line of the whole text.
+
+                # Revised plan:
+                #   current_line = []
+                #   on_first_line = True
+                #   For each token:
+                #     - If token is 'ws':
+                #         - If current_line is not empty:
+                #             - Try to add: new_len = current_length + len(token)
+                #             - If new_len <= width:
+                #                 - Append token.
+                #                 - Update current_length.
+                #             - Else:
+                #                 - Break the line:
+                #                   - Pop trailing whitespace from current_line (if last token is 'ws').
+                #                   - Now, start a new line with this whitespace token.
+                #                   - If not on_first_line, then this whitespace is leading of the new line -> drop it? 
+                #                     But wait, if we break, the current_line becomes shorter, and we add the whitespace to the new line.
+                #                     If not on_first_line, and this is the first token of the new line, then it's leading whitespace -> drop it.
+                #                     So: if not on_first_line:
+                #                         current_line = []  # drop the whitespace
+                #                     else:
+                #                         current_line = [token]
+                #                   - Update current_length = len(token) if kept, else 0.
+                #                   - on_first_line = False
+                #         - Else (current_line is empty):
+                #             - If on_first_line:
+                #                 - Append token.
+                #                 - current_length = len(token)
+                #             - Else:
+                #                 - Drop it (leading whitespace of new line).
+                #                 - current_length = 0
+                #     - If token is 'word':
+                #         - If current_line is empty:
+                #             - Append token.
+                #             - current_length = len(token)
+                #         - Else:
+                #             - Try to add: new_len = current_length + len(token)
+                #             - If new_len <= width:
+                #                 - Append token.
+                #                 - current_length = new_len
+                #             - Else:
+                #                 - Break the line:
+                #                   - Pop trailing whitespace from current_line (if last token is 'ws').
+                #                   - Now, start a new line with this word.
+                #                   - If not on_first_line, and the current_line is empty (after pop), then this word is the first token of the new line.
+                #                     But words are never leading whitespace, so we just add it.
+                #                   - current_line = [token]
+                #                   - current_length = len(token)
+                #                   - on_first_line = False
+                #         - If the word is longer than width, break it.
+                #           - We need to split the word into chunks of max `width`.
+                #           - But the prompt says: "words longer than width ARE broken".
+                #           - How to break? Usually, break at the last space or just split evenly? 
+                #             Standard textwrap breaks at the last space, but if no space, it breaks the word.
+                #             The prompt doesn't specify, so we'll break the word into chunks of `width` (except the last chunk might be shorter).
+                #             But we need to preserve the rest of the word.
+                #             Example: "hello" with width=2 -> ["he", "llo"]? Or ["h", "el", "lo"]?
+                #             Standard textwrap breaks at the last space, but if no space, it breaks the word at the last character that allows the first part to be <= width.
+                #             Actually, standard textwrap breaks the word at the last space, but if no space, it breaks the word into chunks of `width` (with the last chunk possibly shorter).
+                #             But the prompt says "words longer than width ARE broken", so we break the word.
+                #             Let's break the word into chunks of `width` (except the last chunk).
+                #             Example: "hello" width=2 -> ["he", "llo"]? 
+                #             But "he" is 2, "llo" is 3. 
+                #             Actually, standard textwrap breaks at the last space, but if no space, it breaks the word at the last character that makes the first part <= width.
+                #             So "hello" width=2: 
+                #               - Try "h" (1) -> fits.
+                #               - Try "he" (2) -> fits.
+                #               - Try "hel" (3) -> too long.
+                #               - So break after "he".
+                #             So we break the word at the last position where the first part is <= width.
+                #             But if the word is exactly width, we keep it.
+                #             So: 
+                #               - If len(word) > width:
+                #                   - Break the word into chunks: 
+                #                     - First chunk: word[:width]
+                #                     - Rest: word[width:]
+                #                   - But we need to handle the rest as a new word? 
+                #                   - Actually, we can treat the rest as a new token.
+                #                   - So we replace the word token with multiple word tokens.
+                #                   - Example: "hello" width=2 -> ["he", "llo"]
+                #                   - But "llo" might be longer than width? 
+                #                     - "llo" is 3, width=2 -> break again: ["l", "lo"]
+                #                   - So we recursively break until all chunks are <= width.
+                #                   - But we need to be careful: the break point should be at the last space, but if no space, just split.
+                #                   - Since we don't have spaces in the middle of the word, we just split evenly.
+                #                   - So: 
+                #                     - chunks = []
+                #                     - while word:
+                #                         - chunk = word[:width]
+                #                         - chunks.append(chunk)
+                #                         - word = word[width:]
+                #                   - But this might create chunks that are too long? 
+                #                     - No, because we take `width` each time, so each chunk is <= width.
+                #                   - However, the last chunk might be shorter.
+                #                   - So we replace the original word token with these chunks.
+                #                   - But we need to insert them into the token list.
+                #                   - So we can process the word token by breaking it into multiple tokens.
+
+                # Let's refactor: 
+                #   Instead of processing tokens one by one, we can preprocess the tokens to break long words.
+                #   But we need to know the width at the time of breaking.
+                #   So: 
+                #     - Preprocess tokens: for each 'word' token, if len(word) > width, break it into chunks.
+                #     - But the chunks might still be long if width is small? 
+                #       - No, because we break into chunks of `width`.
+                #     - So: 
+                #         new_tokens = []
+                #         for token_type, token in tokens:
+                #             if token_type == 'word' and len(token) > width:
+                #                 # Break the word
+                #                 while token:
+                #                     chunk = token[:width]
+                #                     new_tokens.append(('word', chunk))
+                #                     token = token[width:]
+                #             else:
+                #                 new_tokens.append((token_type, token))
+                #         tokens = new_tokens
+
+                # But wait, what if the word is exactly width? Then we keep it.
+                # What if the word is longer than width, but after breaking, the first chunk is width, and the rest is also width? 
+                #   Example: "hello" width=2 -> ["he", "llo"] -> "llo" is 3, so break again: ["l", "lo"]
+                #   So we need to break recursively.
+                #   So: 
+                #       def break_word(word, w):
+                #           chunks = []
+                #           while word:
+                #               if len(word) <= w:
+                #                   chunks.append(word)
+                #                   break
+                #               else:
+                #                   chunks.append(word[:w])
+                #                   word = word[w:]
+                #           return chunks
+                #   But this is the same as above.
+                #   So we can do:
+                #       new_tokens = []
+                #       for token_type, token in tokens:
+                #           if token_type == 'word' and len(token) > width:
+                #               chunks = break_word(token, width)
+                #               new_tokens.extend(chunks)
+                #           else:
+                #               new_tokens.append((token_type, token))
+                #       tokens = new_tokens
+
+                # Now, after breaking words, we process the tokens to build lines.
+                #   current_line = []
+                #   current_length = 0
+                #   on_first_line = True
+                #   lines = []
+                #   For token_type, token in tokens:
+                #       if token_type == 'ws':
+                #           if current_line:
+                #               # Try to add
+                #               if current_length + len(token) <= width:
+                #                   current_line.append((token_type, token))
+                #                   current_length += len(token)
+                #               else:
+                #                   # Break the line
+                #                   # Pop trailing whitespace
+                #                   if current_line and current_line[-1][0] == 'ws':
+                #                       current_line.pop()
+                #                       current_length -= len(current_line[-1][1]) if current_line else 0
+                #                       # But we popped, so we need to recalculate current_length? 
+                #                       # Actually, we can recalculate current_length from current_line.
+                #                       current_length = get_line_length(current_line)
+                #                   # Now start a new line with this whitespace token
+                #                   if on_first_line:
+                #                       current_line.append((token_type, token))
+                #                       current_length = len(token)
+                #                   else:
+                #                       # Leading whitespace of new line -> drop it
+                #                       # But wait, if we break, the current_line becomes shorter, and we add the whitespace to the new line.
+                #                       # If not on_first_line, then this whitespace is leading of the new line -> drop it.
+                #                       # So:
+                #                       current_line = []
+                #                       current_length = 0
+                #                   on_first_line = False
+                #           else:
+                #               # current_line is empty
+                #               if on_first_line:
+                #                   current_line.append((token_type, token))
+                #                   current_length = len(token)
+                #               else:
+                #                   # Leading whitespace of new line -> drop it
+                #                   current_line = []
+                #                   current_length = 0
+                #       else: # 'word'
+                #           if current_line:
+                #               # Try to add
+                #               if current_length + len(token) <= width:
+                #                   current_line.append((token_type, token))
+                #                   current_length += len(token)
+                #               else:
+                #                   # Break the line
+                #                   # Pop trailing whitespace
+                #                   if current_line and current_line[-1][0] == 'ws':
+                #                       current_line.pop()
+                #                       current_length = get_line_length(current_line)
+                #                   # Start a new line with this word
+                #                   current_line.append((token_type, token))
+                #                   current_length = len(token)
+                #                   on_first_line = False
+                #           else:
+                #               current_line.append((token_type, token))
+                #               current_length = len(token)
+                #               on_first_line = False
+
+                #   After processing all tokens, if current_line is not empty, add it to lines.
+                #   But we need to convert current_line to a string.
+                #   How to convert? 
+                #       - Join the tokens: 
+                #         - For each token, if it's 'word', add the word.
+                #         - If it's 'ws', add the whitespace.
+                #       - But we need to handle the case where the line starts with whitespace.
+                #       - Example: current_line = [('ws','  '), ('word','a')] -> "  a"
+                #       - So we just join the tokens in order.
+
+                #   However, we need to be careful: 
+                #       - When we break a line, we pop the trailing whitespace, so the current_line might end with a word.
+                #       - Then we add the next token (which might be whitespace or word) to the new line.
+                #       - So the conversion is straightforward: join the tokens.
+
+                #   But what if the line is empty? 
+                #       - Example: "  a" with width=2 -> 
+                #           Tokens: [('ws','  '), ('word','a')]
+                #           Line 1: add '  ' -> current_line = [('ws','  ')]
+                #           Next: 'a'. Try to add: len=2+1=3>2 -> break.
+                #           Pop trailing: current_line.pop() -> current_line = []
+                #           Start new line with 'a'.
+                #           current_line = [('word','a')]
+                #           End: lines = ["a"]
+                #       - So the first line was popped, so it's empty.
+                #       - So we only add non-empty lines.
+
+                #   So after the loop, if current_line is not empty, we add it to lines.
+                #   But we need to convert current_line to a string.
+                #   How? 
+                #       - We can join the tokens: 
+                #           line_str = "".join(token[1] for token in current_line)
+                #       - But we need to make sure that the whitespace tokens are included.
+                #       - Example: [('ws','  '), ('word','a')] -> "  a"
+                #       - So yes, just join.
+
+                #   But what if the line starts with whitespace? 
+                #       - Example: "  a" with width=5 -> 
+                #           Tokens: [('ws','  '), ('word','a')]
+                #           Line 1: add '  ' -> len=2.
+                #           Next: 'a' -> len=2+1=3<=5 -> add.
+                #           current_line = [('ws','  '), ('word','a')]
+                #           line_str = "  a"
+                #       - Correct.
+
+                #   So the conversion is: 
+                #       line_str = "".join(token[1] for token in current_line)
+
+                #   But we need to handle the case where the line is empty.
+                #       - If current_line is empty, skip.
+
+                #   So:
+                #       if current_line:
+                #           line_str = "".join(token[1] for token in current_line)
+                #           lines.append(line_str)
+
+                #   But wait, what if the line has only whitespace? 
+                #       - Example: "  " with width=2 -> 
+                #           Tokens: [('ws','  ')]
+                #           Line 1: add '  ' -> current_line = [('ws','  ')]
+                #           End: line_str = "  "
+                #           lines = ["  "]
+                #       - Correct.
+
+                #   So the algorithm is:
+                #       1. Tokenize the text.
+                #       2. Break long words into chunks.
+                #       3. Process tokens to build lines.
+                #       4. Convert each line to a string.
+
+                #   Let's implement.
+
+    # Preprocess: break long words
+    def break_long_words(tokens, w):
+        new_tokens = []
+        for token_type, token in tokens:
+            if token_type == 'word' and len(token) > w:
+                chunks = []
+                while token:
+                    if len(token) <= w:
+                        chunks.append(token)
+                        break
+                    else:
+                        chunks.append(token[:w])
+                        token = token[w:]
+                new_tokens.extend([('word', chunk) for chunk in chunks])
+            else:
+                new_tokens.append((token_type, token))
+        return new_tokens
+
+    # Process tokens to build lines
+    current_line = []
+    current_length = 0
+    on_first_line = True
+    lines = []
+
+    def get_line_length():
+        total = 0
+        for token_type, token in current_line:
+            total += len(token)
+        return total
+
+    for token_type, token in break_long_words(tokens, width):
+        if token_type == 'ws':
+            if current_line:
+                # Try to add
+                if current_length + len(token) <= width:
+                    current_line.append((token_type, token))
+                    current_length += len(token)
+                else:
+                    # Break the line
+                    # Pop trailing whitespace
+                    if current_line and current_line[-1][0] == 'ws':
+                        current_line.pop()
+                        current_length = get_line_length()
+                    # Start a new line with this whitespace token
+                    if on_first_line:
+                        current_line.append((token_type, token))
+                        current_length = len(token)
+                    else:
+                        # Leading whitespace of new line -> drop it
+                        current_line = []
+                        current_length = 0
+                    on_first_line = False
+            else:
+                # current_line is empty
+                if on_first_line:
+                    current_line.append((token_type, token))
+                    current_length = len(token)
+                else:
+                    # Leading whitespace of new line -> drop it
+                    current_line = []
+                    current_length = 0
+        else: # 'word'
+            if current_line:
+                # Try to add
+                if current_length + len(token) <= width:
+                    current_line.append((token_type, token))
+                    current_length += len(token)
+                else:
+                    # Break the line
+                    # Pop trailing whitespace
+                    if current_line and current_line[-1][0] == 'ws':
+                        current_line.pop()
+                        current_length = get_line_length()
+                    # Start a new line with this word
+                    current_line.append((token_type, token))
+                    current_length = len(token)
+                    on_first_line = False
+            else:
+                current_line.append((token_type, token))
+                current_length = len(token)
+                on_first_line = False
+
+    # Add the last line if not empty
+    if current_line:
+        line_str = "".join(token[1] for token in current_line)
+        lines.append(line_str)
+
+    return lines
+```

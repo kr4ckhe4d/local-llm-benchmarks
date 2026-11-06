@@ -1,0 +1,64 @@
+def shlex_split(s):
+    whitespace = " \t\r\n"
+    quotes = "\"'"
+    escape = "\\"
+
+    i = 0
+    n = len(s)
+    tokens = []
+    token = []
+    state = None
+
+    while i < n:
+        c = s[i]
+
+        if state is None:
+            if c in whitespace:
+                if token:
+                    tokens.append("".join(token))
+                    token = []
+                i += 1
+            elif c in quotes:
+                state = c
+                i += 1
+            elif c == escape:
+                if i + 1 < n:
+                    token.append(s[i + 1])
+                    i += 2
+                else:
+                    token.append(escape)
+                    i += 1
+            else:
+                token.append(c)
+                i += 1
+
+        elif state == "'":
+            if c == "'":
+                state = None
+                i += 1
+            else:
+                token.append(c)
+                i += 1
+
+        else:  # state == '"'
+            if c == '"':
+                state = None
+                i += 1
+            elif c == escape:
+                if i + 1 < n and s[i + 1] in ('"', escape):
+                    token.append(s[i + 1])
+                    i += 2
+                else:
+                    token.append(escape)
+                    i += 1
+            else:
+                token.append(c)
+                i += 1
+
+    if state is not None:
+        raise ValueError("No closing quotation")
+
+    if token:
+        tokens.append("".join(token))
+
+    return tokens
