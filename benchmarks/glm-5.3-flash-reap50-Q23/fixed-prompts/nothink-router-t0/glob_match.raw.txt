@@ -1,0 +1,180 @@
+```python
+def glob_match(pattern, name):
+    # Translate pattern to a compiled matcher using only built-in tools.
+    # We implement glob matching directly with a small regex-free matcher
+    # built on character-by-character backtracking-free dynamic programming.
+    def compile_pattern(pat):
+        n = len(pat)
+        # Build list of tokens: ('lit', ch), ('any',), ('one',), ('set', neg, items)
+        tokens = []
+        i = 0
+        while i < n:
+            c = pat[i]
+            if c == '*':
+                tokens.append(('star',))
+                i += 1
+            elif c == '?':
+                tokens.append(('one',))
+                i += 1
+            elif c == '[':
+                j = i + 1
+                neg = False
+                if j < n and pat[j] == '!':
+                    neg = True
+                    j += 1
+                # A ']' right after '[' or '[!' is a literal member
+                if j < n and pat[j] == ']':
+                    j += 1
+                items = []
+                while j < n and pat[j] != ']':
+                    ch = pat[j]
+                    if j + 2 < n and pat[j + 1] == '-' and pat[j + 2] != ']':
+                        items.append((ch, pat[j + 2]))
+                        j += 3
+                    else:
+                        items.append(ch)
+                        j += 1
+                if j >= n:
+                    # Unterminated '[': literal '['
+                    tokens.append(('lit', '['))
+                    i += 1
+                else:
+                    tokens.append(('set', neg, items))
+                    i = j + 1
+            else:
+                tokens.append(('lit', c))
+                i += 1
+        return tokens
+
+    def match_set(tok, ch):
+        neg, items = tok[1], tok[2]
+        found = False
+        for it in items:
+            if isinstance(it, tuple):
+                lo, hi = it
+                if lo <= ch <= hi:
+                    found = True
+                    break
+            else:
+                if ch == it:
+                    found = True
+                    break
+        return found != neg  # XOR with negation
+
+    tokens = compile_pattern(pattern)
+
+    # DP over tokens and name positions, O(len(tokens)*len(name)) time.
+    # States: after processing token k, name index j is reachable.
+    m = len(name)
+    # reachable set of name positions after consuming tokens[0..k-1]
+    positions = {0}
+    k = 0
+    while k < len(tokens):
+        tok = tokens[k]
+        new = set()
+        if tok[0] == 'star':
+            # '*' can absorb any number of characters: all positions from
+            # any current position onward are reachable (including staying).
+            # Since subsequent tokens may also be '*', we just union ranges.
+            for p in positions:
+                for q in range(p, m + 1):
+                    new.add(q)
+            # If a '*' follows, positions already cover suffixes; fine.
+        elif tok[0] == 'one':
+            for p in positions:
+                if p < m:
+                    new.add(p + 1)
+        else:
+            for p in positions:
+                if p < m and match_set(tok, name[p]):
+                    new.add(p + 1)
+        positions = new
+        k += 1
+    return m in positions
+```
+
+Wait — the DP above is exponential-free but the `star` expansion loop is O(m^2) per star; acceptable. However there's a subtle bug: after a `star`, if the next token is a literal, we must try matching it at *every* position ≥ each reachable position — the set-based approach handles that correctly since positions contains all suffix positions. But for correctness with multiple stars: e.g. `*a*` — after first `*`, positions = {0..m}; matching 'a' gives {p+1 : name[p]=='a'} — correct. Good.
+
+One more issue: `('lit', ch)` tokens fall into the `else` branch which calls `match_set` — wrong. Fix by handling 'lit' separately.</think>```python
+def glob_match(pattern, name):
+    def compile_pattern(pat):
+        n = len(pat)
+        tokens = []
+        i = 0
+        while i < n:
+            c = pat[i]
+            if c == '*':
+                tokens.append(('star',))
+                i += 1
+            elif c == '?':
+                tokens.append(('one',))
+                i += 1
+            elif c == '[':
+                j = i + 1
+                neg = False
+                if j < n and pat[j] == '!':
+                    neg = True
+                    j += 1
+                if j < n and pat[j] == ']':
+                    j += 1  # ']' right after '[' or '[!' is a literal member
+                items = []
+                while j < n and pat[j] != ']':
+                    ch = pat[j]
+                    if j + 2 < n and pat[j + 1] == '-' and pat[j + 2] != ']':
+                        items.append((ch, pat[j + 2]))
+                        j += 3
+                    else:
+                        items.append(ch)
+                        j += 1
+                if j >= n:
+                    tokens.append(('lit', '['))  # unterminated '[' is literal
+                else:
+                    tokens.append(('set', neg, items))
+                    i = j + 1
+            else:
+                tokens.append(('lit', c))
+                i += 1
+        return tokens
+
+    def match_set(tok, ch):
+        neg, items = tok[1], tok[2]
+        found = False
+        for it in items:
+            if isinstance(it, tuple):
+                lo, hi = it
+                if lo <= ch <= hi:
+                    found = True
+                    break
+            elif ch == it:
+                found = True
+                break
+        return found != neg
+
+    tokens = compile_pattern(pattern)
+    m = len(name)
+    positions = {0}  # reachable name indices after consuming tokens so far
+    for tok in tokens:
+        new = set()
+        kind = tok[0]
+        if kind == 'star':
+            for p in positions:
+                for q in range(p, m + 1):
+                    new.add(q)
+        elif kind == 'one':
+            for p in positions:
+                if p < m:
+                    new.add(p + 1)
+        elif kind == 'lit':
+            ch = tok[1]
+            for p in positions:
+                if p < m and name[p] == ch:
+                    new.add(p + 1)
+        else:  # 'set'
+            for p in positions:
+                if p < m and match_set(tok, name[p]):
+                    new.add(p + 1)
+        positions = new
+        if not positions:
+            return False
+    return m in positions
+```

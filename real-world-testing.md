@@ -48,7 +48,7 @@ not just that a check exists — is the harder problem this file leaves open.
 | Field | Value |
 |---|---|
 | Provider | OpenAI Compatible |
-| Base URL | `http://192.168.4.228:8090/v1` |
+| Base URL | `http://192.168.4.94:8090/v1` |
 | API Key | any non-empty string (llama.cpp ignores it) |
 | Model ID | a router preset, e.g. `qwen3-coder-80B-A3B-128k` |
 

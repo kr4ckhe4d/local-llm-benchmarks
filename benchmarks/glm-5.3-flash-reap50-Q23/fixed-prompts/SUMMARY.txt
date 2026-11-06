@@ -1,0 +1,36 @@
+# GLM-5.3-Flash REAP-50 Q23 (lte-ai/GLM-5.3-Flash-Strata-Q2Q3-Experts, reap50/...-FP8-assembled.gguf,
+# 63.2 GB: 321B GLM-5.3-Flash pruned to 144 of 288 experts, Q2_K/Q3_K experts from the FP8 release)
+# via the router, preset glm-5.3-flash-reap50-32k, llama.cpp b12165, 2026-11-06.
+# Code quality on the CORRECTED prompts, temperature 0, thinking off (router nothink), reasoning_effort low.
+
+| task        | score | what happened
+| glob_match  | 0/8   | code hangs on a hidden check (still running at 180 s): infinite loop
+| shlex_split | 5/7   | misses single_q, double_q
+| urljoin     | 0/9   | ~50K chars of in-answer reasoning, hit 12,288 tokens, no code block
+| textwrap    | 0/6   | ~56K chars, final code fails all checks
+| csv_rows    | 7/7   | clean
+| add_months  | 6/6   | clean
+| parse_qsl   | 0/7   | SyntaxError in the extracted code
+| total       | 18/50 | 2/7 clean -- lowest in the cross-model table apart from Lightning (21)
+
+The check request (Anthropic endpoint, same glob prompt) passed glob 8/8 in 3,838 tokens, so the
+model can solve these; at temp 0 it mostly talks itself out of the token budget instead. Thinking
+on was not run: at ~20 tok/s a thinking run at GLM's lengths would take hours.
+
+Speed: 19.9 tok/s generation (700-token probe, n=2), load 30 s. --fit puts ~49 GB on the two cards
+and ~14 GB of experts in RAM (RSS 14.8 GB), so nothing streams from disk.
+
+Getting it to run on upstream llama.cpp (conversion/translate.py; the download targets the
+lighttransport Strata fork):
+1. names: 3 hyper-connection keys, kda gate bound, swiglu clamp; 294 tensors (hc_* + .weight,
+   indexer.kpool_* -> indexer_compressor_*.weight); indexer kpool = 4 from zai-org config.json.
+2. keys the fork never wrote, copied from unsloth's GLM-5.3-Flash shard 1 (upstream converter):
+   attention.value_length 512 (fork: 0), eot/eom/bos/unk token ids, layer_norm_epsilon,
+   expert_shared_feed_forward_length, indexer.index_share_mtp.
+3. ssm_a sign: the fork stores +exp(A_log), upstream -exp(A_log). With 1+2 only, output was
+   "Understood. I will not use the term ..." forever. Found by range-fetching small F32 tensors from
+   unsloth's shard 2 and comparing: every other compared tensor was bit-identical.
+Load: dio, not mmap -- mmap thrashed the 30 GB page cache and stalled 9+ min; dio loads in 30 s.
+n-gpu-layers = auto in the preset, or --fit aborts on [*]'s 99.
+reasoning_effort low: the template otherwise injects "Reasoning Effort: Max"; with thinking cut off
+the model then reasons in the answer and, at temp 0, loops (conversion/sample-effort-max-loop.txt).

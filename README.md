@@ -2867,7 +2867,7 @@ disown
 ```
 
 ```bash
-curl -s http://192.168.4.228:8090/v1/chat/completions -H 'Content-Type: application/json' \
+curl -s http://192.168.4.94:8090/v1/chat/completions -H 'Content-Type: application/json' \
   -d '{"model":"<name>","messages":[{"role":"user","content":"<prompt>"}],"max_tokens":300}'
 ```
 
@@ -3160,7 +3160,7 @@ write-up — is the template for that case.
 
 ## Open WebUI
 
-The client this box is driven from, reachable at `http://192.168.4.228:8080`.
+The client this box is driven from, reachable at `http://192.168.4.94:8080`.
 Reconstructed from the running container, not from upstream's example:
 
 ```bash
@@ -3231,7 +3231,7 @@ flags — they live in the UI and are covered in full above:
 
 Chrome gates several web APIs (service workers — Open WebUI is a PWA —
 clipboard write, etc.) behind a "secure context" check, which requires
-`https://` or `localhost` specifically. Plain `http://192.168.4.228:8080`
+`https://` or `localhost` specifically. Plain `http://192.168.4.94:8080`
 loads the page fine but fails that check, silently, in Chrome only — Firefox
 and Safari are more lenient about non-HTTPS origins and do not show the
 problem. A self-signed certificate genuinely fixes it: Chrome's
@@ -3245,7 +3245,7 @@ it:
 ```bash
 mkdir -p ~/caddy
 cat > ~/caddy/Caddyfile <<'EOF'
-https://192.168.4.228:8443 {
+https://192.168.4.94:8443, https://CachyPC.local:8443 {
     tls internal
     reverse_proxy localhost:8080
 }
@@ -3261,7 +3261,7 @@ sudo ufw allow 8443/tcp   # new port -- 8090's rule does not cover it
 
 **Skipping the `ufw` line fails from any other device with `ERR_ADDRESS_UNREACHABLE`**,
 not a certificate warning — the container is genuinely fine (`curl -k
-https://192.168.4.228:8443/` from the box itself returns 200) but the LAN
+https://192.168.4.94:8443/` from the box itself returns 200) but the LAN
 never reaches it. `8090`'s existing rule does not carry over; each port needs
 its own `ufw allow`.
 
@@ -3273,7 +3273,13 @@ unless-stopped` covers. `--network=host` for the same reason as the main
 container: it needs to reach `open-webui` at `localhost:8080` without
 Docker's bridge-network address translation getting in the way.
 
-Open **`https://192.168.4.228:8443`** in Chrome, accept the certificate
+The box's address comes from DHCP: it moved from `.228` to `.94` after a power
+cut (see claude-harness.md), and Caddy then had no certificate for the new
+address, so HTTPS failed outright while plain HTTP kept working. The site
+block names `CachyPC.local` as well (fixed 2026-11-06), so the mDNS name keeps
+working if the IP moves again; only the IP entry would need editing.
+
+Open **`https://192.168.4.94:8443`** (or `https://CachyPC.local:8443`) in Chrome, accept the certificate
 warning once (`Advanced → Proceed`), and PWA-gated features that silently
 failed over plain HTTP work from then on. To remove the warning entirely
 rather than click through it, install Caddy's root CA
