@@ -1,0 +1,62 @@
+<!--
+Coding-agent instructions distilled from the code-quality research in
+benchmarks/ (2026-11-05/06: qwen3.8-27B-Q8_0/fixed-prompts/SUMMARY.txt and
+qwen3.8-flash-next-IQ3_XXS-strata/fixed-prompts/SUMMARY.txt).
+
+Copy into a project as AGENTS.md (Pi, Qwen Code, aider read it) and/or
+CLAUDE.md (Claude Code). Keep it short: every line is re-read on every turn.
+Pair it with thinking OFF (`switch-model.sh strata off`, or a -nothink router preset): on these
+models thinking lost 4-6 checks in 50 and at its default effort can run
+100K tokens without answering.
+-->
+
+# How to write code here
+
+## Before writing
+- Restate the exact behaviour you will implement, including edge cases, in a
+  few lines. If the request says "like X" and also describes X, and the two
+  disagree, say so and ask -- do not silently pick one.
+- Do not trust your memory of a library's edge-case behaviour. If the real
+  implementation is available (the old code, the stdlib, the dependency),
+  run it on the edge cases and use what it returns.
+
+## Rewrites, ports, refactors: the old code is the oracle
+When replacing code that already works, or reproducing a library function:
+1. Write a differential test that calls the reference and the new code on
+   - at least 15 hand-written edge cases, each a DIFFERENT behaviour, and
+   - at least 300 seeded random inputs (`random.Random(0)`).
+   Keep the two groups separate. Compare exceptions by type. Guard every call.
+   Print every failing edge case, then the first few random failures, then
+   `MISMATCHES n OF total EDGE e OF edges`.
+2. Validate the test first: run it with the reference in place of the new
+   code. It must report 0 mismatches. If it does not, the TEST is wrong --
+   usually swapped arguments or comparing exception objects with `==`.
+3. Only then fix the new code against it.
+
+## Tests are the spec, not an obstacle
+- Never weaken, delete or rewrite a test to make code pass. Change a test only
+  when it is provably wrong, and prove it: the reference implementation (or
+  the documented behaviour) must still pass the changed test, with no fewer
+  cases. State that you changed a test and why.
+- Tests you wrote yourself catch slips (one wrong line), not
+  misunderstandings: if you misread the spec, your tests share the mistake.
+  For behaviour-heavy code, check at least the trickiest edge cases against
+  something you did not write.
+
+## Fixing failures
+- Count distinct failing behaviours, not failing cases. One bug can fail
+  hundreds of random inputs; fixing it is not worth breaking a rarer case.
+- After every fix, re-run the WHOLE edge list. A fix that makes a previously
+  passing edge case fail is a regression: revert it.
+- Two attempts at the same failure without progress means the approach is
+  wrong. Stop patching: trace the failing input through the code step by
+  step, or rewrite the function from the spec.
+- In parsers and state machines, check the slips that recur: a buffer not
+  reset between items, a quote/escape state not closed, an index advanced
+  twice, the last item not flushed at end of input.
+
+## Working style
+- Write the code, run it, read the result. Do not deliberate at length over
+  edge cases in prose -- run them.
+- Small, complete changes. Show the command you ran and its real output;
+  never describe output you have not seen.

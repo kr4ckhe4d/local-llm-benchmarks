@@ -207,6 +207,10 @@ Usage: $(basename "$0") router            serve ALL presets, switchable from the
                                           Open WebUI dropdown (recommended);
                                           also starts Strata on :8095, unloaded
        $(basename "$0") strata            start only Strata (if it is not up)
+       $(basename "$0") strata off|low|medium|default
+                                          ...and set its thinking for EVERY client
+                                          (Claude Code, Pi, Open WebUI); 'strata
+                                          thinking' shows it. off = best code score
        $(basename "$0") <model> <context>  pin one model, per-model backend
        $(basename "$0") stop      free the GPU completely (SIGTERM, then SIGKILL)
        $(basename "$0") start     relaunch whatever was running last
@@ -396,6 +400,54 @@ start_strata() {
   fi
 }
 
+# Strata's thinking, for every client at once: no restart, no model load, and
+# kept across Strata restarts (its shared settings file). Why server-side: with
+# thinking turned off, Claude Code still sends output_config.effort "high",
+# which Strata maps to xhigh -- the level that once thought 100K tokens without
+# answering (strata.md). No client sends reasoning_budget_tokens, so the shared
+# budget caps every client; the shared effort covers clients that send none.
+# Code quality (benchmarks/qwen3.8-flash-next-IQ3_XXS-strata/fixed-prompts):
+# thinking off 48/50, medium 44/50. Router models ignore this: use a -nothink
+# preset (models-preset.ini).
+STRATA_CONFIG="$STRATA_DIR/strata-iq3_xxs.json"
+
+strata_think() {
+  local level="$1" key effort budget
+  key=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("api_key",""))' "$STRATA_CONFIG") \
+    || { echo "cannot read the API key from $STRATA_CONFIG" >&2; return 1; }
+  local url="http://localhost:${STRATA_PORT}/settings" auth="Authorization: Bearer $key"
+  case "$level" in
+    off)      effort=none;   budget=1 ;;      # budget 1 also closes Claude Code's "high"
+    low)      effort=low;    budget=2048 ;;
+    medium)   effort=medium; budget=8192 ;;
+    default)  effort="";     budget="" ;;
+    thinking) effort=keep ;;
+    *) echo "strata thinking: off, low, medium or default (got '$level')" >&2; return 1 ;;
+  esac
+  if [[ "$effort" != keep ]]; then
+    # Change only the two thinking keys; the web Chat's other shared settings stay.
+    local body
+    body=$(curl -sS --max-time 10 -H "$auth" "$url" | python3 -c '
+import json, sys
+d = json.load(sys.stdin).get("defaults") or {}
+for k, v in (("reasoning_effort", sys.argv[1]), ("reasoning_budget_tokens", sys.argv[2])):
+    if v == "":
+        d.pop(k, None)
+    else:
+        d[k] = int(v) if k == "reasoning_budget_tokens" else v
+print(json.dumps({"defaults": d or None}))' "$effort" "$budget") \
+      || { echo "could not read Strata's settings" >&2; return 1; }
+    curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' -H "$auth" \
+      -d "$body" "$url" > /dev/null || { echo "Strata refused the change" >&2; return 1; }
+  fi
+  curl -sS --max-time 10 -H "$auth" "$url" | python3 -c '
+import json, sys
+d = json.load(sys.stdin).get("defaults") or {}
+e, b = d.get("reasoning_effort"), d.get("reasoning_budget_tokens")
+print("==> Strata thinking: " + ("clients decide (xhigh when a client asks for none)" if e is None and b is None
+      else "effort %s, budget %s tokens, for every client" % (e or "(client)", b or "none")))'
+}
+
 start_last() {
   if [[ ! -f "$STATE" ]]; then
     echo "No previous model recorded in $STATE." >&2
@@ -577,7 +629,8 @@ case "${1:-}" in
   stop) stop_server ;;
   start) start_last ;;
   router) start_router ;;
-  strata) start_strata ;;
+  strata) start_strata
+          if [[ -n "${2:-}" ]]; then strata_think "$2"; fi ;;
   *)
     if [[ $# -lt 2 ]]; then usage; exit 1; fi
     switch_model "$1" "$2"
