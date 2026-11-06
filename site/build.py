@@ -461,6 +461,110 @@ def parse_densemoe(root):
     return out
 
 
+def _num(cell):
+    """First number in a findings cell: '**1,337 tok/s**' -> 1337, '78-82' -> 80, '~3,094 (75 fewer)' -> 3094,
+    '286 / 849 = 34%' -> 34, '-' -> None.  Returns (value, approx)."""
+    t = cell.replace("**", "").replace(",", "").strip()
+    if not t or t in ("-", "—"):
+        return None, False
+    m = re.search(r"=\s*([\d.]+%?)\s*$", t)   # "286 / 849 = 34%": the result, not the operands
+    if m:
+        t = m.group(1)
+    m = re.search(r"(-?\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)", t)
+    if m and not re.match(r"^\s*-", t):
+        return (float(m.group(1)) + float(m.group(2))) / 2, True
+    m = re.search(r"-?\d+(?:\.\d+)?", t)
+    if not m:
+        return None, False
+    v = float(m.group(0))
+    if re.search(r"\d\s*K\b", t[m.start():m.end() + 3]):
+        v *= 1000
+    return v, "~" in t
+
+
+def parse_findings_tables(path):
+    """Markdown tables of a findings log, with each cell's number pulled out."""
+    sections, cur = [], None
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    used = {}
+    while i < len(lines):
+        ln = lines[i]
+        m = re.match(r"^(#{2,3})\s+(.*)$", ln)
+        if m:
+            title = m.group(2).strip()
+            plain = re.sub(r"[`*]", "", title)
+            hid = slugify_heading(plain) or "section"
+            n = used.get(hid, 0); used[hid] = n + 1
+            cur = {"title": plain, "id": hid if not n else f"{hid}-{n}", "tables": []}
+            sections.append(cur)
+        elif ln.startswith("|") and i + 1 < len(lines) and re.match(r"^\|\s*:?-{3}", lines[i + 1]) and cur:
+            split = lambda r: [c.strip() for c in r.strip().strip("|").split("|")]
+            head = split(ln)
+            rows = []
+            i += 2
+            while i < len(lines) and lines[i].startswith("|"):
+                rows.append(split(lines[i]))
+                i += 1
+            # transposed tables: numeric header ("tokens checked | 1 | 2 | 3")
+            if len(head) > 2 and all(_num(h)[0] is not None and re.fullmatch(r"[\d,.]+", h.replace("*", "")) for h in head[1:]):
+                cols = [head[0]] + [r[0] for r in rows]
+                rows = [[h] + [r[j] if j < len(r) else "" for r in rows] for j, h in enumerate(head) if j]
+                head = cols
+            # "a / b" columns whose cells are pairs become two columns
+            j = 1
+            while j < len(head):
+                hp = [x.strip() for x in head[j].split("/")]
+                if len(hp) == 2 and all(len(r) > j and r[j].count("/") == 1 and "=" not in r[j] for r in rows if r[j] not in ("-", "")):
+                    tail = hp[1].split(" ", 1)[1] if " " in hp[1] else ""
+                    base = hp[0].rsplit(" ", 1)[0] if " " in hp[0] else ""
+                    h1 = f"{hp[0]} {tail}".strip() if tail else hp[0]
+                    h2 = f"{base} {hp[1]}".strip() if base else hp[1]
+                    head[j:j + 1] = [h1, h2]
+                    for r in rows:
+                        parts = r[j].split("/") if r[j].count("/") == 1 else [r[j], r[j]]
+                        r[j:j + 1] = [parts[0].strip(), parts[1].strip()]
+                    j += 2
+                else:
+                    j += 1
+            # "count (ms)" columns: header "on the CPU (CPU ms)", cells "377 (87.8)" become two columns
+            j = 1
+            while j < len(head):
+                hm = re.match(r"^(.+?)\s*\(([^()]+)\)$", head[j])
+                vals = [r[j] for r in rows if j < len(r) and r[j] not in ("-", "")]
+                if hm and vals and sum(1 for c in vals if re.search(r"\(\s*[\d.,]+\s*\)\s*$", c)) * 2 >= len(vals):
+                    head[j:j + 1] = [hm.group(1).strip(), hm.group(2).strip()]
+                    for r in rows:
+                        cm = re.match(r"^(.*?)\s*\(\s*([\d.,]+)\s*\)\s*$", r[j]) if j < len(r) else None
+                        r[j:j + 1] = [cm.group(1).strip() or "-", cm.group(2)] if cm else [r[j] if j < len(r) else "", "-"]
+                    j += 2
+                else:
+                    j += 1
+            # "a / b" rows ("output at 16K / 32K context": "82.1 / 72.7") become two rows
+            out_rows = []
+            for r in rows:
+                lp = [x.strip() for x in r[0].split("/")]
+                pairs = [c for c in r[1:] if c not in ("-", "")]
+                if (len(lp) == 2 and any(c.count("/") == 1 for c in pairs)
+                        and all(c.count("/") <= 1 and "=" not in c for c in pairs)):
+                    pre = lp[0].rsplit(" ", 1)[0] if " " in lp[0] else ""
+                    post = lp[1].split(" ", 1)[1] if " " in lp[1] else ""
+                    names = [f"{lp[0]} {post}".strip(), f"{pre} {lp[1]}".strip()]
+                    for side in (0, 1):
+                        out_rows.append([names[side]] + [c.split("/")[side].strip() if c.count("/") == 1 else c for c in r[1:]])
+                else:
+                    out_rows.append(r)
+            rows = out_rows
+            cells = [[{"t": c, **dict(zip(("v", "a"), _num(c)))} if k else {"t": c} for k, c in enumerate(r)] for r in rows]
+            numeric = [k for k in range(1, len(head))
+                       if sum(1 for r in cells if k < len(r) and r[k].get("v") is not None) >= min(2, len(cells))
+                       or (len(cells) == 1 and cells[0][k].get("v") is not None)]
+            cur["tables"].append({"head": head, "rows": cells, "numeric": numeric})
+            continue
+        i += 1
+    return [s for s in sections if s["tables"]]
+
+
 # ---------------------------------------------------------------- main
 def main():
     # site path -> (project, repo-relative path); other projects live under their prefix
@@ -579,6 +683,12 @@ def main():
     measurements["strata"] = strata
     dm = next((p for p in PROJECTS if p["id"] == "densemoe"), None)
     measurements["densemoe"] = parse_densemoe(dm["root"]) if dm and dm["id"] in tracked_by else {}
+    so = next((p for p in PROJECTS if p["id"] == "strataoss"), None)
+    if so and so["id"] in tracked_by and (so["root"] / "oss/FINDINGS.md").exists():
+        measurements["strataoss"] = {"path": "strata-oss/oss/FINDINGS.md", "doc": doc_slug("strata-oss/oss/FINDINGS.md"),
+                                     "sections": parse_findings_tables(so["root"] / "oss/FINDINGS.md"),
+                                     "figures": sorted("strata-oss/" + f for f in tracked_by["strataoss"]
+                                                       if re.match(r"oss/paper/fig[0-9].*[.]svg$", f))}
 
     projects = []
     for proj in PROJECTS:

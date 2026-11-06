@@ -199,6 +199,7 @@
       if (kind === 'strata') return strataPage();
       if (kind === 'projects') return projectsPage();
       if (kind === 'densemoe') return denseMoePage();
+      if (kind === 'strata-oss') return strataOssPage();
       if (kind === 'files') return filesPage(rest.join('/'), prevKind === 'files');
       app.innerHTML = `<div class="wrap"><div class="empty">Not found. <a href="#/">Back to overview</a></div></div>`;
     } catch (err) {
@@ -533,7 +534,7 @@
       const words = ds.reduce((a, d) => a + d.words, 0);
       return `<div class="projcard"><div class="eyebrow">${esc(p.name)}</div><h3><a href="#/doc/${ds[0]?.slug || ''}">${esc(p.title)}</a></h3><p>${esc(p.blurb)}</p>
         <div class="pstats"><span><b>${ds.length}</b> write-ups</span><span><b>${fmtInt(Math.round(words / 1000))}K</b> words</span><span><b>${fmtInt(p.files)}</b> files</span><span><b>${fmtInt(p.commits)}</b> commits${p.subdir ? ` to ${esc(p.subdir)}/` : ''}</span></div>
-        <div class="pact"><a class="btn" href="#/doc/${ds[0]?.slug || ''}">Read</a>${p.id === 'densemoe' ? '<a class="btn" href="#/densemoe">Results</a>' : p.id === 'bench' ? '<a class="btn" href="#/models">Results</a>' : ''}<a class="btn" href="#/files/${esc(p.prefix || 'benchmarks/')}">Files</a><a class="btn" href="${p.url}" target="_blank" rel="noopener">${GH} ${esc(p.repo)}</a></div>
+        <div class="pact"><a class="btn" href="#/doc/${ds[0]?.slug || ''}">Read</a>${p.id === 'densemoe' ? '<a class="btn" href="#/densemoe">Results</a>' : p.id === 'strataoss' ? '<a class="btn" href="#/strata-oss">Results</a>' : p.id === 'bench' ? '<a class="btn" href="#/models">Results</a>' : ''}<a class="btn" href="#/files/${esc(p.prefix || 'benchmarks/')}">Files</a><a class="btn" href="${p.url}" target="_blank" rel="noopener">${GH} ${esc(p.repo)}</a></div>
         <div class="plast">Last change ${esc((p.commit_date || '').slice(0, 10))}: <a href="${p.url}/commit/${p.commit}" target="_blank" rel="noopener">${esc(p.commit_msg.length > 90 ? p.commit_msg.slice(0, 90) + '…' : p.commit_msg)}</a></div></div>`;
     }).join('')}</div>`;
   }
@@ -582,6 +583,128 @@
     }
   }
   const freshChart = id => { const c = $(id); const n = c.cloneNode(false); c.replaceWith(n); return n; };
+
+
+  // ------------------------------------------------------------------ strata-oss (gpt-oss engine)
+  function strataOssPage() {
+    setTitle('strata-oss');
+    const S = D.m.strataoss, P = projById('strataoss');
+    if (!S) { app.innerHTML = `<div class="wrap"><div class="empty">Strata-oss findings were not found at build time.</div></div>`; return; }
+    const docHref = id => `#/doc/${S.doc}/${id}`;
+    const allT = S.sections.flatMap(sec => sec.tables.map(t => ({ sec, t })));
+    const findRow = (re, colRe) => {
+      for (const { t } of allT) {
+        const ci = t.head.findIndex((h, i) => i && colRe.test(h)); if (ci < 0) continue;
+        const r = t.rows.find(r => re.test(r[0].t)); if (r && r[ci]?.v != null) return r[ci];
+      }
+      return null;
+    };
+    const fin = S.sections.find(x => /^17\./.test(x.title));
+    const ft = fin?.tables[0];
+    const cell = (re, col) => { if (!ft) return null; const ci = ft.head.findIndex(h => h === col); const r = ft.rows.find(r => re.test(r[0].t)); return r?.[ci] || null; };
+    const so = cell(/^output, prose/, 'strata-oss'), lc = cell(/^output, prose/, 'llama.cpp'), eg = cell(/^output after a 1K/, 'strata-oss + EAGLE3');
+    const p1 = cell(/^prompt 1K/, 'strata-oss'), p1l = cell(/^prompt 1K/, 'llama.cpp'), p16 = cell(/^prompt 16K/, 'strata-oss');
+    const par = findRow(/^8 /, /^total tok\/s/);
+    const tv = c => c ? c.t.replace(/\*\*/g, '') : '—';
+    app.innerHTML = `<div class="wrap">
+      <div class="page-h"><div class="eyebrow"><a href="#/projects">Projects</a> / ${esc(P?.name || 'Strata-oss')}</div><h1>strata-oss: gpt-oss-120b on one desktop PC</h1>
+      <p>A gpt-oss engine on Strata's mechanism: the most-routed experts in VRAM across both cards, the rest computed by the CPU from page-locked RAM, missing prompt experts streamed over PCIe. Every number below is parsed from the tables in <a href="#/doc/${S.doc}">FINDINGS.md</a>, the step-by-step measurement log; hover a bar for the cell as written, click for its section. Design: <a href="#/doc/strata-oss-oss-paper-strata-oss">the paper</a> · ${P ? `<a href="${P.url}/tree/${P.branch}/oss" target="_blank" rel="noopener">${GH} GitHub</a>` : ''}</p></div>
+      <div class="tiles">
+        <div class="tile"><div class="v">${tv(so)}<small>tok/s</small></div><div class="k">120b output, prose</div><div class="s">llama.cpp best split: ${tv(lc)}${so?.v && lc?.v ? ` · ${fmt(so.v / lc.v, 1)}×` : ''}</div></div>
+        <div class="tile"><div class="v">${tv(eg)}<small>tok/s</small></div><div class="k">With EAGLE3, after a 1K prompt</div><div class="s">greedy output unchanged</div></div>
+        <div class="tile"><div class="v">${tv(p1)}<small>tok/s</small></div><div class="k">Prompt, 1K tokens</div><div class="s">llama.cpp: ${tv(p1l)}</div></div>
+        <div class="tile"><div class="v">${tv(p16)}<small>tok/s</small></div><div class="k">Prompt, 16K tokens</div><div class="s">PCIe 5.0 x8 per card is the wall</div></div>
+        <div class="tile"><div class="v">${par ? tv(par) : '—'}<small>tok/s</small></div><div class="k">8 conversations at once</div><div class="s">total, 16K context per slot</div></div>
+      </div>
+      ${ft ? `<div class="section-h"><h2>Final build against llama.cpp</h2><a href="${docHref(fin.id)}">§17 →</a></div>
+      <div class="grid2"><div class="card"><h3>Output speed</h3><p class="sub">gpt-oss-120b, greedy, low reasoning effort, saved profile, 300 tokens.</p>${legendFor(ft)}<div id="o-out"></div></div>
+      <div class="card"><h3>Prompt reading</h3><p class="sub">tok/s; llama.cpp is its pp512 with the best hybrid split.</p>${legendFor(ft)}<div id="o-pp"></div></div></div>` : ''}
+      <div class="section-h"><h2>The findings log, table by table</h2><a href="#/doc/${S.doc}">Read FINDINGS.md →</a></div>
+      <div id="o-tables"></div>
+      ${S.figures?.length ? `<div class="section-h"><h2>Figures from the paper</h2><a href="#/doc/strata-oss-oss-paper-strata-oss">Paper →</a></div>
+      <div class="figs">${S.figures.map(f => `<a class="card fig" href="#/files/${esc(f)}"><img src="raw/${esc(f)}" alt="${esc(f.split('/').pop())}" loading="lazy"></a>`).join('')}</div>` : ''}
+      ${footer()}</div>`;
+
+    if (ft) {
+      const outRows = ft.rows.filter(r => /^output/.test(r[0].t)), ppRows = ft.rows.filter(r => /^prompt/.test(r[0].t));
+      hbar($('#o-out'), groupedRows(ft, outRows, ft.numeric, fin), { labW: 200, rowH: 20 });
+      hbar($('#o-pp'), groupedRows(ft, ppRows, ft.numeric, fin), { labW: 200, rowH: 20 });
+    }
+    const host = $('#o-tables');
+    allT.forEach(({ sec, t }, ti) => {
+      if (sec === fin) return;
+      if (!t.numeric.length) return;
+      const cmp = comparableCols(t);
+      const pref = t.numeric.findIndex(k => /tok\/s|output|prompt/i.test(t.head[k]));
+      const modes = [...(cmp ? [{ id: 'all', label: 'Compare ' + cmp.map(k => t.head[k].replace(/\*\*|`/g, '')).join(' vs ') }] : []), ...t.numeric.map(k => ({ id: String(k), label: t.head[k].replace(/\*\*|`/g, '') }))];
+      const def = cmp ? 'all' : String(t.numeric[Math.max(0, pref)]);
+      const card = document.createElement('div');
+      card.className = 'card'; card.style.marginBottom = '16px';
+      card.innerHTML = `<h3><a href="${docHref(sec.id)}">${esc(sec.title)}</a></h3><p class="sub">${esc(t.head[0].replace(/\*\*|`/g, '') || 'Rows')} · ${t.rows.length} rows</p>
+        ${modes.length > 1 ? `<div class="filters"><div class="seg">${modes.map(m => `<button data-m="${esc(m.id)}" class="${m.id === def ? 'on' : ''}">${esc(m.label)}</button>`).join('')}</div></div>` : ''}
+        <div class="leg"></div><div class="ch"></div>
+        <details class="raw"><summary>Table as written</summary><div class="tbl"><table><thead><tr>${t.head.map(h => `<th>${esc(h.replace(/\*\*|`/g, ''))}</th>`).join('')}</tr></thead><tbody>${t.rows.map(r => `<tr>${r.map(c => `<td>${esc(c.t.replace(/\*\*|`/g, ''))}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
+      host.appendChild(card);
+      const draw = m => {
+        const old = $('.ch', card), el = old.cloneNode(false); old.replaceWith(el);
+        if (m === 'all') {
+          $('.leg', card).innerHTML = legendFor(t, cmp);
+          // rows on a much smaller scale (e.g. "tokens a step" beside tok/s) would vanish: list them instead
+          const rmax = r => Math.max(0, ...cmp.map(k => r[k]?.v ?? 0)), top = Math.max(...t.rows.map(rmax));
+          const keep = t.rows.filter(r => rmax(r) >= top / 10), drop = t.rows.filter(r => rmax(r) < top / 10);
+          hbar(el, groupedRows(t, keep, cmp, sec), { labW: 230, rowH: 20 });
+          if (drop.length) el.insertAdjacentHTML('beforeend', `<div class="foot">On another scale, not charted: ${drop.map(r => `${esc(r[0].t.replace(/\*\*|`/g, ''))} (${cmp.map(k => esc(r[k]?.t || '—')).join(' / ')})`).join('; ')}.</div>`);
+        } else {
+          $('.leg', card).innerHTML = '';
+          const k = +m;
+          const rows = t.rows.filter(r => r[k]?.v != null);
+          hbar(el, rows.map(r => ({ label: r[0].t.replace(/\*\*|`/g, ''), value: r[k].v, text: r[k].a ? '≈' + fmtNum(r[k].v) : fmtNum(r[k].v), href: docHref(sec.id), tip: tipRows(r[0].t.replace(/\*\*|`/g, ''), [[t.head[k].replace(/\*\*|`/g, ''), r[k].t.replace(/\*\*/g, '')], ...(r[k].a ? [['charted', 'midpoint / approximate']] : [])]) })), { labW: 260, rowH: 22 });
+        }
+      };
+      $$('.seg button', card).forEach(b => b.onclick = () => { $$('.seg button', card).forEach(x => x.classList.toggle('on', x === b)); draw(b.dataset.m); });
+      draw(def);
+    });
+  }
+  const fmtNum = v => Math.abs(v) >= 100 ? fmtInt(Math.round(v)) : Math.abs(v) >= 10 ? fmt(v, 1) : fmt(v, 2);
+  const COLCLS = ['', 'alt', 'c3', 'c4'];
+  // columns that can share one axis: same unit, medians within 4x; null when fewer than two qualify
+  function comparableCols(t) {
+    const unit = k => {
+      const h = t.head[k].toLowerCase(), cs = t.rows.map(r => (r[k]?.t || '').toLowerCase()).filter(c => c && c !== '-');
+      const has = re => re.test(h) || cs.filter(c => re.test(c)).length * 2 > cs.length;
+      if (has(/tok\/s/)) return 'tok/s';
+      if (has(/%/)) return '%';
+      if (has(/\bms\b/)) return 'ms';
+      if (has(/\bslots?\b/)) return 'slots';
+      if (cs.some(c => /\dx\b/.test(c))) return 'x';
+      if (cs.some(c => /\d\s*s\b/.test(c))) return 's';
+      return '';
+    };
+    const med = k => { const v = t.rows.map(r => r[k]?.v).filter(x => x != null).sort((a, b) => a - b); return v[v.length >> 1] || 0; };
+    const groups = {};
+    for (const k of t.numeric) (groups[unit(k)] ??= []).push(k);
+    let best = null;
+    for (const ks of Object.values(groups)) {
+      const sorted = [...ks].sort((a, b) => med(a) - med(b));
+      for (let i = 0; i < sorted.length; i++) {
+        const run = sorted.filter(k => med(k) >= med(sorted[i]) && med(k) < Math.max(1e-9, med(sorted[i])) * 4);
+        if (run.length >= 2 && (!best || run.length > best.length)) best = run;
+      }
+    }
+    return best ? best.sort((a, b) => a - b).slice(0, 4) : null;
+  }
+  function legendFor(t, cols) {
+    return `<div class="legend">${(cols || t.numeric).slice(0, 4).map((k, i) => `<span><i style="background:var(--s${i + 1})"></i>${esc(t.head[k].replace(/\*\*|`/g, ''))}</span>`).join('')}</div>`;
+  }
+  function groupedRows(t, rows, cols, sec) {
+    const out = [];
+    for (const r of rows) cols.slice(0, 4).forEach((k, i) => {
+      const c = r[k];
+      out.push({ label: i === 0 ? r[0].t.replace(/\*\*|`/g, '') : '', value: c?.v ?? null, text: c?.v == null ? '—' : (c.a ? '≈' : '') + fmtNum(c.v), cls: COLCLS[i], href: `#/doc/${D.m.strataoss.doc}/${sec.id}`,
+        tip: tipRows(r[0].t.replace(/\*\*|`/g, ''), [[t.head[k].replace(/\*\*|`/g, ''), c ? c.t.replace(/\*\*/g, '') : '—']]) });
+    });
+    return out;
+  }
 
   // ------------------------------------------------------------------ dense-moe
   function denseMoePage() {
