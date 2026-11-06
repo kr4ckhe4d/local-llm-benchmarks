@@ -198,6 +198,7 @@
       if (kind === 'kld') return kldPage();
       if (kind === 'strata') return strataPage();
       if (kind === 'projects') return projectsPage();
+      if (kind === 'densemoe') return denseMoePage();
       if (kind === 'files') return filesPage(rest.join('/'), prevKind === 'files');
       app.innerHTML = `<div class="wrap"><div class="empty">Not found. <a href="#/">Back to overview</a></div></div>`;
     } catch (err) {
@@ -532,7 +533,7 @@
       const words = ds.reduce((a, d) => a + d.words, 0);
       return `<div class="projcard"><div class="eyebrow">${esc(p.name)}</div><h3><a href="#/doc/${ds[0]?.slug || ''}">${esc(p.title)}</a></h3><p>${esc(p.blurb)}</p>
         <div class="pstats"><span><b>${ds.length}</b> write-ups</span><span><b>${fmtInt(Math.round(words / 1000))}K</b> words</span><span><b>${fmtInt(p.files)}</b> files</span><span><b>${fmtInt(p.commits)}</b> commits${p.subdir ? ` to ${esc(p.subdir)}/` : ''}</span></div>
-        <div class="pact"><a class="btn" href="#/doc/${ds[0]?.slug || ''}">Read</a><a class="btn" href="#/files/${esc(p.prefix || 'benchmarks/')}">Files</a><a class="btn" href="${p.url}" target="_blank" rel="noopener">${GH} ${esc(p.repo)}</a></div>
+        <div class="pact"><a class="btn" href="#/doc/${ds[0]?.slug || ''}">Read</a>${p.id === 'densemoe' ? '<a class="btn" href="#/densemoe">Results</a>' : p.id === 'bench' ? '<a class="btn" href="#/models">Results</a>' : ''}<a class="btn" href="#/files/${esc(p.prefix || 'benchmarks/')}">Files</a><a class="btn" href="${p.url}" target="_blank" rel="noopener">${GH} ${esc(p.repo)}</a></div>
         <div class="plast">Last change ${esc((p.commit_date || '').slice(0, 10))}: <a href="${p.url}/commit/${p.commit}" target="_blank" rel="noopener">${esc(p.commit_msg.length > 90 ? p.commit_msg.slice(0, 90) + '…' : p.commit_msg)}</a></div></div>`;
     }).join('')}</div>`;
   }
@@ -544,6 +545,148 @@
       ${projects().map(p => `<div class="section-h"><h2>${esc(p.title)}</h2><a href="${p.url}" target="_blank" rel="noopener">${GH} ${esc(p.repo)}</a></div>
         <div class="tbl"><table><thead><tr><th>Write-up</th><th>File</th><th class="n">Words</th><th></th></tr></thead><tbody>${D.docs.filter(d => d.project === p.id).map(d => `<tr><td><a href="#/doc/${d.slug}">${esc(d.title)}</a></td><td class="mono">${esc(d.path.slice(p.prefix.length))}</td><td class="n">${fmtInt(d.words)}</td><td>${d.gh ? `<a href="${esc(d.gh)}" target="_blank" rel="noopener">${GH}</a>` : ''}</td></tr>`).join('')}</tbody></table></div>`).join('')}
       ${footer()}</div>`;
+  }
+
+
+  // ------------------------------------------------------------------ scatter
+  /* series: [{name, cls, pts:[{x, y, label, tip, href}]}]; x on a log scale */
+  function scatter(el, series, o = {}) {
+    const draw = () => {
+      const W = Math.max(300, el.clientWidth || 600), H = o.h || 320, L = 46, R = 70, T = 12, B = 34;
+      const pts = series.flatMap(s => s.pts);
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const lx0 = Math.floor(Math.log10(Math.min(...xs))), lx1 = Math.ceil(Math.log10(Math.max(...xs)));
+      const y1 = (o.ymax ?? Math.max(...ys) * 1.12), y0 = 0;
+      const sx = v => L + (Math.log10(v) - lx0) / (lx1 - lx0) * (W - L - R);
+      const sy = v => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+      let s = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(o.title || 'scatter')}">`;
+      for (let e = lx0; e <= lx1; e++) { const x = sx(10 ** e); s += `<line class="gl" x1="${x}" x2="${x}" y1="${T}" y2="${H - B}"/><text class="tick" x="${x}" y="${H - B + 16}" text-anchor="middle">${10 ** e >= 1 ? 10 ** e : (10 ** e).toFixed(-e)}</text>`; }
+      const st = niceStep(y1);
+      for (let v = 0; v <= y1; v += st) { const y = sy(v); s += `<line class="gl" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/><text class="tick" x="${L - 6}" y="${y + 4}" text-anchor="end">${fmtInt(v)}</text>`; }
+      s += `<text class="tick" x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">${esc(o.xlab || '')}</text>`;
+      s += `<text class="tick" transform="translate(12 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle">${esc(o.ylab || '')}</text>`;
+      series.forEach((se, si) => {
+        if (se.line && se.pts.length > 1) { const ps = [...se.pts].sort((a, b) => a.x - b.x); s += `<path d="M${ps.map(p => `${sx(p.x)},${sy(p.y)}`).join('L')}" fill="none" stroke="var(--${se.cls || 's1'})" stroke-width="2" opacity=".55"/>`; }
+        se.pts.forEach((p, pi) => {
+          s += `<circle cx="${sx(p.x)}" cy="${sy(p.y)}" r="6" fill="var(--${se.cls || 's1'})" stroke="var(--surface)" stroke-width="2" data-tip="${si}:${pi}" style="cursor:${p.href ? 'pointer' : 'default'}" ${p.href ? `data-href="${esc(p.href)}"` : ''}/>`;
+          if (p.label) s += `<text class="lbl" x="${sx(p.x) + 9}" y="${sy(p.y) + 4}" style="font-size:11.5px">${esc(p.label)}</text>`;
+        });
+      });
+      el.innerHTML = s + '</svg>';
+    };
+    el.classList.add('chart'); draw(); redraws.push({ el, draw });
+    if (!el._bound) {
+      el._bound = true;
+      bindTips(el, k => { const [i, j] = k.split(':').map(Number); return series[i].pts[j].tip; });
+      el.addEventListener('click', e => { const g = e.target.closest('[data-href]'); if (g) location.hash = g.dataset.href; });
+    }
+  }
+  const freshChart = id => { const c = $(id); const n = c.cloneNode(false); c.replaceWith(n); return n; };
+
+  // ------------------------------------------------------------------ dense-moe
+  function denseMoePage() {
+    setTitle('Dense to MoE');
+    const M = D.m.densemoe || {};
+    const P = projById('densemoe');
+    if (!P || !M.quants) { app.innerHTML = `<div class="wrap"><div class="empty">dense-moe results were not found at build time.</div></div>`; return; }
+    const q = M.quants.rows;
+    const gg = q.filter(r => r.kind === 'gguf' && r.val);
+    const iq4 = gg.find(r => r.variant === 'IQ4_XS');
+    const runs = M.runs || [];
+    const best = (re) => runs.filter(r => re.test(r.path)).flatMap(r => r.configs.map(c => ({ ...c, run: r }))).reduce((a, b) => !a || b.hm > a.hm ? b : a, null);
+    const b9 = best(/dflash\/nine_/), b27 = best(/fast27b\/drafters/), bedit = best(/mtp_edit|dflash\/edit/);
+    // full FFN kernels only: router-only rows time the gate alone
+    const ffnK = k => !k.path.startsWith('router only');
+    const kd = (M.kernel || []).filter(k => k.card === 'RX 9070 XT' && ffnK(k));
+    const minBy = a => a.reduce((x, y) => !x || y.us < x.us ? y : x, null);
+    const kDense = minBy(kd.filter(k => k.E === 1)), kTop2 = minBy(kd.filter(k => k.E === 8 && k.k === 2));
+    const oracle6 = M.sparse?.rows?.['oracle E=8 k=6'];
+    const g = f => `#/files/dense-moe/experiments/results/${f}`;
+    app.innerHTML = `<div class="wrap">
+      <div class="page-h"><div class="eyebrow"><a href="#/projects">Projects</a> / ${esc(P.name)}</div><h1>Dense to MoE: results</h1>
+      <p>Can a dense Qwen3.5-9B be made sparse for faster local inference? Every chart here is parsed from the JSON and JSONL the experiment harnesses wrote under <a href="#/files/dense-moe/experiments/results/">experiments/results/</a>. Quality is mean KL divergence against one llama.cpp BF16 reference on held-out text (25,500 scored tokens), so PyTorch sparse variants and GGUF quants share one scale. Write-ups: <a href="#/doc/dense-moe-readme">README</a> · <a href="#/doc/dense-moe-docs-conclusions">conclusions</a> · <a href="#/doc/dense-moe-docs-findings">findings</a> · <a href="${P.url}" target="_blank" rel="noopener">${GH} GitHub</a></p></div>
+      <div class="note"><b>Verdict:</b> training-free sparsification does not pay off. Even with a perfect router, an 8-expert top-6 MoE loses ${oracle6 ? oracle6.mean_kld.toFixed(3) : '0.12'} KLD, against ${iq4 ? iq4.val.mean_kld.toFixed(4) : '0.018'} for IQ4_XS; quantize until it fits and add a drafter instead.</div>
+      <div class="tiles">
+        <div class="tile"><div class="v">${kDense && kTop2 ? fmt(kDense.us / kTop2.us, 1) : '—'}<small>×</small></div><div class="k">Top-2-of-8 FFN kernel vs best dense</div><div class="s">${kDense && kTop2 ? `${fmtInt(Math.round(kTop2.us))} vs ${fmtInt(Math.round(kDense.us))} µs per layer, RX 9070 XT` : ''}</div></div>
+        <div class="tile"><div class="v">${oracle6 ? oracle6.mean_kld.toFixed(3) : '—'}</div><div class="k">KLD, oracle MoE E=8 top-6</div><div class="s">IQ4_XS: ${iq4 ? iq4.val.mean_kld.toFixed(4) : '—'}</div></div>
+        <div class="tile"><div class="v">${b9 ? fmt(b9.hm, 1) : '—'}<small>tok/s</small></div><div class="k">Fastest 9B decode</div><div class="s">${esc(b9 ? b9.label.split(' · ').slice(0, 2).join(' · ') + ' · ' + b9.run.card : '')}</div></div>
+        <div class="tile"><div class="v">${b27 ? fmt(b27.hm, 1) : '—'}<small>tok/s</small></div><div class="k">Fastest 27B decode, one card</div><div class="s">${esc(b27 ? b27.label.split(' · ').slice(0, 2).join(' · ') : '')}</div></div>
+        <div class="tile"><div class="v">${bedit ? fmtInt(Math.round(bedit.hm)) : '—'}<small>tok/s</small></div><div class="k">Editing with n-gram drafting</div><div class="s">${esc(bedit ? bedit.label.split(' · ').slice(0, 2).join(' · ') : '')}</div></div>
+      </div>
+
+      <div class="card"><h3>Quality against speed: Qwen3.5-9B GGUF quants</h3><p class="sub">x: mean KLD vs BF16 (log; left is better). y: decode tok/s on the RX 9070 XT (llama-bench tg128), plain and with the MTP head.</p>
+        <div class="legend"><span><i style="background:var(--s1)"></i>plain decode</span><span><i style="background:var(--s2)"></i>with MTP</span></div><div id="d-front"></div>
+        <div class="foot">Source: <a href="${g('gguf/summary.json')}">gguf/summary.json</a>. Sparse variants have no llama.cpp speed: they are on the next chart.</div></div>
+
+      <div class="grid2" style="margin-top:16px">
+        <div class="card"><h3>Every variant on one quality scale</h3><p class="sub">Mean KLD vs llama.cpp BF16 (log). Orange: PyTorch sparse FFNs (oracle MoE and per-neuron).</p><div id="d-kld"></div><div class="foot"><a href="${g('gguf/sparse_kld_val.json')}">sparse_kld_val.json</a> · <a href="${g('gguf/summary.json')}">summary.json</a></div></div>
+        <div class="card"><h3>Oracle conversion sweep</h3><p class="sub">KL vs the PyTorch dense model, k-means-contribution experts. Oracle = perfect router; static = fixed experts per layer.</p><div id="d-oracle"></div><div class="foot"><a href="${g('oracle_e2e.json')}">oracle_e2e.json</a> · hover for top-1 agreement and PPL</div></div>
+      </div>
+
+      <div class="grid2" style="margin-top:16px">
+        <div class="card"><h3>Phase 3: fine-grained neuron sparsity</h3><p class="sub">Deja Vu / TEAL / CATS / WINA-style masks; B = neurons per block, keep = share kept. Mean KLD vs BF16 (log).</p><div id="d-p3"></div><div class="foot"><a href="${g('phase3/e2e_kld_val.json')}">phase3/e2e_kld_val.json</a> · <a href="#/doc/dense-moe-docs-phase3-findings">phase3 findings</a></div></div>
+        <div class="card"><h3>Triton FFN kernels, per layer at batch 1</h3><p class="sub">Median µs per full FFN layer (router included), HIP graph mode. E experts, top-k active; orange = dense. Lower is faster.</p>
+          <div class="filters"><div class="seg" id="kc"><button data-c="RX 9070 XT" class="on">RX 9070 XT</button><button data-c="R9700">R9700</button></div></div><div id="d-kern"></div><div class="foot"><a href="${g('')}">kernel_latency_*.json</a></div></div>
+      </div>
+
+      <div class="card" style="margin-top:16px"><h3>Running partly in RAM (RX 9070 XT, 8 threads)</h3><p class="sub">Decode tok/s by VRAM budget. "layers" offloads whole layers; "ffn" keeps attention on the GPU and moves FFN weights to RAM.</p>
+        <div class="filters"><select id="om"></select></div><div class="legend"><span><i style="background:var(--s1)"></i>layers</span><span><i style="background:var(--s2)"></i>ffn</span></div><div id="d-off"></div><div class="foot"><a href="#/doc/dense-moe-docs-offload">offload.md</a> · <a href="${g('offload/')}">offload/</a></div></div>
+
+      <div class="section-h"><h2>Speed runs</h2><a href="#/doc/dense-moe-docs-mtp-tuning">MTP tuning write-up →</a></div>
+      <div class="card"><p class="sub">Each bar is one llama-server configuration: harmonic mean of decode tok/s over the prompts (6 domains unless the run says otherwise), temperature 0 unless marked. Faded: no drafter. Hover for per-domain speed and draft acceptance.</p>
+        <div class="filters"><select id="rs">${runs.map((r, i) => `<option value="${i}">${esc(r.title)} · ${esc(r.card)} (${r.configs.length})</option>`).join('')}</select><input type="search" id="rq" placeholder="Filter configs (e.g. dflash, IQ4_XS, n=3)…"><span class="count" id="rc"></span></div>
+        <div id="d-runs"></div><div class="foot" id="rsrc"></div></div>
+      ${footer()}</div>`;
+
+    // frontier
+    scatter($('#d-front'), [
+      { name: 'plain', cls: 's1', line: true, pts: gg.filter(r => r.bench_9070xt).map(r => ({ x: r.val.mean_kld, y: r.bench_9070xt.tg128, label: r.variant, tip: tipRows(r.variant + ', plain', [['KLD', r.val.mean_kld.toFixed(4)], ['tok/s', fmt(r.bench_9070xt.tg128, 1)], ['prefill 512', fmtInt(Math.round(r.bench_9070xt.pp512))], ['size', r.bench_9070xt.size_gib + ' GiB'], ['same top token', (r.val.same_top * 100).toFixed(1) + '%']]) })) },
+      { name: 'mtp', cls: 's2', line: true, pts: gg.filter(r => r.mtp_9070xt?.['draft-mtp']).map(r => ({ x: r.val.mean_kld, y: r.mtp_9070xt['draft-mtp'].tg, label: '', tip: tipRows(r.variant + ' + MTP', [['KLD', r.val.mean_kld.toFixed(4)], ['tok/s', fmt(r.mtp_9070xt['draft-mtp'].tg, 1)], ['draft acceptance', Math.round(r.mtp_9070xt['draft-mtp'].accept * 100) + '%']]) })) },
+    ], { xlab: 'mean KLD vs BF16 (log)', ylab: 'decode tok/s', h: 340 });
+
+    // all variants KLD
+    const allk = q.filter(r => r.val && r.variant !== 'BF16').map(r => ({ ...r, k: r.val.mean_kld })).sort((a, b) => a.k - b.k);
+    hbar($('#d-kld'), allk.map(r => ({ label: r.variant, value: r.k, text: r.k.toFixed(4), cls: r.kind === 'torch' ? 'alt' : '', tip: tipRows(r.variant, [['kind', r.kind === 'torch' ? 'PyTorch sparse' : 'llama.cpp GGUF'], ['mean KLD', r.k.toFixed(5)], ['99th pct', r.val.kld_p99?.toFixed(4)], ['same top token', r.val.same_top != null ? (r.val.same_top * 100).toFixed(1) + '%' : null]]) })), { log: true, labW: 150, tickFmt: v => String(v) });
+
+    // oracle sweep
+    const orows = Object.entries(M.oracle?.rows || {}).filter(([k]) => k !== 'dense').map(([k, v]) => ({ k, ...v })).sort((a, b) => a.kl - b.kl);
+    hbar($('#d-oracle'), orows.map(r => ({ label: r.k, value: r.kl, text: r.kl.toFixed(3), cls: r.k.startsWith('static') ? 'alt' : '', tip: tipRows(r.k, [['KL vs dense', r.kl.toFixed(4)], ['top-1 agreement', (r.top1_agree * 100).toFixed(1) + '%'], ['PPL', fmt(r.ppl, 2)]]) })), { log: true, labW: 150, tickFmt: v => String(v) });
+
+    // phase 3
+    const p3 = Object.entries(M.phase3?.rows || {}).filter(([k]) => !k.startsWith('torch dense')).map(([k, v]) => ({ k, ...v })).sort((a, b) => a.mean_kld - b.mean_kld);
+    hbar($('#d-p3'), p3.map(r => ({ label: r.k.replace(/ x_keep=[\d.]+ xB=\d+/, ''), value: r.mean_kld, text: r.mean_kld.toFixed(4), dim: r.mean_kld > (iq4?.val.mean_kld || 1), tip: tipRows(r.k, [['mean KLD', r.mean_kld.toFixed(5)], ['99th pct', r.kld_p99?.toFixed(4)], ['same top token', (r.same_top * 100).toFixed(1) + '%'], ['vs IQ4_XS', iq4 ? fmt(r.mean_kld / iq4.val.mean_kld, 2) + '×' : null]]) })), { log: true, labW: 200, rowH: 21, tickFmt: v => String(v) });
+    $('#d-p3').insertAdjacentHTML('afterend', `<div class="foot">Faded: worse than IQ4_XS (${iq4 ? iq4.val.mean_kld.toFixed(4) : ''}).</div>`);
+
+    // kernels
+    const drawKern = card => {
+      const el = freshChart('#d-kern');
+      const ks = (M.kernel || []).filter(k => k.card === card && k.graph && ffnK(k)).sort((a, b) => a.us - b.us);
+      hbar(el, ks.map(k => ({ label: `${k.path.replace(' [graph]', '')}${k.E > 1 ? ` E=${k.E} k=${k.k}` : ''}`, value: k.us, text: fmtInt(Math.round(k.us)) + ' µs', cls: k.E === 1 ? 'alt' : '', href: '#/files/' + k.src, tip: tipRows(k.path, [['experts', k.E > 1 ? `top-${k.k} of ${k.E}` : 'dense'], ['µs per layer', fmt(k.us, 1)], ['effective bandwidth', k.gbps ? k.gbps + ' GB/s' : null]]) })), { labW: 300, rowH: 20 });
+    };
+    $$('#kc button').forEach(b => b.onclick = () => { $$('#kc button').forEach(x => x.classList.toggle('on', x === b)); drawKern(b.dataset.c); });
+    drawKern('RX 9070 XT');
+
+    // offload
+    const om = [...new Set((M.offload || []).map(o => o.model))];
+    $('#om').innerHTML = om.map(m => `<option>${esc(m)}</option>`).join('');
+    const drawOff = () => {
+      const el = freshChart('#d-off'), m = $('#om').value;
+      const rows = (M.offload || []).filter(o => o.model === m).sort((a, b) => a.budget - b.budget || a.strategy.localeCompare(b.strategy));
+      hbar(el, rows.map(o => ({ label: `${o.budget} GiB · ${o.strategy}`, value: o.tg, cls: o.strategy === 'ffn' ? 'alt' : '', href: '#/files/' + o.src, tip: tipRows(`${m}, ${o.budget} GiB VRAM`, [['strategy', o.strategy], ['decode', fmt(o.tg, 2) + ' tok/s'], ['prefill 512', fmt(o.pp, 0) + ' tok/s'], ['read from RAM / token', o.ram_gib + ' GiB']]) })), { labW: 140 });
+    };
+    $('#om').onchange = drawOff; drawOff();
+
+    // speed runs
+    const drawRuns = () => {
+      const r = runs[+$('#rs').value]; if (!r) return;
+      const qq = $('#rq').value.toLowerCase();
+      const cs = r.configs.filter(c => !qq || c.label.toLowerCase().includes(qq)).sort((a, b) => b.hm - a.hm);
+      $('#rc').textContent = `${cs.length} configs`;
+      $('#rsrc').innerHTML = `Source: <a href="#/files/${esc(r.path)}">${esc(r.path.replace('dense-moe/', ''))}</a>`;
+      const el = freshChart('#d-runs');
+      hbar(el, cs.map(c => ({ label: c.label, value: c.hm, dim: c.spec === 'none', tip: tipRows(c.label, [['harmonic mean', fmt(c.hm, 1) + ' tok/s'], ['generations', c.n], ['draft acceptance', c.accept != null ? c.accept + '%' : null], ...Object.entries(c.prompts).map(([k, v]) => [k, fmt(v, 1) + ' tok/s'])]) })), { labW: Math.min(420, el.clientWidth * 0.55), rowH: 21 });
+    };
+    $('#rs').onchange = drawRuns; $('#rq').oninput = drawRuns; drawRuns();
   }
 
   // ------------------------------------------------------------------ strata

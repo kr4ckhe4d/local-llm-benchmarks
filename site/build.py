@@ -352,6 +352,115 @@ def parse_strata(fileset):
     return out
 
 
+DM_RUNS = [  # (file, title, card) -- speed-run JSONL written by the dense-moe harnesses
+    ("experiments/results/mtp/mtp_tune_gpu1.jsonl", "MTP tuning, Qwen3.5-9B", "R9700"),
+    ("experiments/results/mtp/mtp_tune_gpu0.jsonl", "MTP tuning, Qwen3.5-9B", "RX 9070 XT"),
+    ("experiments/results/mtp/mtp_edit_gpu1.jsonl", "Editing prompts: MTP + n-gram, 9B", "R9700"),
+    ("experiments/results/mtp/mtp_longctx_gpu1.jsonl", "Long context, MTP, 9B", "R9700"),
+    ("experiments/results/mtp/mtp_concurrency_gpu1.jsonl", "Concurrent users, MTP, 9B", "R9700"),
+    ("experiments/results/fast27b/drafters_gpu1.jsonl", "27B drafters: MTP vs DFlash2 (stock llama.cpp)", "R9700"),
+    ("experiments/results/fast27b/drafters_mmvq_gpu1.jsonl", "27B drafters with the RDNA4 MMVQ patch", "R9700"),
+    ("experiments/results/dflash/nine_gpu1.jsonl", "9B: DFlash drafter vs MTP", "R9700"),
+    ("experiments/results/dflash/nine_gpu0.jsonl", "9B: DFlash drafter vs MTP", "RX 9070 XT"),
+    ("experiments/results/dflash/sampling_gpu1.jsonl", "Drafters with sampling (temp 0.7-1.0), 9B and 27B", "R9700"),
+    ("experiments/results/dflash/longctx_gpu1.jsonl", "Drafters at long context, 9B and 27B", "R9700"),
+    ("experiments/results/dflash/concurrency_gpu1.jsonl", "27B drafters, 4 concurrent users", "R9700"),
+    ("experiments/results/dflash/edit_gpu1.jsonl", "27B editing: DFlash + n-gram", "R9700"),
+    ("experiments/results/offload/offload_mtp_gpu0.jsonl", "Partly in RAM: MTP on and off", "RX 9070 XT"),
+    ("experiments/results/offload/offload_dflash_gpu0.jsonl", "Partly in RAM: DFlash vs MTP", "RX 9070 XT"),
+]
+
+
+def _cfg_label(c, temp, bin_tag):
+    parts = [str(c.get("quant", "?")).replace("Qwen3.5-", "").replace("Qwen3.8-", "")]
+    spec = c.get("spec", "none")
+    parts.append("plain" if spec == "none" else spec)
+    if c.get("n_max") is not None:
+        parts.append(f"n={c['n_max']}")
+    for k in ("n_min", "p_min"):
+        if c.get(k):
+            parts.append(f"{k}={c[k]}")
+    for k, lab in (("budget_gib", "GiB"), ("ngl", "ngl"), ("ctx", "ctx"), ("np", "np")):
+        if c.get(k) is not None:
+            v = c[k]
+            parts.append(f"{v // 1024}K ctx" if k == "ctx" else f"{v} {lab}" if k == "budget_gib" else f"{lab} {v}")
+    ex = c.get("extra") or []
+    ex = [Path(x).stem.replace("Qwen3.8-", "").replace("Qwen3.5-", "") if "/" in x else x for x in ex if x not in ("-md",)]
+    if ex:
+        parts.append(" ".join(ex))
+    if temp:
+        parts.append(f"t={temp}")
+    if bin_tag:
+        parts.append(bin_tag)
+    return " · ".join(parts)
+
+
+def parse_densemoe(root):
+    R = root / "experiments/results"
+    out = {}
+    if not R.exists():
+        return out
+    rd = lambda f: json.loads((R / f).read_text())
+    src = lambda f: "dense-moe/experiments/results/" + f
+    try:
+        out["quants"] = {"path": src("gguf/summary.json"), "rows": rd("gguf/summary.json")}
+    except Exception as e:  # noqa: BLE001 -- one missing file shouldn't sink the build
+        print("dense-moe quants:", e, file=sys.stderr)
+    for key, f in (("oracle", "oracle_e2e.json"), ("phase3", "phase3/e2e_kld_val.json"),
+                   ("sparse", "gguf/sparse_kld_val.json")):
+        if (R / f).exists():
+            out[key] = {"path": src(f), "rows": rd(f)["results"]}
+    kern = []
+    for f, card in (("kernel_latency_9070xt.json", "RX 9070 XT"), ("kernel_latency_r9700.json", "R9700")):
+        if (R / f).exists():
+            for r in rd(f)["decode"]:
+                kern.append({"card": card, "path": r["path"], "E": r["E"], "k": r["k"], "graph": r["graph"],
+                             "us": round(r["us_per_layer_median"], 1), "gbps": round(r.get("effective_GBps") or 0, 1),
+                             "src": src(f)})
+    out["kernel"] = kern
+    off = []
+    for f in ("offload/offload_9b_gpu0.jsonl", "offload/offload_27b_gpu0.jsonl"):
+        if (R / f).exists():
+            for line in (R / f).read_text().splitlines():
+                r = json.loads(line)
+                if r.get("tg128") is not None:
+                    off.append({"model": r["model"], "strategy": r["strategy"], "budget": r["budget_gib"],
+                                "tg": round(r["tg128"], 2), "pp": round(r.get("pp512") or 0, 1),
+                                "ram_gib": round((r.get("cpu_read_bytes") or 0) / 2**30, 2), "src": src(f)})
+    out["offload"] = off
+    runs = []
+    for f, title, card in DM_RUNS:
+        fp = root / f
+        if not fp.exists():
+            continue
+        recs = [json.loads(l) for l in fp.read_text().splitlines() if l.strip()]
+        bins = {r["config"].get("bin") for r in recs}
+        groups = {}
+        for r in recs:
+            c = {k: v for k, v in r["config"].items() if k not in ("model_path", "bin")}
+            btag = Path(r["config"]["bin"]).parts[-2:] if len(bins) > 1 and r["config"].get("bin") else None
+            btag = ("MMVQ patch" if "mmvq" in "/".join(btag) and "v6" in "/".join(btag) else "/".join(btag)) if btag else None
+            key = json.dumps([c, r.get("temperature"), btag], sort_keys=True)
+            g = groups.setdefault(key, {"label": _cfg_label(c, r.get("temperature"), btag), "tg": [], "prompts": {},
+                                        "dn": 0, "da": 0, "spec": c.get("spec", "none")})
+            if r.get("tg"):
+                g["tg"].append(r["tg"])
+                g["prompts"].setdefault(r.get("prompt", "?"), []).append(r["tg"])
+            g["dn"] += r.get("draft_n") or 0
+            g["da"] += r.get("draft_accepted") or 0
+        cfgs = []
+        for g in groups.values():
+            if not g["tg"]:
+                continue
+            cfgs.append({"label": g["label"], "spec": g["spec"], "n": len(g["tg"]),
+                         "hm": round(len(g["tg"]) / sum(1 / x for x in g["tg"]), 2),
+                         "accept": round(100 * g["da"] / g["dn"], 1) if g["dn"] else None,
+                         "prompts": {k: round(len(v) / sum(1 / x for x in v), 1) for k, v in g["prompts"].items()}})
+        runs.append({"title": title, "card": card, "path": "dense-moe/" + f, "configs": cfgs})
+    out["runs"] = runs
+    return out
+
+
 # ---------------------------------------------------------------- main
 def main():
     # site path -> (project, repo-relative path); other projects live under their prefix
@@ -468,6 +577,8 @@ def main():
             "draft": None, "vram": None,
             "probe": "Strata sweep: 6 prompts (3 code, 3 prose), 1,000 tokens, temp 0; prefill on a cold 29K prompt"})
     measurements["strata"] = strata
+    dm = next((p for p in PROJECTS if p["id"] == "densemoe"), None)
+    measurements["densemoe"] = parse_densemoe(dm["root"]) if dm and dm["id"] in tracked_by else {}
 
     projects = []
     for proj in PROJECTS:
