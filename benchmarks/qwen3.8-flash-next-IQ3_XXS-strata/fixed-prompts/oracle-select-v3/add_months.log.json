@@ -1,0 +1,61 @@
+[
+ {
+  "turn": "difftest0",
+  "body": "```python\nimport calendar\nimport random\nimport sys\n\ndef add_months(y, m, d, n):\n    \"\"\"\n    Return a (year, month, day) tuple n calendar months after the given date.\n    If the day does not exist in the target month, clamp to the last day of that month.\n    n may be negative.\n    \"\"\"\n    # Calculate new year and month\n    total_months = (y * 12 + (m - 1)) + n\n    new_y = total_months // 12\n    new_m = total_months % 12 + 1\n    \n    # Clamp day to the last day of the new month\n    last_day = calendar.monthrange(new_y, new_m)[1]\n    new_d = min(d, last_day)\n    \n    return (new_y, new_m, new_d)\n\n\ndef reference_add_months(y, m, d, n):\n    \"\"\"\n    Reference implementation using dateutil-free approach, but we'll use\n    a standard-library-like approach. Since Python's standard library doesn't\n    have a direct add_months, we implement a reference that mirrors typical\n    behavior. We'll use a careful implementation that handles edge cases.\n    \"\"\"\n    import calendar\n    \n    total_months = (y * 12 + (m - 1)) + n\n    new_y = total_months // 12\n    new_m = total_months % 12 + 1\n    \n    last_day = calendar.monthrange(new_y, new_m)[1]\n    new_d = min(d, last_day)\n    \n    return (new_y, new_m, new_d)\n\n\ndef safe_call(func, *args):\n    \"\"\"Call func with args, returning (result, exception_type) or (None, exception_type) on error.\"\"\"\n    try:\n        result = func(*args)\n        return (result, None)\n    except Exception as e:\n        return (None, type(e))\n\n\ndef main():\n    # Edge cases: at least 15, each covering different behaviors\n    edge_cases = [\n        # 1. Jan 31 + 1 month -> Feb 28 (non-leap year)\n        (2023, 1, 31, 1),\n        # 2. Jan 31 + 1 month -> Feb 29 (leap year)\n        (2024, 1, 31, 1),\n        # 3. Jan 31 - 1 month -> Dec 31 (year rollover backward)\n        (2023, 1, 31, -1),\n        # 4. Dec 31 + 1 month -> Jan 31 (year rollover forward)\n        (2023, 12, 31, 1),\n        # 5. Feb 29 + 1 month -> Mar 29 (leap year)\n        (2024, 2, 29, 1),\n        # 6. Feb 29 - 1 month -> Jan 29 (leap year)\n        (2024, 2, 29, -1),\n        # 7. Mar 31 - 1 month -> Feb 28 (non-leap year)\n        (2023, 3, 31, -1),\n        # 8. Mar 31 - 1 month -> Feb 29 (leap year)\n        (2024, 3, 31, -1),\n        # 9. Jan 31 + 2 months -> Mar 31\n        (2023, 1, 31, 2),\n        # 10. Jan 31 - 2 months -> Nov 30 (previous year)\n        (2023, 1, 31, -2),\n        # 11. Day 30 in April + 1 month -> May 30\n        (2023, 4, 30, 1),\n        # 12. Day 31 in May + 1 month -> Jun 30 (clamped)\n        (2023, 5, 31, 1),\n        # 13. Day 31 in May - 1 month -> Apr 30 (clamped)\n        (2023, 5, 31, -1),\n        # 14. n = 0, no change\n        (2023, 6, 15, 0),\n        # 15. Large positive n crossing multiple years\n        (2023, 1, 31, 25),\n        # 16. Large negative n crossing multiple years\n        (2023, 1, 31, -25),\n        # 17. Feb 28 + 1 month in leap year -> Mar 28\n        (2024, 2, 28, 1),\n        # 18. Feb 28 - 1 month -> Jan 28\n        (2024, 2, 28, -1),\n        # 19. Dec 31 + 12 months -> Dec 31 next year\n        (2023, 12, 31, 12),\n        # 20. Jan 1 - 1 month -> Dec 1 previous year\n        (2023, 1, 1, -1),\n    ]\n\n    # Generate random cases\n    rng = random.Random(0)\n    random_cases = []\n    for _ in range(300):\n        y = rng.randint(1, 2100)\n        m = rng.randint(1, 12)\n        d = rng.randint(1, 31)\n        n = rng.randint(-1000, 1000)\n        random_cases.append((y, m, d, n))\n\n    all_cases = edge_cases + random_cases\n    total = len(all_cases)\n    edges = len(edge_cases)\n\n    mismatches = 0\n    edge_mismatches = 0\n    random_mismatches = 0\n    random_mismatch_examples = []\n\n    for idx, (y, m, d, n) in enumerate(all_cases):\n        is_edge = idx < edges\n\n        my_result, my_exc = safe_call(add_months, y, m, d, n)\n        ref_result, ref_exc = safe_call(reference_add_months, y, m, d, n)\n\n        # Treat two exceptions of the same type as a match\n        if my_exc is not None and ref_exc is not None:\n            if my_exc == ref_exc:\n                continue\n            else:\n                mismatches += 1\n                if is_edge:\n                    edge_mismatches += 1\n                    print(f\"EDGE MISMATCH: input=({y}, {m}, {d}, {n}), my_exc={my_exc}, ref_exc={ref_exc}\")\n                else:\n                    random_mismatches += 1\n                    if len(random_mismatch_examples) < 5:\n                        random_mismatch_examples.append((y, m, d, n, f\"exc:{my_exc}\", f\"exc:{ref_exc}\"))\n                continue\n\n        # One raised, other didn't\n        if my_exc is not None or ref_exc is not None:\n            mismatches += 1\n            if is_edge:\n                edge_mismatches += 1\n                print(f\"EDGE MISMATCH: input=({y}, {m}, {d}, {n}), my_exc={my_exc}, ref_exc={ref_exc}\")\n            else:\n                random_mismatches += 1\n                if len(random_mismatch_examples) < 5:\n                    random_mismatch_examples.append((y, m, d, n, f\"exc:{my_exc}\", f\"exc:{ref_exc}\"))\n            continue\n\n        # Both returned results\n        if my_result != ref_result:\n            mismatches += 1\n            if is_edge:\n                edge_mismatches += 1\n                print(f\"EDGE MISMATCH: input=({y}, {m}, {d}, {n}), my_output={my_result}, ref_output={ref_result}\")\n            else:\n                random_mismatches += 1\n                if len(random_mismatch_examples) < 5:\n                    random_mismatch_examples.append((y, m, d, n, my_result, ref_result))\n\n    # Print first 5 random mismatches\n    for y, m, d, n, my_out, ref_out in random_mismatch_examples:\n        print(f\"RANDOM MISMATCH: input=({y}, {m}, {d}, {n}), my_output={my_out}, ref_output={ref_out}\")\n\n    print(f\"MISMATCHES {mismatches} OF {total} EDGE {edge_mismatches} OF {edges}\")\n\n    if mismatches > 0:\n        sys.exit(1)\n\n\nif __name__ == \"__main__\":\n    main()\n```"
+ },
+ {
+  "turn": "refcheck0.0",
+  "problem": null,
+  "total": null
+ },
+ {
+  "turn": "cand1",
+  "body": "```python\ndef add_months(y, m, d, n):\n    \"\"\"\n    Return a (year, month, day) tuple n calendar months after the given date.\n    n may be negative. If the day does not exist in the target month, it is\n    clamped to the last day of that month.\n    \"\"\"\n    import calendar\n\n    # Add n months to the month count\n    total_months = (m - 1) + n\n    new_year = y + total_months // 12\n    new_month = total_months % 12 + 1\n\n    # Clamp day to the last day of the new month\n    last_day = calendar.monthrange(new_year, new_month)[1]\n    new_day = min(d, last_day)\n\n    return (new_year, new_month, new_day)\n```",
+  "score": [
+   0,
+   0
+  ]
+ },
+ {
+  "turn": "cand2",
+  "body": "```python\ndef add_months(y, m, d, n):\n    \"\"\"\n    Add n calendar months to the date (y, m, d).\n    n can be negative.\n    If the resulting day exceeds the last day of the target month, clamp to the last day.\n    Returns a (year, month, day) tuple.\n    \"\"\"\n    import calendar\n\n    # Total months offset\n    total_months = (y * 12 + (m - 1)) + n\n\n    # New year and month\n    new_y = total_months // 12\n    new_m = total_months % 12 + 1\n\n    # Clamp day to the last day of the new month\n    last_day = calendar.monthrange(new_y, new_m)[1]\n    new_d = min(d, last_day)\n\n    return (new_y, new_m, new_d)\n```",
+  "score": [
+   0,
+   0
+  ]
+ },
+ {
+  "turn": "cand3",
+  "body": "```python\nimport calendar\n\ndef add_months(y, m, d, n):\n    \"\"\"\n    Return a (year, month, day) tuple n calendar months after the given date.\n    If the day does not exist in the target month, clamp to the last day of that month.\n    n may be negative. Handles year rollover in both directions.\n    \"\"\"\n    total_months = (y * 12 + (m - 1)) + n\n    new_year = total_months // 12\n    new_month = total_months % 12 + 1\n    \n    # Clamp day to the last day of the new month\n    last_day = calendar.monthrange(new_year, new_month)[1]\n    new_day = min(d, last_day)\n    \n    return (new_year, new_month, new_day)\n```",
+  "score": [
+   0,
+   0
+  ]
+ },
+ {
+  "turn": "cand4",
+  "body": "```python\nimport calendar\n\n\ndef add_months(y, m, d, n):\n    \"\"\"\n    Return a (year, month, day) tuple n calendar months after (y, m, d).\n    n may be negative. If the day doesn't exist in the target month,\n    clamp to the last day of that month.\n    \"\"\"\n    total_months = (y * 12 + (m - 1)) + n\n    new_y = total_months // 12\n    new_m = total_months % 12 + 1\n    # Handle negative total_months correctly\n    if new_m <= 0:\n        new_m += 12\n        new_y -= 1\n    \n    last_day = calendar.monthrange(new_y, new_m)[1]\n    new_d = min(d, last_day)\n    \n    return (new_y, new_m, new_d)\n```",
+  "score": [
+   0,
+   0
+  ]
+ },
+ {
+  "turn": "cand5",
+  "body": "```python\ndef add_months(y, m, d, n):\n    \"\"\"\n    Return a (year, month, day) tuple n calendar months after the given date.\n    n may be negative. If the day does not exist in the target month, clamp to\n    the last day of that month.\n    \"\"\"\n    import calendar\n\n    # Compute total months offset\n    total_months = (y * 12 + (m - 1)) + n\n    new_y = total_months // 12\n    new_m = total_months % 12 + 1\n\n    # Clamp day to the last day of the new month\n    last_day = calendar.monthrange(new_y, new_m)[1]\n    new_d = min(d, last_day)\n\n    return (new_y, new_m, new_d)\n```",
+  "score": [
+   0,
+   0
+  ]
+ },
+ {
+  "turn": "run0",
+  "ok": true,
+  "score": [
+   0,
+   0
+  ],
+  "out": "MISMATCHES 0 OF 320 EDGE 0 OF 20\n",
+  "err": ""
+ }
+]

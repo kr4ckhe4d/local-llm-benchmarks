@@ -52,19 +52,41 @@ REF_IMPL = {
 MIN_CASES = 300
 
 
+MIN_EDGE = 10
+SUMMARY_RE = r"MISMATCHES\s+(\d+)\s+OF\s+(\d+)\s+EDGE\s+(\d+)\s+OF\s+(\d+)"
+WORST = (10**9, 10**9)
+
+
+def score(out, passed):
+    """(failing edge cases, total mismatches): edge cases first. QFN urljoin:
+    ranking by total alone picked an answer that fixed one bug the random
+    inputs hit ~70 times (empty url keeps the base fragment) and broke
+    abs_path, rel_path and dotdot, each hit by a handful."""
+    if passed:
+        return (0, 0)
+    m = re.findall(SUMMARY_RE, out)
+    return (int(m[-1][2]), int(m[-1][0])) if m else WORST
+
+
+def fmt(sc):
+    return "crash" if sc == WORST else f"{sc[0]}e/{sc[1]}"
+
+
 def ref_check(fn, test):
     """(problem or None, total cases) for the test run against the real stdlib."""
     src = REF_IMPL.get(fn)
     if not src:
         return None, None
     ok, err, out = run_py(src + "\n\n" + test)
-    m = re.findall(r"MISMATCHES\s+(\d+)\s+OF\s+(\d+)", out)
+    m = re.findall(SUMMARY_RE, out)
     total = int(m[-1][1]) if m else None
-    if ok and m and int(m[-1][0]) == 0 and total >= MIN_CASES:
+    edges = int(m[-1][3]) if m else None
+    if ok and m and int(m[-1][0]) == 0 and total >= MIN_CASES and edges >= MIN_EDGE:
         return None, total
     why = ("it reports mismatches" if m and int(m[-1][0]) else
            f"it checks only {total} cases (need {MIN_CASES}+)" if m and total < MIN_CASES else
-           "it crashes or prints no MISMATCHES line")
+           f"it lists only {edges} edge cases (need {MIN_EDGE}+)" if m and edges < MIN_EDGE else
+           "it crashes or does not print the MISMATCHES ... EDGE ... line")
     return (why + ":\n" + (out.strip() + "\n" + err.strip()).strip()[-1500:]), total
 
 
@@ -227,13 +249,16 @@ def strat_repair(a, name, prompt, log):
 ORACLE_TEST_REQ = (
     "Now write a differential test script for your function. It may import "
     "the standard-library function you are reproducing and must compare your "
-    "function against it on every edge case the task lists plus at least 300 "
-    "seeded random inputs you generate (random.Random(0)). Treat two "
-    "exceptions of the same type as a match, and guard every call so one "
-    "exception never stops the run. Check every case, print the first 5 "
-    "mismatches (input, your output, reference output), then print exactly "
-    "`MISMATCHES <n> OF <total>` on the last line and exit with status 1 if "
-    "n > 0. Do not redefine the function. One code block.")
+    "function against it on a hand-written list of edge cases -- at least "
+    "15, each a DIFFERENT behaviour, covering every case the task lists -- "
+    "plus at least 300 seeded random inputs you generate (random.Random(0)). "
+    "Keep the two groups separate. Treat two exceptions of the same type as "
+    "a match, and guard every call so one exception never stops the run. "
+    "Check every case, print every mismatching EDGE case and then the first "
+    "5 random mismatches (input, your output, reference output), then print "
+    "exactly `MISMATCHES <n> OF <total> EDGE <e> OF <edges>` on the last line "
+    "(n and total over all cases, e and edges over the edge cases only) and "
+    "exit with status 1 if n > 0. Do not redefine the function. One code block.")
 ORACLE_FIX_REQ = (
     "The differential test found a mismatch:\n```\n{err}\n```\n"
     "If the function is wrong, output the complete corrected function, and "
@@ -342,38 +367,31 @@ def strat_oracle(a, name, prompt, log):
         mod = REF_MODULES.get(fn)
         def counted(c):
             if mod and re.search(rf"^\s*(import|from)\s+{mod}\b", c, re.M):
-                return 10**9   # an answer that wraps the reference scores 0; void it
+                return WORST   # an answer that wraps the reference scores 0; void it
             ok_, e_, o_ = run_py(c + "\n\n" + test)
-            if ok_:
-                return 0
-            m_ = re.findall(r"MISMATCHES\s+(\d+)\s+OF\s+(\d+)", o_)
-            return int(m_[-1][0]) if m_ else 10**9
+            return score(o_, ok_)
         pool = [(counted(code), 0, code)]
         for i in range(1, a.k + 1):
             cb = chat(a, [{"role": "user", "content": prompt}], temperature=a.temperature,
                       top_p=a.top_p, extra={"top_k": 20, "min_p": 0.0})
             cc = cq.extract_code(cb)
             pool.append((counted(cc), i, cc))
-            log.append({"turn": f"cand{i}", "body": cb, "mismatches": pool[-1][0]})
+            log.append({"turn": f"cand{i}", "body": cb, "score": pool[-1][0]})
         n0, pick, code = min(pool, key=lambda t: (t[0], t[1]))
-        sel_note = (f"candidates mismatches {['x' if t[0] == 10**9 else t[0] for t in pool]}, "
+        sel_note = (f"candidates {[fmt(t[0]) for t in pool]}, "
                     f"picked cand{pick}; ")
         msgs[1] = {"role": "assistant", "content": "```python\n" + code + "\n```"}
     # Hill-climb on the model's own mismatch count: urljoin oscillated
     # between two fixes for eight rounds, and textwrap's best version (5/6)
     # was overwritten by worse ones. Keep the best; it decides nothing from
     # the hidden checks.
-    def mismatches(o, e, passed):
-        if passed:
-            return 0
-        m = re.findall(r"MISMATCHES\s+(\d+)\s+OF\s+(\d+)", o)
-        return int(m[-1][0]) if m else 10**9   # crash or no count: worst
+    # Ranked as (failing edge cases, total mismatches), see score().
     rnd, ok, last_report = 0, False, None
     best_code, best_n, pending = code, None, ""
     for rnd in range(a.rounds + 1):
         ok, err, out = run_py(code + "\n\n" + test)
-        n = mismatches(out, err, ok)
-        log.append({"turn": f"run{rnd}", "ok": ok, "mismatches": n,
+        n = score(out, ok)
+        log.append({"turn": f"run{rnd}", "ok": ok, "score": n,
                     "out": out[-1500:], "err": err[-1500:]})
         if best_n is None or n < best_n:
             best_code, best_n = code, n
@@ -422,8 +440,7 @@ def strat_oracle(a, name, prompt, log):
     mod = REF_MODULES.get(fn)
     if mod and re.search(rf"^\s*(import|from)\s+{mod}\b", code, re.M):
         return "", "solution imported the reference module: voided"
-    nn = "crash" if best_n == 10**9 else best_n
-    return code, tnote + "; " + sel_note + f"difftest {'pass' if ok else 'FAIL'} after {rnd} fix(es), kept best: {nn} mismatches"
+    return code, tnote + "; " + sel_note + f"difftest {'pass' if ok else 'FAIL'} after {rnd} fix(es), kept best: {fmt(best_n)} (edge fails/total mismatches)"
 
 
 # ---------------------------------------------------------------- vote

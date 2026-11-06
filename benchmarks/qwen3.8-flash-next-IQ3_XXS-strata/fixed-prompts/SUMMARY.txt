@@ -3,6 +3,7 @@
 # see benchmarks/README.md). Same 7 tasks / 50 hidden checks.
 
 | run                                        | score | clean | old prompts | misses |
+| oracle-select v3 (edge cases ranked first) | 49/50 | 6/7   | --          | textwrap random60 |
 | baseline: thinking off, temp 0             | 48/50 | 5/7   | 43/50       | urljoin dot_only, textwrap random60 |
 | thinking medium, temp 0.6 (one sample)     | 44/50 | 4/7   | 47/50       | glob rbracket, shlex 3/7, textwrap random60 |
 | oracle-select v2, thinking off             | 44/50 | 5/7   | --          | urljoin 4/9, textwrap random60 |
@@ -24,6 +25,15 @@ distribution, not how many distinct behaviours are wrong.
 glob_match, shlex_split, csv_rows, parse_qsl clean under oracle-select; glob needed two
 fresh test drafts before one passed against fnmatch.
 
-Fix if pursued: rank by the number of distinct failing case CLASSES (or the edge-case
-list, weighted above random inputs) rather than total mismatches, and never accept a
-candidate that fails an edge case the greedy answer passed.
+oracle-select v3 (2026-11-06): the test now lists 15+ hand-written edge cases, each a
+different behaviour, separately from the random inputs, and reports
+`MISMATCHES n OF total EDGE e OF edges`. Candidates and fixes rank by (e, n).
+urljoin: candidates [1e/211, 9e/214, 26e/161, crash, 4e/192, 2e/212]. v2's rule would
+have taken 26e/161, the same trap as above; v3 took the greedy 1e/211 and scored 9/9.
+No fix improved on it, so the 9/9 is the greedy answer itself -- and the baseline's
+greedy urljoin was 8/9, so QFN's temp-0 output on Strata is not fully deterministic.
+Read 49 vs 48 as "the ranking stopped losing checks", not as a 1-check gain.
+textwrap: picked 0e/94; the 94 random mismatches survived 8 fixes (random60 missed).
+
+v3 implements the edge-case weighting only. Not done: grouping random mismatches into
+classes, and refusing any candidate that fails an edge case the greedy answer passed.
