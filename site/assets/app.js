@@ -410,11 +410,12 @@
     const docs = D.docs.filter(d => d.links.includes(name));
     const t = m.tput, k = m.kldv, b = m.base;
     const runs = [...m.code].sort((a, b) => b.pass - a.pass);
+    const spec = (D.m.spec || []).find(x => x.model === name);
     app.innerHTML = `<div class="wrap">
       <div class="page-h"><div class="eyebrow"><a href="#/models">Models</a> / ${esc(m.family)}</div><h1 style="word-break:break-word">${esc(name)}</h1>
       <p>${t?.gguf || b?.gguf ? `<span class="mono">${esc(t?.gguf || b?.gguf)}</span>` : ''}${t?.flags ? ` · flags <code>${esc(t.flags)}</code>` : ''}${t?.ctx ? ` · ctx ${esc(t.ctx)}` : ''}</p></div>
       <div class="tiles">
-        <div class="tile"><div class="v">${t ? fmt(t.tg, 1) : '—'}<small>tok/s</small></div><div class="k">Generation</div><div class="s">${t?.engine ? 'Strata, production config' : t?.draft ? `MTP accept ${t.draft}%` : t ? 'mean of ' + t.tg_runs.length + ' runs' : 'not probed'}</div></div>
+        <div class="tile"><div class="v">${t ? fmt(t.tg, 1) : '—'}<small>tok/s</small></div><div class="k">Generation</div><div class="s">${t?.engine ? 'Strata, production config' : t?.draft ? `${/dflash|dspine/i.test(t.gguf || "") ? "draft" : "MTP"} accept ${t.draft}%` : t ? 'mean of ' + t.tg_runs.length + ' runs' : 'not probed'}</div></div>
         <div class="tile"><div class="v">${t?.pp ? fmt(t.pp, 0) : '—'}<small>tok/s</small></div><div class="k">Prefill</div><div class="s">${t?.vram ? fmtInt(t.vram) + ' MiB VRAM' : ''}</div></div>
         <div class="tile"><div class="v">${k ? k.kld.toFixed(4) : '—'}</div><div class="k">Mean KLD</div><div class="s">${k ? `vs ${k.ref.toUpperCase()} · top-1 same ${k.same_top}%` : 'not measured'}</div></div>
         <div class="tile"><div class="v">${b ? b.pass : '—'}<small>/ 50</small></div><div class="k">Code quality (baseline)</div><div class="s">${b ? (cqCorrected(b) ? 'corrected prompts' : 'old prompts') : ''}${m.best && m.best !== b ? ` · best ${m.best.pass}` : ''}</div></div>
@@ -422,12 +423,22 @@
         <div class="tile"><div class="v">${m.fit ? ctxK(m.fit.max_ctx) : '—'}</div><div class="k">Largest context that fit</div><div class="s">${m.fit ? 'from fit.txt' : ''}</div></div>
       </div>
       ${name.endsWith('-strata') ? `<div class="note">Runs on the Strata engine, not llama.cpp. ${t?.probe ? esc(t.probe) + '. ' : ''}<a href="#/strata">Strata tuning, card split and expert-mode results →</a></div>` : ''}
+      ${spec ? `<div class="card"><h3>Speculative decoding: drafter comparison</h3><p class="sub">Generation tok/s on the same target, 700 tokens, temp 0, thinking off; hover for draft acceptance and tokens per step. <a href="${fileHref(spec.path)}">${esc(spec.path)}</a></p><div class="legend">${SPEC_TASKS.map((k, i) => `<span><i style="background:var(--s${i + 1})"></i>${k}</span>`).join('')}</div><div id="c-spec"></div></div>` : ''}
       ${b ? `<div class="card"><h3>Code quality by task (baseline)</h3><p class="sub"><a href="${fileHref(b.path)}">${esc(b.path)}</a></p><div id="c-task"></div></div>` : ''}
       ${runs.length > 1 ? `<div class="section-h"><h2>All ${runs.length} code-quality runs</h2><a href="#/code/${esc(name)}">Task matrix →</a></div><div id="c-runs" class="card"></div>` : ''}
       ${docs.length ? `<div class="section-h"><h2>Discussed in</h2></div><div class="doccards">${docs.map(d => `<a class="doccard" href="#/doc/${d.slug}"><b>${esc(d.title)}</b><span>${esc(d.path)}</span></a>`).join('')}</div>` : ''}
       <div class="section-h"><h2>Files (${files.length})</h2><a href="#/files/benchmarks/${esc(name)}/">Browse folder →</a></div>
       ${fileTable(files.slice(0, 200))}
       ${footer()}</div>`;
+    if (spec) {
+      const labels = [...new Set(spec.rows.map(r => r.label))], out = [];
+      for (const l of labels) SPEC_TASKS.forEach((t, i) => {
+        const r = spec.rows.find(x => x.label === l && x.task === t);
+        out.push({ label: i === 0 ? l : '', value: r?.tg ?? null, cls: COLCLS[i], href: fileHref(spec.path),
+          tip: tipRows(`${l} · ${t}`, [['generation', r ? fmt(r.tg, 1) + ' tok/s' : '—'], ['draft accepted', r?.acc != null ? r.acc + '%' : null], ['tokens per step (est.)', r?.tau], ['runs', r?.runs]]) });
+      });
+      hbar($('#c-spec'), out, { title: 'generation tok/s', dec: 1, rowH: 18, labW: 220 });
+    }
     if (b) hbar($('#c-task'), b.tasks.map(x => ({ label: x.task, value: x.pass / x.total * 100, text: `${x.pass}/${x.total}`, tip: tipRows(x.task, [['passed', `${x.pass}/${x.total}`], ['missed', x.missed.join(', ') || 'none']]) })), { max: 100, step: 25, tickFmt: v => v + '%' });
     if (runs.length > 1) hbar($('#c-runs'), runs.map(r => ({ label: r.label + (r.total !== 50 ? ` (${r.total})` : ''), value: r.pass / r.total * 50, text: `${r.pass}/${r.total}`, href: fileHref(r.path), dim: !cqCorrected(r), tip: tipRows(r.label, [['group', cqGroup(r)], ['score', `${r.pass}/${r.total}`], ['clean tasks', `${r.clean}/${r.ntasks}`], ['prompts', cqCorrected(r) ? 'corrected' : 'old'], ['file', r.path.split('/').slice(2).join('/')]]) })), { max: 50, step: 10, labW: 240 });
   }
@@ -667,6 +678,7 @@
   }
   const fmtNum = v => Math.abs(v) >= 100 ? fmtInt(Math.round(v)) : Math.abs(v) >= 10 ? fmt(v, 1) : fmt(v, 2);
   const COLCLS = ['', 'alt', 'c3', 'c4'];
+  const SPEC_TASKS = ['code', 'math', 'chat'];
   // columns that can share one axis: same unit, medians within 4x; null when fewer than two qualify
   function comparableCols(t) {
     const unit = k => {

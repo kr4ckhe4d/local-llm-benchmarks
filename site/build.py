@@ -669,6 +669,27 @@ def main():
             if r["max_ctx"]:
                 measurements["fit"].append({**common, **r})
 
+    # speculative-decoding drafter sweeps: one JSON line per (config, task, run)
+    measurements["spec"] = []
+    for e in tree:
+        f = e["p"]
+        if not (f.startswith("benchmarks/") and f.endswith("/spec-sweep.jsonl")):
+            continue
+        agg = {}
+        for line in (ROOT / f).read_text(errors="replace").splitlines():
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            a = agg.setdefault((r["label"], r["task"]), {"label": r["label"], "task": r["task"], "tg": [],
+                                                          "draft_n": 0, "draft_acc": 0, "tau": r.get("tau_est")})
+            a["tg"].append(r["tg"])
+            a["draft_n"] += r.get("draft_n") or 0
+            a["draft_acc"] += r.get("draft_acc") or 0
+        rows = [{"label": a["label"], "task": a["task"], "tg": round(mean(a["tg"]), 2), "runs": len(a["tg"]),
+                 "acc": round(100 * a["draft_acc"] / a["draft_n"], 1) if a["draft_n"] else None,
+                 "tau": round(a["tau"], 2) if a["tau"] else None} for a in agg.values()]
+        measurements["spec"].append({"path": f, "model": f.split("/")[1], "rows": rows})
+
     strata = parse_strata(fileset)  # bench paths are unprefixed
     prod = next((a for a in strata["tuning"] if a["arm"] == "pw2+trim"), None)
     if prod:
@@ -725,6 +746,7 @@ def main():
     print(f"docs={len(docs)} files={len(tree)} code={len(measurements['code'])} "
           f"tput={len(measurements['throughput'])} kld={len(measurements['kld'])} "
           f"cdn={len(measurements['cdn'])} tools={len(measurements['tools'])} fit={len(measurements['fit'])} "
+          f"spec={sum(len(x['rows']) for x in measurements['spec'])} "
           f"size={total/1e6:.1f}MB", file=sys.stderr)
 
 
