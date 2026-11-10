@@ -284,6 +284,15 @@ list_combos() {
   done
   echo
   echo "  rocm = build/  (single backend — Vulkan retired)"
+  echo
+  # Router presets are a separate set: whatever models-preset.ini defines, which
+  # includes models with no pinned config above (and the -nothink variants).
+  echo "Router presets ($(basename "$0") router; pick in the client by name):"
+  if [[ -r "$PRESET" ]]; then
+    grep -oE '^\[[^]*][^]]*\]' "$PRESET" | tr -d '[]' | sed 's/^/  /'
+  else
+    echo "  ($PRESET not found)"
+  fi
 }
 
 # SIGTERM first — llama-server shuts down cleanly on it. In router mode
