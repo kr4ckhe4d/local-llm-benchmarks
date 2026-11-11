@@ -328,6 +328,25 @@
     </div>`;
     const prose = $('#prose');
     $$('h2[id],h3[id],h4[id]', prose).forEach(h => h.insertAdjacentHTML('afterbegin', `<a class="anchor" href="#/doc/${slug}/${esc(h.id)}" aria-hidden="true">#</a>`));
+    // ```mermaid blocks become diagrams; the library is fetched only on pages that have one.
+    const mm = $$('pre code.language-mermaid', prose);
+    mm.forEach(c => { const div = document.createElement('div'); div.className = 'mermaid'; div.textContent = c.textContent; c.parentElement.replaceWith(div); });
+    if (mm.length) {
+      const run = () => {
+        const dark = (document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
+        mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict' });
+        // one at a time with explicit ids: mermaid.run() derives ids from the clock and two
+        // diagrams started in the same millisecond share an id and draw over each other
+        (async () => {
+          let i = 0;
+          for (const el of $$('.mermaid', prose)) {
+            try { el.innerHTML = (await mermaid.render(`mmd-${slug}-${i++}`.replace(/[^\w-]/g, '_'), el.textContent)).svg; } catch (e) { /* leave the source text */ }
+          }
+        })();
+      };
+      if (window.mermaid) run();
+      else { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js'; s.onload = run; document.head.appendChild(s); }
+    }
     if (window.hljs) $$('pre code', prose).forEach(c => { try { hljs.highlightElement(c); } catch (e) { /* unknown lang */ } });
     // scrollspy
     if (spy) spy.disconnect();
