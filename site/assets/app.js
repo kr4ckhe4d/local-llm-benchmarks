@@ -569,10 +569,12 @@
       const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
       const lx0 = Math.floor(Math.log10(Math.min(...xs))), lx1 = Math.ceil(Math.log10(Math.max(...xs)));
       const y1 = (o.ymax ?? Math.max(...ys) * 1.12), y0 = 0;
-      const sx = v => L + (Math.log10(v) - lx0) / (lx1 - lx0) * (W - L - R);
+      const xmax = o.xlin ? Math.max(...xs) * 1.04 : 0;
+      const sx = v => o.xlin ? L + v / xmax * (W - L - R) : L + (Math.log10(v) - lx0) / (lx1 - lx0) * (W - L - R);
       const sy = v => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
       let s = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(o.title || 'scatter')}">`;
-      for (let e = lx0; e <= lx1; e++) { const x = sx(10 ** e); s += `<line class="gl" x1="${x}" x2="${x}" y1="${T}" y2="${H - B}"/><text class="tick" x="${x}" y="${H - B + 16}" text-anchor="middle">${10 ** e >= 1 ? 10 ** e : (10 ** e).toFixed(-e)}</text>`; }
+      if (o.xlin) { const xst = niceStep(xmax); for (let v = 0; v <= xmax; v += xst) { const x = sx(v); s += `<line class="gl" x1="${x}" x2="${x}" y1="${T}" y2="${H - B}"/><text class="tick" x="${x}" y="${H - B + 16}" text-anchor="middle">${o.xfmt ? o.xfmt(v) : fmtInt(v)}</text>`; } }
+      else for (let e = lx0; e <= lx1; e++) { const x = sx(10 ** e); s += `<line class="gl" x1="${x}" x2="${x}" y1="${T}" y2="${H - B}"/><text class="tick" x="${x}" y="${H - B + 16}" text-anchor="middle">${10 ** e >= 1 ? 10 ** e : (10 ** e).toFixed(-e)}</text>`; }
       const st = niceStep(y1);
       for (let v = 0; v <= y1; v += st) { const y = sy(v); s += `<line class="gl" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/><text class="tick" x="${L - 6}" y="${y + 4}" text-anchor="end">${fmtInt(v)}</text>`; }
       s += `<text class="tick" x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">${esc(o.xlab || '')}</text>`;
@@ -767,6 +769,11 @@
       <div class="card" style="margin-top:16px"><h3>Running partly in RAM (RX 9070 XT, 8 threads)</h3><p class="sub">Decode tok/s by VRAM budget. "layers" offloads whole layers; "ffn" keeps attention on the GPU and moves FFN weights to RAM.</p>
         <div class="filters"><select id="om"></select></div><div class="legend"><span><i style="background:var(--s1)"></i>layers</span><span><i style="background:var(--s2)"></i>ffn</span></div><div id="d-off"></div><div class="foot"><a href="#/doc/dense-moe-docs-offload">offload.md</a> · <a href="${g('offload/')}">offload/</a></div></div>
 
+      ${M.depth ? `<div class="card" style="margin-top:16px"><h3>Decode at context depth: Qwen3.8-27B UD-Q6_K, R9700</h3><p class="sub">Prompts of 2K to 120K tokens of C++ source, then 256 generated tokens (mean of two tasks, temperature 0), llama.cpp b12164. A target evaluation is one pass of the 27B: one token for plain decoding, one verify step for MTP. Hover for acceptance and prefill; runs with the MMVQ patch are in the write-up.</p>
+        <div class="filters"><div class="seg" id="dpm"><button data-m="tg" class="on">tok/s</button><button data-m="ms">ms per target evaluation</button></div></div>
+        <div class="legend">${M.depth.configs.filter(c => !c.patched).map((c, i) => `<span><i style="background:var(--s${i % 4 + 1})"></i>${esc(c.label)}</span>`).join('')}</div><div id="d-depth"></div>
+        <div class="foot"><a href="#/doc/dense-moe-docs-depth">depth.md</a> · Source: <a href="#/files/${esc(M.depth.path)}">${esc(M.depth.path.replace('dense-moe/', ''))}</a></div></div>` : ''}
+
       <div class="section-h"><h2>Speed runs</h2><a href="#/doc/dense-moe-docs-mtp-tuning">MTP tuning write-up →</a></div>
       <div class="card"><p class="sub">Each bar is one llama-server configuration: harmonic mean of decode tok/s over the prompts (6 domains unless the run says otherwise), temperature 0 unless marked. Faded: no drafter. Hover for per-domain speed and draft acceptance.</p>
         <div class="filters"><select id="rs">${runs.map((r, i) => `<option value="${i}">${esc(r.title)} · ${esc(r.card)} (${r.configs.length})</option>`).join('')}</select><input type="search" id="rq" placeholder="Filter configs (e.g. dflash, IQ4_XS, n=3)…"><span class="count" id="rc"></span></div>
@@ -810,6 +817,18 @@
       hbar(el, rows.map(o => ({ label: `${o.budget} GiB · ${o.strategy}`, value: o.tg, cls: o.strategy === 'ffn' ? 'alt' : '', href: '#/files/' + o.src, tip: tipRows(`${m}, ${o.budget} GiB VRAM`, [['strategy', o.strategy], ['decode', fmt(o.tg, 2) + ' tok/s'], ['prefill 512', fmt(o.pp, 0) + ' tok/s'], ['read from RAM / token', o.ram_gib + ' GiB']]) })), { labW: 140 });
     };
     $('#om').onchange = drawOff; drawOff();
+
+    // depth
+    if (M.depth) {
+      const drawDepth = m => {
+        const el = freshChart('#d-depth');
+        scatter(el, M.depth.configs.filter(c => !c.patched).map((c, i) => ({ name: c.label, cls: 's' + (i % 4 + 1), line: true, pts: c.pts.map((p, j) => ({ x: p.depth, y: p[m], label: j === c.pts.length - 1 ? (m === 'tg' ? fmt(p.tg, 1) : fmt(p.ms, 0)) : '',
+          tip: tipRows(`${c.label}, ${fmtInt(p.depth)} tokens deep`, [['decode', fmt(p.tg, 1) + ' tok/s'], ['per target evaluation', fmt(p.ms, 1) + ' ms'], ['tokens per evaluation', c.spec === 'none' ? null : fmt(p.tps, 2)], ['prefill over this range', fmtInt(p.pp) + ' tok/s'], ['peak VRAM', fmt(c.vram / 1024, 1) + ' GiB']]) })) })),
+          { xlin: true, xfmt: v => v ? Math.round(v / 1000) + 'K' : '0', xlab: 'context depth (tokens)', ylab: m === 'tg' ? 'decode tok/s' : 'ms per target evaluation', h: 340, title: 'Decode at context depth' });
+      };
+      $$('#dpm button').forEach(b => b.onclick = () => { $$('#dpm button').forEach(x => x.classList.toggle('on', x === b)); drawDepth(b.dataset.m); });
+      drawDepth('tg');
+    }
 
     // speed runs
     const drawRuns = () => {

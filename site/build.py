@@ -8,6 +8,7 @@ of the site too.
     python3 site/build.py            # -> site/dist/
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -59,7 +60,7 @@ PROJECTS = [
         "doc": lambda f: f.endswith(".md") and ("/" not in f or re.match(r"docs/[^/]+\.md$", f)),
         "raw": lambda f: not f.startswith(".ai/"),
         "order": _order(["README.md", "docs/conclusions.md", "docs/writeup.md", "docs/findings.md",
-                         "docs/research.md", "docs/fast27b.md", "docs/dflash.md", "docs/mtp_tuning.md",
+                         "docs/research.md", "docs/depth.md", "docs/fast27b.md", "docs/dflash.md", "docs/mtp_tuning.md",
                          "docs/offload.md", "docs/upstream_mmvq.md", "docs/phase3_research.md",
                          "docs/phase3_findings.md", "docs/architecture.md", "docs/environment.md",
                          "docs/roadmap.md", "requirements.md", "gpt-review.md"]),
@@ -458,6 +459,33 @@ def parse_densemoe(root):
                          "prompts": {k: round(len(v) / sum(1 / x for x in v), 1) for k, v in g["prompts"].items()}})
         runs.append({"title": title, "card": card, "path": "dense-moe/" + f, "configs": cfgs})
     out["runs"] = runs
+    # decode against context depth (benchmarks/depth_profile.py): mean of the tasks per config and depth
+    f = "experiments/results/depth/depth.jsonl"
+    published = os.environ.get("SITE_PREVIEW") or subprocess.run(
+        ["git", "ls-files", "--error-unmatch", f], cwd=root, capture_output=True).returncode == 0
+    if (root / f).exists() and published:
+        cfgs = {}
+        for line in (root / f).read_text().splitlines():
+            r = json.loads(line)
+            c = r["config"]
+            if "depths" in c:  # a shortened repeat of another config
+                continue
+            ex = c.get("extra") or []
+            g = cfgs.setdefault(c["name"], {
+                "name": c["name"], "spec": c.get("spec", "none"), "kv": "q8_0" if "-ctk" in ex else "f16",
+                "patched": "mmvq" in c.get("bin", ""), "model": r["model"], "vram": r["vram_peak_mib"], "by": {}})
+            g["by"].setdefault(r["target_depth"], []).append(r)
+        depth = []
+        for g in cfgs.values():
+            mean = lambda rs, k: sum(x[k] for x in rs) / len(rs)
+            g["label"] = " · ".join(filter(None, ["plain" if g["spec"] == "none" else "MTP n=3", g["kv"] + " KV",
+                                                  "MMVQ patch" if g["patched"] else ""]))
+            g["pts"] = [{"depth": round(mean(rs, "depth")), "tg": round(mean(rs, "tg"), 1),
+                         "ms": round(mean(rs, "step_ms"), 1), "tps": round(mean(rs, "tok_per_step"), 2),
+                         "pp": round(max(x["pp"] for x in rs))}
+                        for _, rs in sorted(g.pop("by").items())]
+            depth.append(g)
+        out["depth"] = {"path": "dense-moe/" + f, "configs": depth}
     return out
 
 
