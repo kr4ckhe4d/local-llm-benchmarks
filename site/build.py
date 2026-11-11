@@ -479,6 +479,7 @@ def parse_densemoe(root):
         for g in cfgs.values():
             mean = lambda rs, k: sum(x[k] for x in rs) / len(rs)
             g["label"] = " · ".join(filter(None, ["plain" if g["spec"] == "none" else "MTP n=3", g["kv"] + " KV",
+                                                  "attention patch" if g["name"].endswith("-fattn") else
                                                   "MMVQ patch" if g["patched"] else ""]))
             g["pts"] = [{"depth": round(mean(rs, "depth")), "tg": round(mean(rs, "tg"), 1),
                          "ms": round(mean(rs, "step_ms"), 1), "tps": round(mean(rs, "tok_per_step"), 2),
