@@ -347,7 +347,10 @@ start_router() {
     nothink) think_args=(--reasoning-budget 0) ;;
     *) echo "Error: router takes no option or 'nothink' (got '$mode')." >&2; exit 1 ;;
   esac
-  local bin="$LLAMA_DIR/$ROUTER_BACKEND/bin/llama-server"
+  # ROUTER_BIN: run the router (and so every preset) on another build, e.g. the
+  # RDNA fork for the -tensor trial presets (models-preset.ini). Not remembered
+  # by 'start': set it again.
+  local bin="${ROUTER_BIN:-$LLAMA_DIR/$ROUTER_BACKEND/bin/llama-server}"
   if [[ ! -x "$bin" ]]; then
     echo "Error: $bin not found or not executable." >&2; exit 1
   fi
@@ -361,7 +364,7 @@ start_router() {
   fi
 
   echo "==> Starting router over $(basename "$PRESET")"
-  echo "    backend: $ROUTER_BACKEND (applies to every model — see notes)"
+  echo "    binary: $bin (applies to every model — see notes)"
   echo "    models-max: $MODELS_MAX"
   if (( SLEEP_IDLE > 0 )); then
     # Not in unset_reserved_args(), so children inherit it and each loaded model
