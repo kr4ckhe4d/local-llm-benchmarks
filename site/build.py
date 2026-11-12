@@ -60,7 +60,7 @@ PROJECTS = [
         "doc": lambda f: f.endswith(".md") and ("/" not in f or re.match(r"docs/[^/]+\.md$", f)),
         "raw": lambda f: not f.startswith(".ai/"),
         "order": _order(["README.md", "docs/conclusions.md", "docs/writeup.md", "docs/findings.md",
-                         "docs/research.md", "docs/prior_work.md", "docs/fork_grid.md", "docs/depth.md", "docs/shortlist.md", "docs/lenient.md", "docs/fast27b.md", "docs/dflash.md", "docs/mtp_tuning.md",
+                         "docs/research.md", "docs/tensor_split.md", "docs/prior_work.md", "docs/fork_grid.md", "docs/depth.md", "docs/shortlist.md", "docs/lenient.md", "docs/fast27b.md", "docs/dflash.md", "docs/mtp_tuning.md",
                          "docs/offload.md", "docs/upstream_mmvq.md", "docs/phase3_research.md",
                          "docs/phase3_findings.md", "docs/architecture.md", "docs/environment.md",
                          "docs/roadmap.md", "requirements.md", "gpt-review.md"]),
