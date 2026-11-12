@@ -20,6 +20,7 @@ benchmarks/
   code-quality-test.py      coding quality, scored by executing the output
   cdn-freshness-test.py     library knowledge, scored by HEADing emitted URLs
   kld-test.sh               KL-divergence of a quant against an unquantised reference
+  ud31-test.sh              Unsloth Dynamic v3.1 files against the preset file: KLD, suite, 12 code-quality seeds
   <model>/                  one folder per model, outputs written by run-suite.sh
 ```
 
@@ -46,6 +47,9 @@ build and timestamp, so a file is interpretable on its own.
 | `semantic-deep.txt` | semantic recall near the ceiling | by hand |
 | `fit.txt` | VRAM sweep across contexts | by hand |
 | `kld.txt` | KL-divergence vs the BF16 reference | `kld-test.sh score` |
+
+`<model>/seeds/s<N>.txt` are code-quality runs at the preset sampler with seed N, thinking off
+(`ud31-test.sh`).
 
 `q8ref/<model>/kld.txt` is the same measurement against a Q8_0 reference. BF16
 no longer fits the 32 GB box. Q8_0 reproduces the BF16 figures to within 1.5%
