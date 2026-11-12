@@ -175,6 +175,9 @@
       m.base = m.code.find(isBaseline) || null;
       m.best = m.code.reduce((a, b) => (!a || b.pass / b.total > a.pass / a.total) && b.total === 50 ? b : a, null);
       m.kldv = m.kld.bf16 || m.kld.q8_0 || null;
+      const sd = m.code.filter(r => r.path.includes('/seeds/') && r.total === 50).map(r => r.pass);
+      const mu = sd.reduce((x, v) => x + v, 0) / (sd.length || 1);
+      m.seeds = sd.length > 1 ? { n: sd.length, mean: mu, sd: Math.sqrt(sd.reduce((x, v) => x + (v - mu) ** 2, 0) / (sd.length - 1)) } : null;
     }
     return Object.values(M).sort((a, b) => a.model.localeCompare(b.model));
   }
@@ -407,6 +410,7 @@
       { key: 'kld', label: 'Mean KLD', n: 1, title: 'vs BF16, or vs Q8_0 where BF16 did not fit', sort: m => m.kldv?.kld, html: m => m.kldv ? `${m.kldv.kld.toFixed(4)}${m.kld.bf16 ? '' : ' <span class="pill">q8 ref</span>'}` : '—' },
       { key: 'cq', label: 'Code (baseline)', n: 1, sort: m => m.base?.pass, html: m => m.base ? `${m.base.pass}/50${cqCorrected(m.base) ? '' : ' <span class="pill warn" title="old prompts">old</span>'}<span class="minibar" style="width:${m.base.pass * 0.9}px"></span>` : '—' },
       { key: 'best', label: 'Code (best run)', n: 1, sort: m => m.best?.pass, html: m => m.best ? `<a href="${fileHref(m.best.path)}" title="${esc(m.best.label)}">${m.best.pass}/50</a>` : '—' },
+      { key: 'seeds', label: 'Code (seed mean)', n: 1, title: 'mean ± sd over seeded runs at the preset sampler, thinking off', sort: m => m.seeds?.mean, html: m => m.seeds ? `${fmt(m.seeds.mean, 1)} ± ${fmt(m.seeds.sd, 1)} <span class="pill">n=${m.seeds.n}</span>` : '—' },
       { key: 'runs', label: 'Runs', n: 1, sort: m => m.code.length, html: m => m.code.length ? `<a href="#/code/${esc(m.model)}">${m.code.length}</a>` : '—' },
       { key: 'tools', label: 'Tool calls', sort: m => m.tools ? (m.tools.ok ? 1 : 0) : null, html: m => m.tools ? `<a href="${fileHref(m.tools.path)}"><span class="pill ${m.tools.ok ? 'ok' : 'bad'}">${m.tools.ok ? '✓' : '✗'} ${m.tools.single ?? '?'} + ${m.tools.parallel ?? '?'}</span></a>` : '—' },
       { key: 'cdn', label: 'URLs live', n: 1, sort: m => m.cdn?.pct, html: m => m.cdn ? `${m.cdn.pct}%` : '—' },
@@ -437,7 +441,7 @@
         <div class="tile"><div class="v">${t ? fmt(t.tg, 1) : '—'}<small>tok/s</small></div><div class="k">Generation</div><div class="s">${t?.engine ? 'Strata, production config' : t?.draft ? `${/dflash|dspine/i.test(t.gguf || "") ? "draft" : "MTP"} accept ${t.draft}%` : t ? 'mean of ' + t.tg_runs.length + ' runs' : 'not probed'}</div></div>
         <div class="tile"><div class="v">${t?.pp ? fmt(t.pp, 0) : '—'}<small>tok/s</small></div><div class="k">Prefill</div><div class="s">${t?.vram ? fmtInt(t.vram) + ' MiB VRAM' : ''}</div></div>
         <div class="tile"><div class="v">${k ? k.kld.toFixed(4) : '—'}</div><div class="k">Mean KLD</div><div class="s">${k ? `vs ${k.ref.toUpperCase()} · top-1 same ${k.same_top}%` : 'not measured'}</div></div>
-        <div class="tile"><div class="v">${b ? b.pass : '—'}<small>/ 50</small></div><div class="k">Code quality (baseline)</div><div class="s">${b ? (cqCorrected(b) ? 'corrected prompts' : 'old prompts') : ''}${m.best && m.best !== b ? ` · best ${m.best.pass}` : ''}</div></div>
+        <div class="tile"><div class="v">${b ? b.pass : '—'}<small>/ 50</small></div><div class="k">Code quality (baseline)</div><div class="s">${b ? (cqCorrected(b) ? 'corrected prompts' : 'old prompts') : ''}${m.best && m.best !== b ? ` · best ${m.best.pass}` : ''}${m.seeds ? ` · ${m.seeds.n} seeds ${fmt(m.seeds.mean, 1)} ± ${fmt(m.seeds.sd, 1)}` : ''}</div></div>
         <div class="tile"><div class="v">${m.cdn ? m.cdn.pct + '%' : '—'}</div><div class="k">Emitted URLs that resolve</div><div class="s">${m.cdn ? `${m.cdn.ok}/${m.cdn.total}` : ''}</div></div>
         <div class="tile"><div class="v">${m.fit ? ctxK(m.fit.max_ctx) : '—'}</div><div class="k">Largest context that fit</div><div class="s">${m.fit ? 'from fit.txt' : ''}</div></div>
       </div>
