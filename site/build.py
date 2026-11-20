@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
+from statistics import median
 from pathlib import Path
 
 from markdown_it import MarkdownIt
@@ -719,6 +720,35 @@ def main():
                  "tau": round(a["tau"], 2) if a["tau"] else None} for a in agg.values()]
         measurements["spec"].append({"path": f, "model": f.split("/")[1], "rows": rows})
 
+    # engine A/Bs (engine-ab.py): one JSON line per request, medians per arm
+    ENGINE_AB_ARMS = {"llama-q6": "llama.cpp Q6, 2 cards", "llama-q6-mtp": "llama.cpp Q6 + MTP, 2 cards",
+                      "llama-q4-mtp": "llama.cpp Q4 + MTP, 2 cards", "strata-q4": "Strata Q4 + MTP, R9700",
+                      "strata-q6": "Strata Q6, R9700"}
+    measurements["engineab"] = []
+    for e in tree:
+        f = e["p"]
+        if not re.match(r"benchmarks/(raw/)?engine-ab-[^/]+/results\.jsonl$", f):
+            continue
+        by = {}
+        for line in (ROOT / f).read_text(errors="replace").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                by.setdefault(r["label"], []).append(r)
+        arms = []
+        for label, rows in by.items():
+            med = lambda xs: round(median(xs), 1) if xs else None
+            gen = {n: med([r["decode_tps"] for r in rows if r["kind"] == "gen" and r["name"] == n and r["decode_tps"]])
+                   for n in dict.fromkeys(r["name"] for r in rows if r["kind"] == "gen")}
+            depth = {n: {"pp": med([r["prefill_tps"] for r in rows if r["kind"] == "depth" and r["name"] == n]),
+                         "tg": med([r["decode_tps"] for r in rows if r["kind"] == "depth" and r["name"] == n]),
+                         "ttft": med([r["ttft_s"] for r in rows if r["kind"] == "depth" and r["name"] == n])}
+                     for n in dict.fromkeys(r["name"] for r in rows if r["kind"] == "depth")}
+            vf = ROOT / Path(f).parent / "logs" / f"vram-{label}.txt"
+            arms.append({"label": label, "name": ENGINE_AB_ARMS.get(label, label), "gen": gen, "depth": depth,
+                         "n": len(rows), "vram": vf.read_text().strip() if vf.exists() else None,
+                         "engine": "strata" if label.startswith("strata") else "llama.cpp"})
+        measurements["engineab"].append({"path": f, "dir": str(Path(f).parent), "arms": arms})
+
     # Arc B580 on ubuntulocal (arc-b580-bench.sh): llama-bench -o json, one file per backend + label
     measurements["arc"] = []
     for e in tree:
@@ -798,6 +828,7 @@ def main():
           f"tput={len(measurements['throughput'])} kld={len(measurements['kld'])} "
           f"cdn={len(measurements['cdn'])} tools={len(measurements['tools'])} fit={len(measurements['fit'])} "
           f"spec={sum(len(x['rows']) for x in measurements['spec'])} "
+          f"engineab={sum(len(x['arms']) for x in measurements['engineab'])} "
           f"arc={len(measurements['arc'])} "
           f"size={total/1e6:.1f}MB", file=sys.stderr)
 

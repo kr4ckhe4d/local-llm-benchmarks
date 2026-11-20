@@ -263,3 +263,22 @@ MCP servers, all four model slots set to one name (Strata ignores the name),
    and `reasoning_effort` can set it lower; note which level a quality
    comparison used. The panel's settings apply to API clients only with "Use
    for other apps too" on.
+
+## Qwen3.6-35B-A3B against llama.cpp — 2026-11-15
+
+Strata 13eedf55 (engine 0.1.59.1) on the R9700 alone against llama.cpp
+4b77dee05 on both cards, the same Unsloth MTP GGUFs, 128K context, greedy,
+client-timed ([benchmarks/raw/engine-ab-qwen36](benchmarks/raw/engine-ab-qwen36/README.md)):
+
+| tok/s | Empty context (code / prose / explain) | 32K prefill / decode | 120K prefill / decode |
+|---|---|---|---|
+| llama.cpp Q6, no MTP (the old preset) | 76.6 / 76.6 / 76.5 | 5,197 / 61.5 | 3,220 / 39.2 |
+| llama.cpp Q4 + MTP | 164.1 / 109.4 / 136.4 | 3,744 / 110.1 | 2,556 / 78.4 |
+| **Strata Q4 + MTP** | **204.7 / 159.4 / 177.1** | 1,046 / 50.2 | 376 / 10.2 |
+
+Strata is 25-46% faster in an empty context, then falls far behind with
+depth: a 120K prompt takes 319 s against 46 s and decodes at 10 tok/s
+against 78. Strata Q6 does not load here: its experts do not fit the R9700,
+and the RAM copy it falls back to swapped 27 GB on the 31 GB box. Strata
+only drafts when the request turns penalties off (`presence_penalty: 0`);
+otherwise the model card's 1.5 applies and it decodes at 122 tok/s.

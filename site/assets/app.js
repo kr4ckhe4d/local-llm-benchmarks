@@ -926,9 +926,10 @@
     const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
     const base = S.tuning.find(a => a.arm === 'base');
     const prod = S.tuning.find(a => a.arm === 'pw2+trim');
+    const AB = (D.m.engineab || []).find(x => x.dir.includes('qwen36')), AB_TASKS = ['code', 'prose', 'explain'];
     app.innerHTML = `<div class="wrap">
       <div class="page-h"><div class="eyebrow">Separate inference engine</div><h1>Strata: Qwen3.8-Flash-Next</h1>
-      <p>Strata is an engine built only for Qwen3.8-Flash-Next: the hottest experts stay on the GPUs, the rest in RAM, the per-layer n-gram table on the SSD. These are its own measurements: a settings sweep, one card against two, and per-task expert-cache profiles. Write-up: <a href="#/doc/strata">strata.md</a> · evidence: <a href="#/files/benchmarks/strata-tuning/">strata-tuning/</a>, <a href="#/files/benchmarks/strata-expert-modes/">strata-expert-modes/</a>.</p></div>
+      <p>Strata is an engine built only for Qwen3.8-Flash-Next: the hottest experts stay on the GPUs, the rest in RAM, the per-layer n-gram table on the SSD. These are its own measurements: a settings sweep, one card against two, and per-task expert-cache profiles. Strata also runs Qwen3.6-35B-A3B on its own engine path; that one is measured against llama.cpp at the bottom of this page. Write-up: <a href="#/doc/strata">strata.md</a> · evidence: <a href="#/files/benchmarks/strata-tuning/">strata-tuning/</a>, <a href="#/files/benchmarks/strata-expert-modes/">strata-expert-modes/</a>.</p></div>
       <div class="tiles">
         <div class="tile"><div class="v">${prod ? fmt(prod.decode, 1) : '—'}<small>tok/s</small></div><div class="k">Generation, production config</div><div class="s">${prod && base ? `+${fmt((prod.decode / base.decode - 1) * 100, 1)}% over defaults (${fmt(base.decode, 1)})` : ''}</div></div>
         <div class="tile"><div class="v">${prod ? fmtInt(Math.round(prod.prefill)) : '—'}<small>tok/s</small></div><div class="k">Prompt reading, cold 29K</div><div class="s">${prod && base ? `${fmt((prod.prefill / base.prefill - 1) * 100, 1)}% vs defaults` : ''}</div></div>
@@ -952,7 +953,21 @@
       ${S.adapt.length ? `<div class="card" style="margin-top:16px"><h3>Switching domains mid-session</h3><p class="sub">12 requests in a row with Strata's adaptive tier on: the cache follows the conversation.</p><div id="s-adapt"></div></div>` : ''}
       <div class="section-h"><h2>Code quality on Strata (${cq.length} runs)</h2><a href="#/code">Task matrix →</a></div>
       <div class="card"><div id="s-cq"></div></div>
+      ${AB ? `<div class="section-h"><h2>Qwen3.6-35B-A3B: Strata against llama.cpp (2026-11-15)</h2><a href="#/files/${esc(AB.dir)}/README.md">README →</a></div>
+      <p class="sub" style="color:var(--ink-2);margin:-6px 0 12px">The same Unsloth MTP GGUFs on both engines, 128K context, greedy, thinking off, penalties off, timed on the client; medians. Strata runs on the R9700 alone (its Qwen3.6 path has no card split), llama.cpp on both cards. Strata Q6 did not load: its experts do not fit the R9700, and the RAM copy it falls back to swapped 27 GB on this 31 GB box.</p>
+      <div class="grid2">
+        <div class="card"><h3>Generation, empty context</h3><p class="sub">Up to 1,024 tokens per prompt, 3 repetitions (tok/s).</p><div class="legend">${AB_TASKS.map((k, i) => `<span><i style="background:var(--s${i + 1})"></i>${k}</span>`).join('')}</div><div id="s-ab-gen"></div></div>
+        <div class="card"><h3>Prompt reading at depth</h3><p class="sub">Wikitext prompt of 32K or 120K tokens, time to first token (tok/s).</p><div class="legend"><span><i style="background:var(--s1)"></i>32K</span><span><i style="background:var(--s2)"></i>120K</span></div><div id="s-ab-pp"></div></div>
+      </div>
+      <div class="card" style="margin-top:16px"><h3>Generation at depth</h3><p class="sub">The 256-token answer after the 32K or 120K prompt (tok/s).</p><div class="legend"><span><i style="background:var(--s1)"></i>32K</span><span><i style="background:var(--s2)"></i>120K</span></div><div id="s-ab-tg"></div></div>` : ''}
       ${footer()}</div>`;
+    if (AB) {
+      const tip = a => tipRows(a.name, [...AB_TASKS.map(t => [t, fmt(a.gen[t], 1) + ' tok/s']), ...Object.entries(a.depth).flatMap(([d, v]) => [[`${fmtInt(+d)} prefill`, `${fmtInt(Math.round(v.pp))} tok/s (${fmt(v.ttft, 1)} s)`], [`${fmtInt(+d)} decode`, fmt(v.tg, 1) + ' tok/s']]), ['peak VRAM', a.vram]]);
+      const grouped = (keys, val) => AB.arms.flatMap(a => keys.map((k, i) => ({ label: i === 0 ? a.name : '', value: val(a, k), cls: COLCLS[i], href: fileHref(AB.path), tip: tip(a) })));
+      hbar($('#s-ab-gen'), grouped(AB_TASKS, (a, k) => a.gen[k]), { labW: 200, rowH: 18 });
+      hbar($('#s-ab-pp'), grouped(['32000', '120000'], (a, k) => a.depth[k]?.pp), { labW: 200, rowH: 18, dec: 0 });
+      hbar($('#s-ab-tg'), grouped(['32000', '120000'], (a, k) => a.depth[k]?.tg), { labW: 200, rowH: 18 });
+    }
 
     const hiArm = a => a.arm === 'base' || a.arm === 'pw2+trim';
     const tipArm = a => tipRows(a.label, [['generation', fmt(a.decode, 1) + ' tok/s'], ['prefill', fmtInt(Math.round(a.prefill)) + ' tok/s'], ['code prompts', a.code.map(x => fmt(x, 0)).join(' / ')], ['prose prompts', a.prose.map(x => fmt(x, 0)).join(' / ')], ['VRAM hit rate', a.hit != null ? a.hit + '%' : null], ['load', a.load_s + ' s']]);
