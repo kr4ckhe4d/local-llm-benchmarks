@@ -1,0 +1,36 @@
+# gemma-4-12B-it-BF16.gguf + BF16 MTP head, f16 KV, via the router
+# (preset gemma4-12B-bf16-vision-256k, R9700 alone), code quality on the
+# CORRECTED prompts, temperature 0, 2026-11-20. Same harness and router modes
+# as the Q8_0 run in ../../gemma-4-12B-it-Q8_0/fixed-prompts (2026-11-06).
+
+| thinking                                  | BF16  | Q8_0  | clean (BF16 / Q8_0)
+| off (router started 'nothink', budget 0)  | 35/50 | 36/50 | 3/7 / 3/7
+| on  (router plain, preset budget 1024)    | 27/50 | 28/50 | 3/7 / 3/7
+
+Per task, thinking off (BF16 vs Q8_0): glob_match 4 vs 5, urljoin 2 vs 1,
+textwrap 4 vs 5; shlex_split 5, csv_rows 7, add_months 6, parse_qsl 7 on both.
+Thinking on: glob_match 0 vs 5, textwrap 1 vs 5, shlex_split 5 vs 0,
+urljoin 1 vs 0; the rest equal.
+
+BF16 is no better than Q8_0: one check apart in both modes, and the misses
+fall on different tasks. On a 50-check set at temperature 0, that is noise.
+
+Thinking on, both quants lose a whole task to the 1024-token budget closing
+thinking mid-answer, just a different task each: Q8_0 shlex_split (30K-char
+answer, indented fragment), BF16 glob_match (the whole answer was the single
+word "thought", NameError). Repeated glob_match with thinking on 3x per quant
+(router nothink + per-request enable_thinking and reasoning_budget_tokens
+1024): BF16 answered with code 3/3; Q8_0 hit max_tokens once with the answer
+starting mid-code. So the broken answer is a budget-cut artifact that both
+quants hit at random, not something BF16-specific. Temperature 0 is not
+deterministic here either: the first request of each set gave a different
+answer from the next two.
+
+BF16 thinking-on textwrap (1/6) is a real miss: it split on newlines instead
+of treating them as whitespace.
+
+Nothink check: plain request, no thinking field -> 0 thinking chars.
+
+Memory: 31.0 of 34.2 GB used on the R9700 at 256K with f16 KV (weights
+22.2 GiB). First request (cold load + 510-token code answer): 45.6 tok/s
+generation, MTP acceptance 347/486 (71%).

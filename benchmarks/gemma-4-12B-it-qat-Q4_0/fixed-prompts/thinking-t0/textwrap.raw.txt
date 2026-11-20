@@ -1,0 +1,169 @@
+```python
+def wrap_(text, width):
+    # 1. Expand tabs (default tabsize is 8)
+    expanded_text = ""
+    column = 0
+    for char in text:
+        if char == '\t':
+            num_spaces = 8 - (column % 8)
+            expanded_text += ' ' * num_spaces
+            column += num_spaces
+        else:
+            expanded_text += char
+            column += 1 if char != '\n' else 0
+
+    # 2. Handle whitespace and line breaks
+    # The prompt specifies: "each whitespace character becomes one space (runs are NOT collapsed)"
+    # and "whitespace at each line break is dropped".
+    # To preserve the "line break" logic while following the "replace whitespace" rule,
+    # we split by existing newlines first.
+    raw_lines = expanded_text.split('\n')
+    processed_lines = []
+    for line in raw_lines:
+        # Replace all whitespace characters ( \t\n\r\f\v) with a single space
+        # Note: Since we split by \n, we only need to worry about \t\r\f\v and ' '
+        # But the prompt says "each whitespace character becomes one space".
+        # We treat the current line's internal whitespace.
+        new_line = ""
+        for char in line:
+            if char in ' \t\r\f\v':
+                new_line += ' '
+            else:
+                new_line += char
+        processed_lines.append(new_line)
+
+    # 3. Wrap the text
+    # "whitespace at each line break is dropped (trailing whitespace of a line and leading whitespace of the next)"
+    # "leading whitespace of the whole text is kept"
+    
+    # Join processed lines with a space, but we must be careful about the "dropped" rule.
+    # A simpler way: join all words into a stream, but keep track of the very first leading whitespace.
+    
+    # Let's find the initial leading whitespace
+    first_line = processed_lines[0]
+    leading_ws_count = 0
+    for char in first_line:
+        if char == ' ':
+            leading_ws_count += 1
+        else:
+            break
+    
+    # Collect all words from all lines, ignoring the "dropped" whitespace between lines.
+    # Because "whitespace at each line break is dropped", we treat the text as a continuous 
+    # stream of words, but we must preserve the very first leading whitespace.
+    all_words = []
+    for line in processed_lines:
+        # Split by spaces to get words, but keep track of empty strings to handle multiple spaces
+        # However, "runs are NOT collapsed" means "  " stays "  ".
+        # But "whitespace at each line break is dropped" means the space between lines disappears.
+        # This implies we treat the text as a sequence of words separated by spaces.
+        parts = line.split(' ')
+        for p in parts:
+            if p:
+                all_words.append(p)
+            else:
+                # This represents internal multiple spaces (runs NOT collapsed)
+                # But we need to be careful not to add extra spaces at the start/end of lines.
+                pass
+
+    # Re-evaluating: The standard behavior of wrap() with these specific constraints 
+    # is best handled by a greedy word-wrap algorithm on a list of words.
+    
+    # Let's refine the word collection:
+    # Since "whitespace at each line break is dropped", we effectively join all lines 
+    # with nothing, then split into words.
+    full_content = ""
+    for i, line in enumerate(processed_lines):
+        if i == 0:
+            full_content += line
+        else:
+            # Drop trailing/leading whitespace of the line break
+            # This means we strip the current line's leading and the previous line's trailing.
+            # Since we already replaced all whitespace with ' ', we just need to ensure 
+            # no extra space is added between lines.
+            full_content += line.strip()
+    
+    # Now, split into words while preserving internal spaces (runs NOT collapsed)
+    # Actually, the prompt says "each whitespace character becomes one space".
+    # This means "  " becomes "  ". 
+    # Let's just use a simple greedy wrap on the processed lines joined by spaces.
+    
+    # Correct approach based on requirements:
+    # 1. Replace all whitespace with ' '.
+    # 2. Remove leading/trailing whitespace from each line (except the very first line's start).
+    # 3. Join them into a single stream of words.
+    # 4. Wrap the stream.
+    
+    words = []
+    for i, line in enumerate(processed_lines):
+        if i == 0:
+            # Keep leading whitespace for the first line
+            stripped = line.lstrip()
+            leading = line[:len(line) - len(stripped)]
+            words.append(leading)
+            words.extend(stripped.split(' '))
+        else:
+            # Drop leading/trailing whitespace for subsequent lines
+            stripped = line.strip()
+            if stripped:
+                words.extend(stripped.split(' '))
+
+    # Greedy wrap
+    result = []
+    current_line = ""
+    
+    # Handle the first word (which might be the leading whitespace)
+    if words:
+        first_word = words[0]
+        # If the first word is just whitespace, it's handled by the "leading whitespace kept" rule
+        # but we need to check if it exceeds width.
+        if len(first_word) > width:
+            # Break long word
+            for i in range(0, len(first_word), width):
+                result.append(first_word[i:i+width])
+            words = words[1:]
+            current_line = ""
+        else:
+            current_line = first_word
+            words = words[1:]
+
+    for word in words:
+        # If current_line is empty, it means we just started a new line
+        if not current_line:
+            if len(word) > width:
+                # Break long word
+                for i in range(0, len(word), width):
+                    result.append(word[i:i+width])
+            else:
+                current_line = word
+        else:
+            # Try to add space + word
+            # Note: "runs are NOT collapsed" means we must treat the space as a character.
+            # But "whitespace at line break is dropped" means we don't add extra spaces 
+            # between words that were on different lines.
+            # However, standard wrap adds a space between words.
+            
+            # If there was a space in the original text between these words, it's now a ' '.
+            # Since we split by ' ', we need to know if we should add a space.
+            # The prompt says "each whitespace character becomes one space".
+            # This implies words are separated by exactly one space in our `words` list 
+            # unless they were adjacent.
+            
+            # Let's simplify: the word list contains all non-space chunks.
+            # We join them with a single space.
+            if len(current_line) + 1 + len(word) <= width:
+                current_line += " " + word
+            else:
+                result.append(current_line)
+                if len(word) > width:
+                    for i in range(0, len(word), width):
+                        result.append(word[i:i+width])
+                    current_line = ""
+                else:
+                    current_line = word
+
+    if current_line:
+        result.append(current_line)
+        
+    return result
+```

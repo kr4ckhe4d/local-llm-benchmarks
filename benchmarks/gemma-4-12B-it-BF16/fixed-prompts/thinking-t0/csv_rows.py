@@ -1,0 +1,56 @@
+def csv_rows(text):
+    rows = []
+    current_row = []
+    current_field = ""
+    in_quotes = False
+    i = 0
+    n = len(text)
+
+    while i < n:
+        char = text[i]
+
+        if in_quotes:
+            if char == '"':
+                # Check for escaped quote (double double-quote)
+                if i + 1 < n and text[i + 1] == '"':
+                    current_field += '"'
+                    i += 1  # Skip the second quote
+                else:
+                    # Closing quote
+                    in_quotes = False
+            else:
+                current_field += char
+        else:
+            if char == '"':
+                in_quotes = True
+            elif char == ',':
+                current_row.append(current_field)
+                current_field = ""
+            elif char == '\n':
+                current_row.append(current_field)
+                rows.append(current_row)
+                current_row = []
+                current_field = ""
+            elif char == '\r':
+                # Handle CRLF (\r\n) or CR (\r)
+                if i + 1 < n and text[i + 1] == '\n':
+                    current_row.append(current_field)
+                    rows.append(current_row)
+                    current_row = []
+                    current_field = ""
+                    i += 1  # Skip the \n
+                else:
+                    current_row.append(current_field)
+                    rows.append(current_row)
+                    current_row = []
+                    current_field = ""
+            else:
+                current_field += char
+        i += 1
+
+    # Handle the last field/row if the text doesn't end with a newline
+    if current_field or current_row or (n > 0 and text[-1] != '\n' and text[-1] != '\r'):
+        current_row.append(current_field)
+        rows.append(current_row)
+
+    return rows

@@ -198,7 +198,7 @@
       if (kind === 'models') return modelsPage();
       if (kind === 'model') return modelPage(rest.join('/'));
       if (kind === 'code') return codePage(rest.join('/'));
-      if (kind === 'kld') return kldPage();
+      if (kind === 'kld') return kldPage(rest[0]);
       if (kind === 'strata') return strataPage();
       if (kind === 'projects') return projectsPage();
       if (kind === 'densemoe') return denseMoePage();
@@ -523,25 +523,28 @@
   }
 
   // ------------------------------------------------------------------ KLD
-  function kldPage() {
+  function kldPage(initRef) {
     setTitle('Quant fidelity');
     const rows = D.m.kld.filter(r => r.kld > 0);
     app.innerHTML = `<div class="wrap">
       <div class="page-h"><h1>Quantization fidelity</h1><p>KL divergence of each GGUF quant's next-token distribution against an unquantised reference, over 200 × 512-token chunks of wiki.test. Mean KLD is the headline; the 99th percentile shows how bad the tail gets; "same top" is how often the quant picks the reference's argmax token. BF16 stopped fitting the 32 GB host, so later runs use a Q8_0 reference, which reproduces BF16 figures within 1.5% (<a href="#/doc/gsq-rco">gsq-rco.md</a>).</p></div>
-      <div class="filters"><div class="seg" id="kr"><button data-r="bf16" class="on">vs BF16</button><button data-r="q8_0">vs Q8_0</button><button data-r="">All</button></div><span class="count" id="kcount"></span></div>
+      <div class="filters"><div class="seg" id="kr"><button data-r="bf16" class="on">vs BF16</button><button data-r="q8_0">vs Q8_0</button><button data-r="chat">Chat-format</button><button data-r="">All wikitext</button></div><span class="count" id="kcount"></span></div>
+      <div class="note" id="kchat" style="display:none">Chat-format KLD (<a href="${fileHref('benchmarks/chat-kld.py')}">chat-kld.py</a>): the reference model answers 32 chat prompts greedily, then each quant is teacher-forced along that answer with top-100 logprobs. Used where wikitext gives an unusable reference — Gemma 4 instruct models score PPL in the hundreds on raw wikitext. A top-100 approximation that reads ~0.6× the wikitext mean KLD on the same files, so compare these rows only with each other. Reference per row in the tooltip.</div>
       <div class="grid2"><div class="card"><h3>Mean KLD</h3><p class="sub">Log scale; lower is closer to the reference.</p><div id="c-k1"></div></div>
       <div class="card"><h3>Top-token agreement</h3><p class="sub">Share of positions where the quant's top token matches the reference's.</p><div id="c-k2"></div></div></div>
       <div id="kt" style="margin-top:16px"></div>
       <div class="note">The BF16-control row (KLD 0) confirms the harness: BF16 scored against itself is identical. Excluded from charts.</div>
       ${footer()}</div>`;
-    let ref = 'bf16';
+    let ref = ['bf16', 'q8_0', 'chat'].includes(initRef) ? initRef : 'bf16';
+    $$('#kr button').forEach(x => x.classList.toggle('on', x.dataset.r === ref));
     const draw = () => {
-      const rs = rows.filter(r => !ref || r.ref === ref).sort((a, b) => a.kld - b.kld);
+      $('#kchat').style.display = ref === 'chat' ? '' : 'none';
+      const rs = rows.filter(r => ref ? r.ref === ref : r.ref !== 'chat').sort((a, b) => a.kld - b.kld);
       $('#kcount').textContent = `${rs.length} measurements`;
       const lab = r => (r.folder === 'raw' ? r.model.replace('raw/', '') : r.model).replace('qwen3.8-27B-', 'Q3.8-27B ').replace('qwen3.6-35B-A3B-', 'Q3.6-35B ');
       redraws.length = 0;
       for (const id of ['#c-k1', '#c-k2']) { const c = $(id); c.replaceWith(c.cloneNode()); }
-      const tipOf = r => tipRows(r.model, [['reference', r.ref], ['mean KLD', r.kld.toFixed(6)], ['median KLD', r.median], ['99th pct KLD', r.kld99], ['same top token', r.same_top + '%'], ['PPL(Q)/PPL(base)', r.ppl_ratio], ['RMS Δp', r.rms_dp + '%'], ['date', r.date.slice(0, 10)]]);
+      const tipOf = r => tipRows(r.model, [['reference', r.ref === 'chat' ? 'chat-format vs ' + r.base : r.ref], ['mean KLD', r.kld.toFixed(6)], ['median KLD', r.median], ['99th pct KLD', r.kld99], ['same top token', r.same_top + '%'], ['PPL(Q)/PPL(base)', r.ppl_ratio ?? '—'], ['RMS Δp', r.rms_dp != null ? r.rms_dp + '%' : '—'], ['date', r.date ? r.date.slice(0, 10) : '—']]);
       hbar($('#c-k1'), rs.map(r => ({ label: lab(r) + (ref ? '' : ` (${r.ref})`), value: r.kld, text: r.kld.toFixed(4), href: fileHref(r.path), tip: tipOf(r) })), { log: true, labW: 200, tickFmt: v => String(v) });
       const rs2 = [...rs].sort((a, b) => b.same_top - a.same_top);
       hbar($('#c-k2'), rs2.map(r => ({ label: lab(r) + (ref ? '' : ` (${r.ref})`), value: r.same_top, text: r.same_top.toFixed(1) + '%', href: fileHref(r.path), tip: tipOf(r) })), { max: 100, step: 20, labW: 200, tickFmt: v => v + '%' });

@@ -1,0 +1,107 @@
+def urljoin_(base, url):
+    def parse_url(u):
+        scheme, netloc, path, query, fragment = "", "", u, "", ""
+        
+        # Extract fragment
+        if "#" in u:
+            u, fragment = u.split("#", 1)
+        
+        # Extract query
+        if "?" in u:
+            u, query = u.split("?", 1)
+            
+        # Extract scheme
+        if "://" in u:
+            scheme, rest = u.split("://", 1)
+            # Extract netloc
+            if rest.startswith("//"):
+                netloc, path = rest[2:].split("/", 1) if "/" in rest[2:] else (rest[2:], "")
+            else:
+                netloc, path = "", rest
+        elif u.startswith("//"):
+            netloc, path = u[2:].split("/", 1) if "/" in u[2:] else (u[2:], "")
+        elif u.startswith(":"):
+            scheme = u[1:]
+            netloc, path = "", u[len(scheme)+1:] # This is a simplified scheme-relative
+        else:
+            # Check if it's an absolute path or relative
+            if u.startswith("/"):
+                path = u
+            else:
+                path = u
+                
+        return scheme, netloc, path, query, fragment
+
+    if not url:
+        b_scheme, b_netloc, b_path, b_query, b_frag = parse_url(base)
+        return f"{b_scheme}://{b_netloc}{b_path}{b_query}"
+
+    u_scheme, u_netloc, u_path, u_query, u_frag = parse_url(url)
+    b_scheme, b_netloc, b_path, b_query, b_frag = parse_url(base)
+
+    res_scheme = b_scheme
+    res_netloc = b_netloc
+    res_path = ""
+    res_query = u_query
+    res_frag = u_frag
+
+    if url.startswith("//"):
+        # Network-path reference
+        res_netloc = url[2:].split("/", 1)[0]
+        res_path = url[2:].split("/", 1)[1] if "/" in url[2:] else ""
+    elif url.startswith(":"):
+        # Scheme-relative reference
+        res_scheme = url[1:]
+        res_netloc = b_netloc
+        res_path = u_path
+    elif url.startswith("/"):
+        # Absolute-path reference
+        res_path = u_path
+    else:
+        # Relative-path reference
+        # Determine the directory part of the base path
+        if not b_path:
+            dir_part = ""
+        elif b_path.endswith("/"):
+            dir_part = b_path
+        else:
+            dir_part = b_path.rsplit("/", 1)[0] if "/" in b_path else ""
+            if not dir_part and b_path:
+                dir_part = "/"
+        
+        # Join path parts
+        raw_path = (dir_part + u_path).replace("//", "/")
+        
+        # Normalize path
+        parts = raw_path.split("/")
+        new_parts = []
+        for p in parts:
+            if p == "..":
+                if new_parts:
+                    new_parts.pop()
+            elif p == "." or p == "":
+                continue
+            else:
+                new_parts.append(p)
+        
+        # Reconstruct path
+        res_path = "/" + "/".join(new_parts)
+        if raw_path.endswith("/") and res_path != "/":
+            res_path += "/"
+        if not res_path and not raw_path.startswith("/"):
+            res_path = ""
+
+    # Final assembly
+    result = ""
+    if res_scheme:
+        result += res_scheme + "://"
+    result += res_netloc
+    if res_netloc and not res_path.startswith("/"):
+        result += "/"
+    result += res_path
+    if res_query:
+        result += "?" + res_query
+    if res_frag:
+        result += "#" + res_frag
+        
+    return result

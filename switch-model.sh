@@ -60,7 +60,7 @@ declare -A MODEL_FILE=(
   [qwen3.8-q8]="Qwen3.8-27B-Q8_0.gguf"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored-Q3_K_M.gguf"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored-Q8_0.gguf"
-  [gemma4-12b]="gemma-4-12B-it-Q8_0.gguf"
+  [gemma4-12b]="gemma-4-12B-it-BF16.gguf"
 )
 
 declare -A MODEL_LABEL=(
@@ -69,7 +69,7 @@ declare -A MODEL_LABEL=(
   [qwen3.8-q8]="Qwen3.8-27B Q8_0 +MTP"
   [qwen3.5-uncensored]="Qwen3.5-27B-Uncensored"
   [qwen3.5-9b-uncensored]="Qwen3.5-9B-Uncensored"
-  [gemma4-12b]="Gemma 4-12B Q8_0 +vision +MTP"
+  [gemma4-12b]="Gemma 4-12B BF16 +vision +MTP"
 )
 
 # Which llama.cpp build to serve each model with. Measured, not guessed.
@@ -79,7 +79,7 @@ declare -A MODEL_BACKEND=(
   [qwen3.8-q8]="build"           # Q8_0 + MTP: ROCm
   [qwen3.5-uncensored]="build"   # Q3_K_M: ROCm
   [qwen3.5-9b-uncensored]="build" # Q8_0: ROCm
-  [gemma4-12b]="build"           # Q8_0 + mmproj + MTP: ROCm
+  [gemma4-12b]="build"           # BF16 + mmproj + MTP: ROCm
 )
 
 # Kept as a hook, now empty. Every model runs on build/ (ROCm) — the Vulkan
@@ -184,12 +184,12 @@ declare -A CONFIG=(
   ["qwen3.5-9b-uncensored:128k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
   ["qwen3.5-9b-uncensored:256k"]="--chat-template-file /home/nipuna/code/local-llm-benchmarks/templates/qwen35-late-system.jinja -dev ROCm1 -ub 1024 -b 2048 -fa on -ctk q8_0 -ctv q8_0 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --reasoning-budget 1024"
 
-  # Gemma 4-12B — DENSE 12B, multimodal (image + experimental audio through the
+  # Gemma 4-12B (BF16 since 2026-11-20) — DENSE 12B, multimodal (image + experimental audio through the
   # mmproj), native 262144. MTP drafter is a separate file, so it needs -md as
-  # well as --spec-type. Pinned to the R9700: 18.0 GB at 128k, 19.4 GB at 256k.
-  # 101-114 tok/s with MTP (2026-10-28). Mirrors gemma4-12B-q8-vision-256k.
-  ["gemma4-12b:128k"]="--mmproj models/mmproj-gemma-4-12B-it-BF16.gguf -md models/mtp-gemma-4-12B-it-Q8_0.gguf --spec-type draft-mtp -dev ROCm1 --reasoning-budget 1024 --repeat-penalty 1.05"
-  ["gemma4-12b:256k"]="--mmproj models/mmproj-gemma-4-12B-it-BF16.gguf -md models/mtp-gemma-4-12B-it-Q8_0.gguf --spec-type draft-mtp -dev ROCm1 --reasoning-budget 1024 --repeat-penalty 1.05"
+  # well as --spec-type. Pinned to the R9700: 31.0 GB at 256k (BF16, f16 KV).
+  # 49.9 tok/s with MTP (2026-11-20). Mirrors gemma4-12B-bf16-vision-256k.
+  ["gemma4-12b:128k"]="--mmproj models/mmproj-gemma-4-12B-it-BF16.gguf -md models/mtp-gemma-4-12B-it-BF16.gguf --spec-type draft-mtp -dev ROCm1 --reasoning-budget 1024 --repeat-penalty 1.05"
+  ["gemma4-12b:256k"]="--mmproj models/mmproj-gemma-4-12B-it-BF16.gguf -md models/mtp-gemma-4-12B-it-BF16.gguf --spec-type draft-mtp -dev ROCm1 --reasoning-budget 1024 --repeat-penalty 1.05"
 
 
 
@@ -234,7 +234,7 @@ Models:
   qwen3.5-9b-uncensored
                  Qwen3.5-9B-Unc.  8.9GB   DENSE 9B, same family, half the layers.
                                           Reaches native 256k. 58 tok/s, R9700 only
-  gemma4-12b     Gemma 4-12B      13.3GB  DENSE 12B, images (+audio) via mmproj.
+  gemma4-12b     Gemma 4-12B      23.8GB  DENSE 12B, images (+audio) via mmproj.
                                           Q8_0 + MTP: ~105 tok/s. 128k/256k, R9700
 
 Context: 32k 64k 128k 256k  (only sizes within each model's native trained

@@ -291,6 +291,35 @@ def parse_kld(text):
             "ppl_ratio": g(r"^Mean PPL\(Q\)/PPL\(base\)\s+:\s+([\d.]+)"), "ppl": g(r"^Mean PPL\(Q\)\s+:\s+([\d.]+)")}
 
 
+# chat-kld.py labels -> the benchmarks/ folder of the same file, so a row joins
+# its model. The method (top-100 approximation on the reference model's own
+# chat answers) reads differently from kld-test.sh, so these rows get ref
+# "chat" and are never mixed into the wikitext "bf16"/"q8_0" comparisons.
+CHAT_KLD_MODELS = {
+    "gemma4-UD-Q4_K_M": "gemma-4-26B-A4B-UD-Q4_K_M",
+    "qwen3.8-UD-IQ4_XS-v3": "qwen3.8-27B-UD-IQ4_XS-v3",
+    "gemma4-12B-Q8_0": "gemma-4-12B-it-Q8_0",
+    "gemma4-12B-QAT-Q4_0": "gemma-4-12B-it-qat-Q4_0",
+}
+
+
+def parse_chat_kld(text):
+    """One row per 'A vs B: N positions' block in chat-kld/results.txt."""
+    out = []
+    pat = re.compile(r"^(\S+) vs (\S+): (\d+) positions.*?\n"
+                     r"\s+mean KLD \(top-100 approx\) : ([\d.]+).*?\n"
+                     r"\s+median KLD\s+: ([\d.]+)\n"
+                     r"\s+99% KLD\s+: ([\d.]+)\n"
+                     r"\s+same top-1\s+: ([\d.]+)%", re.M)
+    for m in pat.finditer(text):
+        test, base = m.group(1), m.group(2)
+        out.append({"model": CHAT_KLD_MODELS.get(test, test), "ref": "chat", "base": base,
+                    "positions": int(m.group(3)), "kld": float(m.group(4)),
+                    "median": float(m.group(5)), "kld99": float(m.group(6)),
+                    "same_top": float(m.group(7)), "rms_dp": None, "ppl_ratio": None, "ppl": None})
+    return out
+
+
 def parse_cdn(text):
     m = re.search(r": (\d+)/(\d+) URLs resolve \((\d+)%\) \| (\d+)/(\d+) runs fully clean", text)
     if not m:
@@ -686,6 +715,9 @@ def main():
             if r:
                 ref = "q8_0" if folder == "q8ref" else ("bf16" if "bf16" in h.get("base", "").lower() else h.get("base", "?"))
                 measurements["kld"].append({**common, **r, "ref": ref, "base": h.get("base")})
+        if folder == "chat-kld" and name == "results.txt":
+            for r in parse_chat_kld(text):
+                measurements["kld"].append({**common, **r})
         if name.startswith("cdn-freshness"):
             r = parse_cdn(text)
             if r:

@@ -1,0 +1,46 @@
+def parse_qsl_(qs, keep_blank_values=True):
+    def unquote(s):
+        # Handle '+' as space
+        s = s.replace('+', ' ')
+        # Handle percent-escapes
+        res = []
+        i = 0
+        while i < len(s):
+            if s[i] == '%' and i + 2 < len(s):
+                try:
+                    # Convert hex to integer
+                    byte = int(s[i+1:i+3], 16)
+                    res.append(chr(byte))
+                    i += 3
+                except ValueError:
+                    res.append(s[i])
+                    i += 1
+            else:
+                res.append(s[i])
+                i += 1
+        return "".join(res)
+
+    result = []
+    if not qs:
+        return result
+
+    # Split by '&' only
+    parts = qs.split('&')
+    for part in parts:
+        if not part:
+            continue
+        if '=' in part:
+            key, value = part.split('=', 1)
+            if keep_blank_values:
+                result.append((unquote(key), unquote(value)))
+            else:
+                if value:
+                    result.append((unquote(key), unquote(value)))
+        else:
+            # Component with no '=' yields a pair with an empty value
+            if keep_blank_values:
+                result.append((unquote(part), ""))
+            else:
+                if part:
+                    result.append((unquote(part), ""))
+    return result

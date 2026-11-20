@@ -1,0 +1,22 @@
+def add_months(y, m, d, n):
+    # Calculate the total number of months from year 0
+    # (m - 1) converts the 1-indexed month to a 0-indexed value for easier math
+    total_months = (y * 12) + (m - 1) + n
+    
+    # Calculate new year and month
+    new_y = total_months // 12
+    new_m = (total_months % 12) + 1
+    
+    # Determine the maximum number of days in the target month/year
+    if new_m == 2:
+        is_leap = (new_y % 4 == 0 and new_y % 100 != 0) or (new_y % 400 == 0)
+        max_days = 29 if is_leap else 28
+    elif new_m in [4, 6, 9, 11]:
+        max_days = 30
+    else:
+        max_days = 31
+        
+    # Clamp the day to the maximum allowed for that month
+    new_d = min(d, max_days)
+    
+    return (new_y, new_m, new_d)
