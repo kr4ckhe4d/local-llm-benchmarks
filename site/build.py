@@ -719,6 +719,28 @@ def main():
                  "tau": round(a["tau"], 2) if a["tau"] else None} for a in agg.values()]
         measurements["spec"].append({"path": f, "model": f.split("/")[1], "rows": rows})
 
+    # Arc B580 on ubuntulocal (arc-b580-bench.sh): llama-bench -o json, one file per backend + label
+    measurements["arc"] = []
+    for e in tree:
+        f = e["p"]
+        m = re.match(r"benchmarks/raw/arc-b580/(vulkan|sycl)-(.+)\.json$", f)
+        if not m:
+            continue
+        try:
+            rows = json.loads((ROOT / f).read_text())
+        except ValueError:
+            continue  # a run that died mid-write leaves truncated JSON
+        if not rows:
+            continue
+        tests = {("pp" if r["n_prompt"] else "tg") + (f"@{r['n_depth']}" if r["n_depth"] else ""):
+                 {"ts": round(r["avg_ts"], 1), "sd": round(r["stddev_ts"], 2), "n": r["n_prompt"] or r["n_gen"]}
+                 for r in rows}
+        r0 = rows[0]
+        measurements["arc"].append({"path": f, "backend": m.group(1), "label": m.group(2),
+                                    "model": r0["model_type"], "size": round(r0["model_size"] / 2**30, 2),
+                                    "ncmoe": r0.get("n_cpu_moe", 0), "build": r0["build_commit"],
+                                    "gpu": r0["gpu_info"], "tests": tests})
+
     strata = parse_strata(fileset)  # bench paths are unprefixed
     prod = next((a for a in strata["tuning"] if a["arm"] == "pw2+trim"), None)
     if prod:
@@ -776,6 +798,7 @@ def main():
           f"tput={len(measurements['throughput'])} kld={len(measurements['kld'])} "
           f"cdn={len(measurements['cdn'])} tools={len(measurements['tools'])} fit={len(measurements['fit'])} "
           f"spec={sum(len(x['rows']) for x in measurements['spec'])} "
+          f"arc={len(measurements['arc'])} "
           f"size={total/1e6:.1f}MB", file=sys.stderr)
 
 

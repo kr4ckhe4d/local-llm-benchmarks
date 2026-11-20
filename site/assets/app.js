@@ -203,6 +203,7 @@
       if (kind === 'projects') return projectsPage();
       if (kind === 'densemoe') return denseMoePage();
       if (kind === 'strata-oss') return strataOssPage();
+      if (kind === 'arc') return arcPage();
       if (kind === 'files') return filesPage(rest.join('/'), prevKind === 'files');
       app.innerHTML = `<div class="wrap"><div class="empty">Not found. <a href="#/">Back to overview</a></div></div>`;
     } catch (err) {
@@ -211,7 +212,7 @@
     }
   }
   function setTitle(t) { document.title = t ? `${t} · RDNA4 LLM Research` : 'RDNA4 LLM Research'; }
-  const footer = () => `<div class="footer"><span>Built ${esc(D.meta.built.slice(0, 16).replace('T', ' '))} UTC from ${projects().map(p => `<a href="${p.url}" target="_blank" rel="noopener">${esc(p.name)}</a>@<a class="mono" href="${p.url}/commit/${p.commit}" target="_blank" rel="noopener">${esc(p.commit)}</a>`).join(' · ')}</span><span>Every figure measured on one machine; raw evidence under <a href="#/files/benchmarks/">benchmarks/</a>.</span></div>`;
+  const footer = () => `<div class="footer"><span>Built ${esc(D.meta.built.slice(0, 16).replace('T', ' '))} UTC from ${projects().map(p => `<a href="${p.url}" target="_blank" rel="noopener">${esc(p.name)}</a>@<a class="mono" href="${p.url}/commit/${p.commit}" target="_blank" rel="noopener">${esc(p.commit)}</a>`).join(' · ')}</span><span>Every figure measured on the RDNA4 box unless the page says otherwise (the Arc B580 page is a second machine); raw evidence under <a href="#/files/benchmarks/">benchmarks/</a>.</span></div>`;
 
   // ------------------------------------------------------------------ overview
   async function home() {
@@ -864,6 +865,57 @@
       hbar(el, cs.map(c => ({ label: c.label, value: c.hm, dim: c.spec === 'none', tip: tipRows(c.label, [['harmonic mean', fmt(c.hm, 1) + ' tok/s'], ['generations', c.n], ['draft acceptance', c.accept != null ? c.accept + '%' : null], ...Object.entries(c.prompts).map(([k, v]) => [k, fmt(v, 1) + ' tok/s'])]) })), { labW: Math.min(420, el.clientWidth * 0.55), rowH: 21 });
     };
     $('#rs').onchange = drawRuns; $('#rq').oninput = drawRuns; drawRuns();
+  }
+
+  // ------------------------------------------------------------------ arc b580
+  function arcPage() {
+    setTitle('Arc B580');
+    const A = D.m.arc || [];
+    const NAMES = {
+      'qwen3.5-9B-Q8_0': 'Qwen3.5-9B Q8_0', 'qwen3.5-9B-Q4_K_M': 'Qwen3.5-9B Q4_K_M', 'qwen3.5-9B-Q4_0': 'Qwen3.5-9B Q4_0',
+      'gpt-oss-20b-MXFP4': 'gpt-oss-20b, all on GPU', 'gpt-oss-20b-MXFP4-ncmoe2': 'gpt-oss-20b, -ncmoe 2',
+      'qwen3.6-35B-A3B-Q4_K_M-ncmoe22': 'Qwen3.6-35B-A3B Q4_K_M, -ncmoe 22',
+    };
+    const labels = [...new Set(A.map(r => r.label))].sort((a, b) => Object.keys(NAMES).indexOf(a) - Object.keys(NAMES).indexOf(b));
+    const get = (l, be) => A.find(r => r.label === l && r.backend === be);
+    const BE = [['vulkan', 'Vulkan'], ['sycl', 'SYCL']];
+    const both = labels.filter(l => get(l, 'vulkan') && get(l, 'sycl'));
+    const ratios = both.map(l => get(l, 'sycl').tests.tg.ts / get(l, 'vulkan').tests.tg.ts);
+    const best = [...A].filter(r => r.tests.tg).sort((a, b) => b.tests.tg.ts - a.tests.tg.ts)[0];
+    const moe = get('qwen3.6-35B-A3B-Q4_K_M-ncmoe22', 'sycl');
+    const doc = docBySlug('arc-b580');
+    const legend = `<div class="legend">${BE.map(([, n], i) => `<span><i style="background:var(--s${i + 1})"></i>${n}</span>`).join('')}</div>`;
+    const card = (id, h, sub) => `<div class="card"><h3>${h}</h3><p class="sub">${sub}</p>${legend}<div id="${id}"></div></div>`;
+    app.innerHTML = `<div class="wrap">
+      <div class="page-h"><div class="eyebrow">Second machine · ubuntulocal</div><h1>Intel Arc B580: Vulkan against SYCL</h1>
+      <p>The same llama.cpp commit built twice on a 12 GB Arc B580 (Ryzen 9 5950X, DDR4-3200), run with identical <span class="mono">llama-bench</span> arguments: <span class="mono">-ngl 99 -fa 1</span>, 512-token prompt, 128 generated tokens, empty and 16K deep, 3 repetitions. Not comparable with the RDNA4 numbers elsewhere on this site. Write-up: ${doc ? `<a href="#/doc/arc-b580">arc-b580.md</a>` : 'arc-b580.md'} · evidence: <a href="#/files/benchmarks/raw/arc-b580/">raw/arc-b580/</a>.</p></div>
+      <div class="tiles">
+        <div class="tile"><div class="v">${ratios.length ? `${fmt(Math.min(...ratios), 1)}-${fmt(Math.max(...ratios), 1)}` : '—'}<small>×</small></div><div class="k">SYCL over Vulkan, generation</div><div class="s">${both.length} configs run on both builds</div></div>
+        <div class="tile"><div class="v">${best ? fmt(best.tests.tg.ts, 1) : '—'}<small>tok/s</small></div><div class="k">Fastest generation</div><div class="s">${best ? esc(NAMES[best.label] || best.label) + ', ' + (best.backend === 'sycl' ? 'SYCL' : 'Vulkan') : ''}</div></div>
+        <div class="tile"><div class="v">${moe ? fmt(moe.tests.tg.ts, 1) : '—'}<small>tok/s</small></div><div class="k">35B MoE on a 12 GB card</div><div class="s">${moe ? `${fmt(moe.size, 1)} GiB, ${moe.ncmoe} of 40 expert layers in RAM` : ''}</div></div>
+      </div>
+      <div class="grid2">
+        ${card('a-tg', 'Generation, empty context', 'tg128, tok/s. Hover for spread and file.')}
+        ${card('a-tgd', 'Generation, 16K deep', 'tg128 after 16,384 tokens of context, tok/s.')}
+      </div>
+      <div class="grid2" style="margin-top:16px">
+        ${card('a-pp', 'Prompt reading, empty context', 'pp512, tok/s.')}
+        ${card('a-ppd', 'Prompt reading, 16K deep', 'pp512 after 16,384 tokens of context, tok/s.')}
+      </div>
+      <p class="sub" style="color:var(--ink-2);margin:12px 0 0">gpt-oss-20b fits whole only on Vulkan: SYCL reports ~600 MiB less device memory and fails to allocate its compute buffer at 16K, so both builds were also run with two expert layers in RAM. Qwen3.6-35B-A3B needs 22 of its 40 expert layers in RAM to fit SYCL at 16K; Vulkan used the same split. The Q4 dense quants were requantized from the Q8_0.</p>
+      ${footer()}</div>`;
+    const tip = (r, k) => tipRows(`${NAMES[r.label] || r.label}, ${r.backend === 'sycl' ? 'SYCL' : 'Vulkan'}`, [
+      ['this test', `${fmt(r.tests[k]?.ts, 1)} ± ${fmt(r.tests[k]?.sd, 2)} tok/s`], ['model', r.model], ['size', fmt(r.size, 2) + ' GiB'],
+      ['expert layers in RAM', r.ncmoe ? String(r.ncmoe) : 'none'], ['llama.cpp', r.build], ['file', r.path]]);
+    const rows = k => labels.flatMap(l => BE.map(([be], i) => {
+      const r = get(l, be);
+      return { label: i === 0 ? (NAMES[l] || l) : '', value: r?.tests[k]?.ts ?? null, cls: COLCLS[i], href: r ? fileHref(r.path) : null, tip: r ? tip(r, k) : null };
+    }));
+    const o = { labW: 230, rowH: 18 };
+    hbar($('#a-tg'), rows('tg'), o);
+    hbar($('#a-tgd'), rows('tg@16384'), o);
+    hbar($('#a-pp'), rows('pp'), { ...o, dec: 0 });
+    hbar($('#a-ppd'), rows('pp@16384'), { ...o, dec: 0 });
   }
 
   // ------------------------------------------------------------------ strata
