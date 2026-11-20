@@ -771,6 +771,27 @@ def main():
                                     "ncmoe": r0.get("n_cpu_moe", 0), "build": r0["build_commit"],
                                     "gpu": r0["gpu_info"], "tests": tests})
 
+    # Qwen3-235B over llama.cpp RPC across this PC and ubuntulocal (rpc-qwen3-235b.sh): llama-bench -o json per config
+    measurements["rpc"] = []
+    for e in tree:
+        f = e["p"]
+        m = re.match(r"benchmarks/raw/rpc-qwen3-235b/([^/]+)\.json$", f)
+        if not m:
+            continue
+        try:
+            rows = json.loads((ROOT / f).read_text())
+        except ValueError:
+            continue  # runs killed by the OOM watchdog leave empty files
+        if not rows:
+            continue
+        r0 = rows[0]
+        measurements["rpc"].append({
+            "path": f, "label": m.group(1), "model": r0["model_type"], "size": round(r0["model_size"] / 2**30, 2),
+            "dev": r0["devices"], "ts": r0["tensor_split"], "ot": r0.get("tensor_buft_overrides"),
+            "build": r0["build_commit"], "backends": r0["backends"],
+            "tests": {("pp" if r["n_prompt"] else "tg"): {"ts": round(r["avg_ts"], 2), "sd": round(r["stddev_ts"], 2),
+                                                          "n": r["n_prompt"] or r["n_gen"]} for r in rows}})
+
     strata = parse_strata(fileset)  # bench paths are unprefixed
     prod = next((a for a in strata["tuning"] if a["arm"] == "pw2+trim"), None)
     if prod:
@@ -829,7 +850,7 @@ def main():
           f"cdn={len(measurements['cdn'])} tools={len(measurements['tools'])} fit={len(measurements['fit'])} "
           f"spec={sum(len(x['rows']) for x in measurements['spec'])} "
           f"engineab={sum(len(x['arms']) for x in measurements['engineab'])} "
-          f"arc={len(measurements['arc'])} "
+          f"arc={len(measurements['arc'])} rpc={len(measurements['rpc'])} "
           f"size={total/1e6:.1f}MB", file=sys.stderr)
 
 

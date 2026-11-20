@@ -884,6 +884,8 @@
     const best = [...A].filter(r => r.tests.tg).sort((a, b) => b.tests.tg.ts - a.tests.tg.ts)[0];
     const moe = get('qwen3.6-35B-A3B-Q4_K_M-ncmoe22', 'sycl');
     const doc = docBySlug('arc-b580');
+    const RPC_NAMES = { 'a-4dev': 'A: 11/23/8/52 layers', 'a2-4dev-full': 'A2: 13/28/8/45 layers', 'c-localram': 'C: A2 + 10 layers of experts in local RAM' };
+    const RPC = (D.m.rpc || []).filter(r => RPC_NAMES[r.label]).sort((a, b) => Object.keys(RPC_NAMES).indexOf(a.label) - Object.keys(RPC_NAMES).indexOf(b.label));
     const legend = `<div class="legend">${BE.map(([, n], i) => `<span><i style="background:var(--s${i + 1})"></i>${n}</span>`).join('')}</div>`;
     const card = (id, h, sub) => `<div class="card"><h3>${h}</h3><p class="sub">${sub}</p>${legend}<div id="${id}"></div></div>`;
     app.innerHTML = `<div class="wrap">
@@ -903,6 +905,12 @@
         ${card('a-ppd', 'Prompt reading, 16K deep', 'pp512 after 16,384 tokens of context, tok/s.')}
       </div>
       <p class="sub" style="color:var(--ink-2);margin:12px 0 0">gpt-oss-20b fits whole only on Vulkan: SYCL reports ~600 MiB less device memory and fails to allocate its compute buffer at 16K, so both builds were also run with two expert layers in RAM. Qwen3.6-35B-A3B needs 22 of its 40 expert layers in RAM to fit SYCL at 16K; Vulkan used the same split. The Q4 dense quants were requantized from the Q8_0.</p>
+      ${RPC.length ? `<div class="section-h"><h2>Both machines over RPC: Qwen3-235B-A22B (2026-11-20)</h2>${docBySlug('rpc-qwen3-235b') ? `<a href="#/doc/rpc-qwen3-235b">Write-up →</a>` : ''}</div>
+      <p class="sub" style="color:var(--ink-2);margin:-6px 0 12px">UD-Q3_K_XL, ${fmt(RPC[0].size, 1)} GiB: fits neither box alone. This PC's RX 9070 XT + R9700 (ROCm 7.2.4) as the client, ubuntulocal's B580 and DDR4 behind <span class="mono">rpc-server</span> (Vulkan) over the direct 2.5 GbE cable; <span class="mono">-fa 1 -lm none</span>, 2 repetitions. The layers left in the server's DDR4 set the speed.</p>
+      <div class="grid2">
+        <div class="card"><h3>Generation</h3><p class="sub">tg128, tok/s.</p><div id="a-rpc-tg"></div></div>
+        <div class="card"><h3>Prompt reading</h3><p class="sub">pp512, tok/s.</p><div id="a-rpc-pp"></div></div>
+      </div>` : ''}
       ${footer()}</div>`;
     const tip = (r, k) => tipRows(`${NAMES[r.label] || r.label}, ${r.backend === 'sycl' ? 'SYCL' : 'Vulkan'}`, [
       ['this test', `${fmt(r.tests[k]?.ts, 1)} ± ${fmt(r.tests[k]?.sd, 2)} tok/s`], ['model', r.model], ['size', fmt(r.size, 2) + ' GiB'],
@@ -916,6 +924,13 @@
     hbar($('#a-tgd'), rows('tg@16384'), o);
     hbar($('#a-pp'), rows('pp'), { ...o, dec: 0 });
     hbar($('#a-ppd'), rows('pp@16384'), { ...o, dec: 0 });
+    if (RPC.length) {
+      const rtip = (r, k) => tipRows(RPC_NAMES[r.label], [['this test', `${fmt(r.tests[k]?.ts, 2)} ± ${fmt(r.tests[k]?.sd, 2)} tok/s`],
+        ['devices', r.dev], ['layers per device', r.ts], ['tensor overrides', r.ot && r.ot !== 'none' ? r.ot : null], ['backends', r.backends], ['llama.cpp', r.build], ['file', r.path]]);
+      const rrows = k => RPC.map(r => ({ label: RPC_NAMES[r.label], value: r.tests[k]?.ts ?? null, href: fileHref(r.path), tip: rtip(r, k) }));
+      hbar($('#a-rpc-tg'), rrows('tg'), { labW: 260, rowH: 24, dec: 2 });
+      hbar($('#a-rpc-pp'), rrows('pp'), { labW: 260, rowH: 24, dec: 1 });
+    }
   }
 
   // ------------------------------------------------------------------ strata
