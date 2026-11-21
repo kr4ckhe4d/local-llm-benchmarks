@@ -1,8 +1,8 @@
 diff --git a/tools/server/server-chat.cpp b/tools/server/server-chat.cpp
-index a7431800b..63abd4eeb 100644
+index 1724a6702..a84d4c873 100644
 --- a/tools/server/server-chat.cpp
 +++ b/tools/server/server-chat.cpp
-@@ -622,12 +622,29 @@ json server_chat_convert_anthropic_to_oai(const json & body) {
+@@ -650,12 +650,29 @@ json server_chat_convert_anthropic_to_oai(const json & body) {
      }
  
      // Handle Anthropic-specific thinking param
@@ -39,23 +39,29 @@ index a7431800b..63abd4eeb 100644
      }
  
 diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
-index 311eb4f12..8c67b203c 100644
+index eb5781e74..5d7fedb54 100644
 --- a/tools/server/server-common.cpp
 +++ b/tools/server/server-common.cpp
-@@ -1501,7 +1501,11 @@ json oaicompat_chat_params_parse(
+@@ -1645,12 +1645,16 @@ json oaicompat_chat_params_parse(
              inputs.enable_thinking = false;
              inputs.chat_template_kwargs.erase("reasoning_effort");
          } else if (!reasoning_effort.empty()) {
--            inputs.chat_template_kwargs["reasoning_effort"] = json(reasoning_effort).dump();
 +            // LOCAL PATCH: "minimal" (Pi, OpenAI) is not a level chat templates know; Qwen3.8's
 +            // raises "Unexpected reasoning effort minimal" (HTTP 500). Template gets "low"; the
 +            // budget below still uses "minimal".
-+            inputs.chat_template_kwargs["reasoning_effort"] =
-+                json(reasoning_effort == "minimal" ? std::string("low") : reasoning_effort).dump();
++            const std::string tmpl_effort = reasoning_effort == "minimal" ? std::string("low") : reasoning_effort;
+             const auto rejected = caps.at("reasoning_effort_rejected").get<std::vector<std::string>>();
+-            if (std::find(rejected.begin(), rejected.end(), reasoning_effort) != rejected.end()) {
++            if (std::find(rejected.begin(), rejected.end(), tmpl_effort) != rejected.end()) {
+                 const auto levels = caps.at("reasoning_effort_levels").get<std::vector<std::string>>();
+                 throw std::invalid_argument("reasoning_effort \"" + reasoning_effort + "\" is not supported by the chat template, supported levels: " + string_join(levels, ", "));
+             }
+-            inputs.chat_template_kwargs["reasoning_effort"] = json(reasoning_effort).dump();
++            inputs.chat_template_kwargs["reasoning_effort"] = json(tmpl_effort).dump();
          }
      }
  
-@@ -1519,7 +1523,22 @@ json oaicompat_chat_params_parse(
+@@ -1668,7 +1672,22 @@ json oaicompat_chat_params_parse(
          int reasoning_budget = json_value(body, "reasoning_budget_tokens",
                                 json_value(body, "thinking_budget_tokens", -1));
          if (reasoning_budget == -1) {
