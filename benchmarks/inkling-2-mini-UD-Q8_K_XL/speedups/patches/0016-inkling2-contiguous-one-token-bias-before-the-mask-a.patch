@@ -1,0 +1,63 @@
+From 1958d21348f963d07177c732f410067d45f937d6 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Sat, 21 Nov 2026 15:53:47 +0800
+Subject: [PATCH 16/16] inkling2: contiguous one-token bias before the mask
+ add; cast the masks at the start of the graph
+
+- fix: the one-token relative-position bias reached the mask ADD as a permuted
+  view, which the CPU backend rejects (ADD needs a contiguous src0); it is
+  CONT'ed again
+- the F16 masks are cast to F32 when the inputs are built, not inside the first
+  layer of each kind, so the first SWA and full-attention layers fuse their
+  bias like the others
+---
+ src/llama-graph.cpp     | 10 ++++++++++
+ src/models/inkling2.cpp |  5 ++---
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index 631c726e4..d73e3976d 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -4475,6 +4475,16 @@ llm_graph_input_mem_hybrid_iswa_rel * llm_graph_context::build_inp_mem_hybrid_is
+     ggml_set_input(inp->self_rel_pos_swa);
+     ggml_set_name(inp->self_rel_pos_swa, "attn_inp_rel_pos_swa");
+ 
++    // the F16 masks cast to F32 once, at the start of the graph rather than inside the first layer of each kind
++    for (bool swa : { false, true }) {
++        ggml_tensor * mask = swa ? inp->get_attn()->self_attn_mask_swa.raw : inp->get_attn()->self_attn_mask.raw;
++        if (mask && mask->type != GGML_TYPE_F32) {
++            ggml_tensor *& f32 = swa ? inp->self_kq_mask_swa_f32 : inp->self_kq_mask_f32;
++            f32 = ggml_cast(ctx0, mask, GGML_TYPE_F32);
++            ggml_build_forward_expand(gf, f32);
++        }
++    }
++
+     return (llm_graph_input_mem_hybrid_iswa_rel *) res->add_input(std::move(inp));
+ }
+ 
+diff --git a/src/models/inkling2.cpp b/src/models/inkling2.cpp
+index 9a404ce1a..ff90246dc 100644
+--- a/src/models/inkling2.cpp
++++ b/src/models/inkling2.cpp
+@@ -452,15 +452,14 @@ ggml_tensor * llama_model_inkling2::graph::build_layer(int il, int ip, ggml_tens
+ 
+         ggml_tensor * kq_b;
+         if (n_tokens == 1) {
+-            // one token: the product gives the table as [n_head, n_extent + 1] with no copy, and the mask add
+-            // in build_attn reads the gathered bias through a permuted view
++            // one token: the product gives the table as [n_head, n_extent + 1] with no copy
+             ggml_tensor * table = ggml_mul_mat(ctx0, ggml_reshape_2d(ctx0, Rcur, hparams.n_relative, n_head), bias);
+ 
+             // the sink logit t is per query: exp(s - t)/(1 + sum(exp(s - t))) = exp(s)/(exp(t) + sum(exp(s))), with a zero sink
+             table = ggml_sub(ctx0, table, ggml_reshape_2d(ctx0, sinks, n_head, 1));
+ 
+             kq_b = ggml_get_rows(ctx0, table, rel_pos);
+-            kq_b = ggml_permute(ctx0, ggml_reshape_4d(ctx0, kq_b, n_head, n_kv, 1, 1), 2, 0, 1, 3);
++            kq_b = ggml_cont(ctx0, ggml_permute(ctx0, ggml_reshape_4d(ctx0, kq_b, n_head, n_kv, 1, 1), 2, 0, 1, 3));
+         } else {
+             ggml_tensor * table = ggml_mul_mat(ctx0, bias, Rcur);
+ 
+-- 
+2.56.1
+

@@ -1,0 +1,32 @@
+From f86f0515095d8ef29b04eff2484fe9b54aeb7878 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Sat, 21 Nov 2026 15:19:47 +0800
+Subject: [PATCH 12/16] inkling2: expand each loop controller right after its
+ gain and forget products
+
+The controller's tanh, mul, sub and add then follow its two products in the
+graph, where the CUDA backend runs the whole controller as one kernel.
+KLD vs the original build 0.0018 at batch 1, 0.0021 at batch 512.
+---
+ src/models/inkling2.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/models/inkling2.cpp b/src/models/inkling2.cpp
+index 3cdd1a564..bfddfa143 100644
+--- a/src/models/inkling2.cpp
++++ b/src/models/inkling2.cpp
+@@ -291,7 +291,10 @@ ggml_tensor * llama_model_inkling2::graph::control(ggml_tensor * cur, ggml_tenso
+     ggml_tensor * forget = ggml_tanh(ctx0, forget_mm);
+ 
+     // message first: its view node then stays out from between the tanh and the mul, which fuse
+-    return ggml_add(ctx0, ggml_sub(ctx0, cur, ggml_mul(ctx0, forget, cur)), ggml_mul(ctx0, message, gain));
++    ggml_tensor * res = ggml_add(ctx0, ggml_sub(ctx0, cur, ggml_mul(ctx0, forget, cur)), ggml_mul(ctx0, message, gain));
++    // the whole controller side by side in the graph, where a backend can run it as one step
++    ggml_build_forward_expand(gf, res);
++    return res;
+ }
+ 
+ ggml_tensor * llama_model_inkling2::graph::build_inputs() {
+-- 
+2.56.1
+

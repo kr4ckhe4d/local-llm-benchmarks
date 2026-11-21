@@ -1,0 +1,38 @@
+From 0e2ab2f796bca0df479437fff49092c176834cf5 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Sat, 21 Nov 2026 15:10:10 +0800
+Subject: [PATCH 09/16] CUDA/HIP: keep the src1 of a scaled MUL_MAT_ID alive
+ until its scale MUL
+
+A lone MUL_MAT_ID with a per-expert scale (RESHAPE, REPEAT, GET_ROWS, MUL), as
+the NVFP4 down projection, only fused when the allocator happened not to put
+the scaled output over the expert input. With the alloc dep all 88 NVFP4 expert
+products of an Inkling-2-Mini token fuse (74 before), 3681 -> 3653 kernels.
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index dc62fadc7..9f8b94965 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -5917,6 +5917,16 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
+                 }
+             }
+ 
++            // A single MUL_MAT_ID with a per-expert scale (RESHAPE, REPEAT, GET_ROWS, MUL), e.g. the NVFP4 down
++            // projection: its src1 must not be reused for the scaled output, or the fusion is refused.
++            if (i + 4 < cgraph->n_nodes && cgraph->nodes[i]->op == GGML_OP_MUL_MAT_ID && cgraph->nodes[i + 4]->op == GGML_OP_MUL &&
++                    ggml_cuda_get_mul_mat_id_scale(cgraph->nodes[i + 1], cgraph->nodes[i + 2], cgraph->nodes[i + 3],
++                                                   cgraph->nodes[i + 4], cgraph->nodes[i])) {
++                add_alloc_deps(i, i + 4);
++                i += 4;
++                continue;
++            }
++
+             ggml_cuda_moe_weighted_reduction_match match;
+             if (ggml_cuda_match_moe_weighted_reduction(cgraph, i, match)) {
+                 params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(match.experts), match.dst);
+-- 
+2.56.1
+

@@ -1,0 +1,281 @@
+From 321e08799ee4dcdc28399a08605efaf10f1a8aa8 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Sat, 21 Nov 2026 14:48:07 +0800
+Subject: [PATCH 05/16] CUDA/HIP: run consecutive matrix-vector products on the
+ same vector in one mmvf launch
+
+Up to four consecutive MUL_MAT nodes with the same F32 vector src1 and 2D
+F32/F16/BF16 src0 of one type and row length run as one mul_mat_vec_f grid:
+the rows of the grid go through the matrices in turn, each block writes to
+its matrix's dst. Separate Q/K/V-style projections of one input stop paying a
+launch each.
+
+New test-backend-ops case MUL_MAT_SAME_SRC1 (F32/F16/BF16, 2 to 4 matrices,
+row counts with and without a multiple of 256), all pass on ROCm with the
+MUL_MAT tolerance; the unfused path has the same errors.
+---
+ ggml/src/ggml-cuda/common.cuh   |  8 +++++
+ ggml/src/ggml-cuda/ggml-cuda.cu | 55 +++++++++++++++++++++++++++++++
+ ggml/src/ggml-cuda/mmvf.cu      | 38 +++++++++++++++++++---
+ tests/test-backend-ops.cpp      | 57 +++++++++++++++++++++++++++++++++
+ 4 files changed, 153 insertions(+), 5 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
+index 053ed60f7..09ec769fe 100644
+--- a/ggml/src/ggml-cuda/common.cuh
++++ b/ggml/src/ggml-cuda/common.cuh
+@@ -1502,6 +1502,10 @@ struct ggml_cuda_mm_fusion_args_host {
+     const ggml_tensor * shared_up = nullptr;
+     const ggml_tensor * shared_gate = nullptr;
+     ggml_tensor * shared_dst = nullptr;
++    // up to MMVF_MAX_EXTRA more matrices on the same src1, their rows follow those of src0 in one launch (mmvf)
++    int n_extra = 0;
++    const ggml_tensor * x_extra[3] = {};
++    ggml_tensor * dst_extra[3] = {};
+ };
+ struct ggml_cuda_mm_fusion_args_device {
+     const void * x_bias = nullptr;
+@@ -1515,6 +1519,10 @@ struct ggml_cuda_mm_fusion_args_device {
+     const void * shared_gate = nullptr;
+     float * shared_dst = nullptr;
+     uint32_t shared_stride_col_dst = 0;
++    int n_extra = 0;
++    const void * x_extra[3] = {};
++    float * dst_extra[3] = {};
++    int row_start[4] = {};  // first row of each matrix in the grid, row_start[0] = 0
+ };
+ 
+ struct ggml_cuda_kernel_launch_params {
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index e7da8e52e..5eef0b0e2 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -4506,6 +4506,46 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
+ }
+ 
+ // try and fuse nodes and return the number of nodes to skip
++// the number of consecutive MUL_MAT nodes from i, at most 4, that one mmvf launch can compute: one F32 vector, the
++// same src1, 2D contiguous src0 of one type and row length, and no node reading another's result
++static int ggml_cuda_mul_mat_vec_f_group(const ggml_cgraph * cgraph, int i) {
++    const ggml_tensor * first = cgraph->nodes[i];
++    const ggml_tensor * src1  = first->src[1];
++    const int cc        = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
++    const int warp_size = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
++
++    auto eligible = [&](const ggml_tensor * mm) {
++        const ggml_tensor * src0 = mm->src[0];
++        return mm->op == GGML_OP_MUL_MAT && mm->src[1] == src1 && (mm->flags & GGML_TENSOR_FLAG_COMPUTE) &&
++            (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16) &&
++            src0->type == first->src[0]->type && src0->ne[0] == first->src[0]->ne[0] && src0->nb[1] == first->src[0]->nb[1] &&
++            src0->ne[2] == 1 && src0->ne[3] == 1 && ggml_is_contiguous(src0) &&
++            mm->type == GGML_TYPE_F32 && ggml_is_contiguous(mm) && !ggml_cuda_op_mul_mat_use_fwht(mm) &&
++            ggml_cuda_should_use_mmvf(src0, cc, warp_size, 1);
++    };
++
++    if (src1->type != GGML_TYPE_F32 || !ggml_is_contiguous(src1) || ggml_nrows(src1) != 1 || !eligible(first)) {
++        return 1;
++    }
++
++    int n = 1;
++    while (n < 4 && i + n < cgraph->n_nodes) {
++        const ggml_tensor * mm = cgraph->nodes[i + n];
++        if (!eligible(mm)) {
++            break;
++        }
++        bool reads_group = false;
++        for (int k = 0; k < n; ++k) {
++            reads_group |= mm->src[0] == cgraph->nodes[i + k] || mm->src[0]->view_src == cgraph->nodes[i + k];
++        }
++        if (reads_group) {
++            break;
++        }
++        ++n;
++    }
++    return n;
++}
++
+ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, int i) {
+ 
+     if (ggml_cuda_fusion_disabled()) {
+@@ -5353,6 +5393,21 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         return 2;
+     }
+ 
++    // consecutive matrix-vector products on the same vector in one mmvf launch (e.g. separate Q, K, V projections)
++    if (node->op == GGML_OP_MUL_MAT) {
++        const int n_fused = ggml_cuda_mul_mat_vec_f_group(cgraph, i);
++        if (n_fused > 1) {
++            ggml_cuda_mm_fusion_args_host args;
++            args.n_extra = n_fused - 1;
++            for (int k = 1; k < n_fused; ++k) {
++                args.x_extra[k - 1]   = cgraph->nodes[i + k]->src[0];
++                args.dst_extra[k - 1] = cgraph->nodes[i + k];
++            }
++            ggml_cuda_mul_mat_vec_f(*cuda_ctx, node->src[0], node->src[1], nullptr, node, &args);
++            return n_fused - 1;
++        }
++    }
++
+     return 0;
+ }
+ 
+diff --git a/ggml/src/ggml-cuda/mmvf.cu b/ggml/src/ggml-cuda/mmvf.cu
+index 7d6055bf1..55bf6e9d9 100644
+--- a/ggml/src/ggml-cuda/mmvf.cu
++++ b/ggml/src/ggml-cuda/mmvf.cu
+@@ -23,11 +23,20 @@ static __global__ void mul_mat_vec_f(
+     if ((int) blockIdx.x >= nrows) {
+         return;
+     }
++    // several matrices on the same y: the rows of the grid run through them in turn
++    int row = blockIdx.x;
++    for (int k = fusion.n_extra; k > 0; --k) {
++        if (row >= fusion.row_start[k]) {
++            x_ptr   = static_cast<const T *>(fusion.x_extra[k - 1]);
++            dst_ptr = fusion.dst_extra[k - 1];
++            row    -= fusion.row_start[k];
++            break;
++        }
++    }
+     const T       * GGML_CUDA_RESTRICT x   = x_ptr;
+     const float   * GGML_CUDA_RESTRICT y   = y_ptr;
+     const int32_t * GGML_CUDA_RESTRICT ids = ids_ptr;
+     float         * GGML_CUDA_RESTRICT dst = dst_ptr;
+-    const int row         = blockIdx.x;
+     // for MUL_MAT_ID - blockIdx.y = n_expert_used, blockIdx.z = ncols_dst (tokens)
+     const int channel_dst = blockIdx.y;
+     const int tid         = threadIdx.x;
+@@ -764,6 +773,25 @@ void ggml_cuda_mul_mat_vec_f(ggml_backend_cuda_context & ctx, const ggml_tensor
+         fusion_local.glu_limit = fusion->glu_limit;
+     }
+ 
++    // more matrices on the same src1, one vector: their rows extend the grid
++    int64_t nrows_total = ne01;
++    if (fusion && fusion->n_extra > 0) {
++        GGML_ASSERT(!ids && ne11 == 1 && ne02 == 1 && ne03 == 1 && dst->ne[1] == 1);
++        GGML_ASSERT(!fusion->gate && !fusion->x_bias && !fusion->x_scale);
++        GGML_ASSERT(fusion->n_extra <= 3);
++        fusion_local.n_extra = fusion->n_extra;
++        for (int k = 0; k < fusion->n_extra; ++k) {
++            const ggml_tensor * xk = fusion->x_extra[k];
++            ggml_tensor       * dk = fusion->dst_extra[k];
++            GGML_ASSERT(xk->type == src0->type && xk->ne[0] == ne00 && xk->nb[1] == nb01 && xk->ne[2] == 1 && xk->ne[3] == 1);
++            GGML_ASSERT(dk->type == GGML_TYPE_F32 && ggml_is_contiguous(dk) && dk->ne[0] == xk->ne[1] && ggml_nrows(dk) == 1);
++            fusion_local.x_extra[k]       = xk->data;
++            fusion_local.dst_extra[k]     = (float *) dk->data;
++            fusion_local.row_start[k + 1] = (int) nrows_total;
++            nrows_total += xk->ne[1];
++        }
++    }
++
+     const int64_t s01 = src0->nb[1] / ts_src0;
+     const int64_t s11 = src1->nb[1] / ts_src1;
+     const int64_t s1  =  dst->nb[1] / ts_dst;
+@@ -788,25 +816,25 @@ void ggml_cuda_mul_mat_vec_f(ggml_backend_cuda_context & ctx, const ggml_tensor
+     switch (src0->type) {
+         case GGML_TYPE_F32: {
+             const float * src0_d = (const float *) src0->data;
+-            mul_mat_vec_f_cuda(src0_d, src1_d, ids_d, fusion_local, dst_d, ne00, ne01, ncols_dst, s01, stride_col_y, stride_col_dst,
++            mul_mat_vec_f_cuda(src0_d, src1_d, ids_d, fusion_local, dst_d, ne00, nrows_total, ncols_dst, s01, stride_col_y, stride_col_dst,
+                 ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
+                 ne03,              ne3,           s03, s13,              s3,                 ids_stride, prec, ctx.stream());
+         } break;
+         case GGML_TYPE_F16: {
+             const half * src0_d = (const half *) src0->data;
+-            mul_mat_vec_f_cuda(src0_d, src1_d, ids_d, fusion_local, dst_d, ne00, ne01, ncols_dst, s01, stride_col_y, stride_col_dst,
++            mul_mat_vec_f_cuda(src0_d, src1_d, ids_d, fusion_local, dst_d, ne00, nrows_total, ncols_dst, s01, stride_col_y, stride_col_dst,
+                 ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
+                 ne03,              ne3,           s03, s13,              s3,                 ids_stride, prec, ctx.stream());
+         } break;
+         case GGML_TYPE_BF16: {
+             const nv_bfloat16 * src0_d = (const nv_bfloat16 *) src0->data;
+-            mul_mat_vec_f_cuda(src0_d, src1_d, ids_d, fusion_local, dst_d, ne00, ne01, ncols_dst, s01, stride_col_y, stride_col_dst,
++            mul_mat_vec_f_cuda(src0_d, src1_d, ids_d, fusion_local, dst_d, ne00, nrows_total, ncols_dst, s01, stride_col_y, stride_col_dst,
+                 ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
+                 ne03,              ne3,           s03, s13,              s3,                 ids_stride, prec, ctx.stream());
+         } break;
+         case GGML_TYPE_F8_E4M3: {
+             const ggml_fp8_e4m3_t * src0_d = (const ggml_fp8_e4m3_t *) src0->data;
+-            mul_mat_vec_f_cuda(src0_d, src1_d, ids_d, fusion_local, dst_d, ne00, ne01, ncols_dst, s01, stride_col_y, stride_col_dst,
++            mul_mat_vec_f_cuda(src0_d, src1_d, ids_d, fusion_local, dst_d, ne00, nrows_total, ncols_dst, s01, stride_col_y, stride_col_dst,
+                 ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
+                 ne03, ne3, s03, s13, s3, ids_stride, prec, ctx.stream());
+         } break;
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 5d7efe527..9f39f4b20 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -4976,6 +4976,55 @@ struct test_ssm_conv_res_scale : public test_case {
+     }
+ };
+ 
++// consecutive GGML_OP_MUL_MAT on the same vector (fused into one launch by CUDA mmvf)
++struct test_mul_mat_same_src1 : public test_case {
++    const ggml_type type;
++    const int64_t k;
++    const std::vector<int64_t> rows;
++
++    std::string op_desc(ggml_tensor * t) override {
++        GGML_UNUSED(t);
++        return "MUL_MAT_SAME_SRC1";
++    }
++
++    bool run_whole_graph() override { return true; }
++
++    double max_nmse_err() override {
++        return 5e-4; // as test_mul_mat
++    }
++
++    std::string vars() override {
++        std::string r;
++        for (int64_t n : rows) {
++            r += (r.empty() ? "" : ":") + std::to_string(n);
++        }
++        return VARS_TO_STR2(type, k) + ",rows=" + r;
++    }
++
++    test_mul_mat_same_src1(ggml_type type, int64_t k, std::vector<int64_t> rows)
++        : type(type), k(k), rows(std::move(rows)) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, k, 1);
++        ggml_set_name(x, "x");
++
++        std::vector<ggml_tensor *> outs;
++        for (size_t i = 0; i < rows.size(); ++i) {
++            ggml_tensor * w = ggml_new_tensor_2d(ctx, type, k, rows[i]);
++            ggml_set_name(w, ("w" + std::to_string(i)).c_str());
++            outs.push_back(ggml_mul_mat(ctx, w, x));
++        }
++
++        // concatenated right to left, so that the graph visits all products first, side by side
++        ggml_tensor * out = outs.back();
++        for (size_t i = outs.size() - 1; i-- > 0;) {
++            out = ggml_concat(ctx, outs[i], out, 0);
++        }
++        ggml_set_name(out, "out");
++        return out;
++    }
++};
++
+ // GGML_OP_SSM_SCAN
+ struct test_ssm_scan : public test_case {
+     const ggml_type type;
+@@ -11915,6 +11964,14 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+ 
++    // matrix-vector products on one vector, in one launch (Inkling 2 Q/gate/R/sink, K/V, loop controllers)
++    for (ggml_type type : { GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16 }) {
++        test_cases.emplace_back(new test_mul_mat_same_src1(type, 2304, { 3072, 3072, 384, 24 }));
++        test_cases.emplace_back(new test_mul_mat_same_src1(type, 2304, { 1024, 32 }));
++        test_cases.emplace_back(new test_mul_mat_same_src1(type, 64, { 2304, 2304 }));
++        test_cases.emplace_back(new test_mul_mat_same_src1(type, 256, { 256, 512, 7 }));
++    }
++
+     // fused ssm_conv + residual add + scale (Inkling 2 short convolutions)
+     for (int64_t d_inner : {1024, 2304}) {
+         test_cases.emplace_back(new test_ssm_conv_res_scale(GGML_TYPE_F32, {4, d_inner, 1, 1}, {4, d_inner, 1, 1}, 0.447f));
+-- 
+2.56.1
+

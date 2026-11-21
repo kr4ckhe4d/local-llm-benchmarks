@@ -46,6 +46,7 @@ in the linked files.
 | [turboquant.md](turboquant.md) | TurboQuant 2-4 bit KV-cache quantization |
 | [instella-moe.md](instella-moe.md) | AMD Instella-MoE-16B-A3B |
 | [nemotron-3.5-lightning-30B.md](nemotron-3.5-lightning-30B.md) | Nemotron 3.5 Lightning 30B-A3B `Q8_0`: the repo's fastest generation and cheapest 128K, spent on 28K reasoning tokens a task |
+| [inkling-2-mini-speedups.md](inkling-2-mini-speedups.md) | Inkling-2-Mini 31 to 54 tok/s on the R9700: fewer kernels per token, CUDA/HIP fusions, and an RDNA4 matvec grid fix |
 | [handover.md](handover.md) | Working notes, including the KLD-vs-BF16 quant study |
 | [`models-preset.ini`](models-preset.ini) | The llama-server router presets, each with the measurements that set it |
 | [`benchmarks/`](benchmarks/) | The scripts (`fit.sh`, `kld-test.sh`, `throughput-test.py`, ...) and raw logs |

@@ -1,0 +1,505 @@
+From b30e0d08bf1cdb8a6c6d6a7c24d4fee8f2148ba3 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Sat, 21 Nov 2026 15:53:47 +0800
+Subject: [PATCH 15/16] CUDA/HIP: fused relative-position bias for one token;
+ memory safety for the single-token fusions
+
+- new fusion MUL_MAT(r, table) -> SUB(sinks) -> GET_ROWS(distance) -> CONT ->
+  ADD(mask) -> CPY(F16): one kernel computes only the gathered entries,
+  (<r_h, table_rel[i]> - sinks[h]) + mask[i] in F16, instead of the whole
+  [n_head, n_extent + 1] table and four more kernels (Inkling 2, per layer)
+- fix: the fused single-token kernels (conv step, depth mix, controller mix,
+  MUL + L2_NORM, relative bias) run at the first node of their pattern but
+  write the output of the last, which the allocator may place over an input
+  that dies inside the pattern. They now fuse only when no output overlaps an
+  input read across threads (element-wise inputs may be the output itself),
+  and graph_optimize adds alloc deps for them so that this stays the common
+  case. Before, a batch-1 perplexity run over several chunks went NaN once the
+  allocator reused Rcur's memory for the bias.
+
+R9700 Inkling-2-Mini UD-Q8_K_XL tg128 51.0 -> 54.0 tok/s, 2337 -> 2138
+kernels per token; KLD vs the original build at batch 1 over 4 chunks 0.0018.
+New test-backend-ops case REL_BIAS.
+---
+ ggml/src/ggml-cuda/ctrl-mix.cu   | 148 +++++++++++++++++++++++++++++--
+ ggml/src/ggml-cuda/ctrl-mix.cuh  |  35 +++++++-
+ ggml/src/ggml-cuda/depth-mix.cu  |  21 ++---
+ ggml/src/ggml-cuda/depth-mix.cuh |   2 +-
+ ggml/src/ggml-cuda/ggml-cuda.cu  |  51 ++++++++---
+ tests/test-backend-ops.cpp       |  81 +++++++++++++++++
+ 6 files changed, 298 insertions(+), 40 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/ctrl-mix.cu b/ggml/src/ggml-cuda/ctrl-mix.cu
+index 674834d10..844361cc4 100644
+--- a/ggml/src/ggml-cuda/ctrl-mix.cu
++++ b/ggml/src/ggml-cuda/ctrl-mix.cu
+@@ -48,7 +48,7 @@ static void ctrl_mix_span(const ggml_tensor * t, int64_t & beg, int64_t & end) {
+     }
+ }
+ 
+-int ggml_cuda_match_ctrl_mix(const ggml_cgraph * cgraph, int i) {
++int ggml_cuda_match_ctrl_mix(const ggml_cgraph * cgraph, int i, bool check_memory) {
+     // the compute nodes of the pattern, view nodes may sit between them
+     const ggml_op ops[8] = { GGML_OP_MUL_MAT, GGML_OP_MUL_MAT, GGML_OP_UNARY, GGML_OP_MUL, GGML_OP_SUB, GGML_OP_UNARY, GGML_OP_MUL, GGML_OP_ADD };
+     int idx[8];
+@@ -113,11 +113,9 @@ int ggml_cuda_match_ctrl_mix(const ggml_cgraph * cgraph, int i) {
+             return -1;
+         }
+     }
+-    // the output is read element-wise from cur and msg, but g is read by every row
+-    int64_t ob, oe, gb, ge;
+-    ctrl_mix_span(add, ob, oe);
+-    ctrl_mix_span(g, gb, ge);
+-    if (ob < ge && gb < oe) {
++    // cur and msg are read element-wise, g by every row
++    if (check_memory && (ggml_cuda_fusion_overlap(add, g) || !ggml_cuda_fusion_elementwise_ok(add, cur) ||
++                         !ggml_cuda_fusion_elementwise_ok(add, msg))) {
+         return -1;
+     }
+     return idx[7];
+@@ -191,7 +189,7 @@ static __global__ void mul_l2_norm_f32(const float * x, const float * w, float *
+     }
+ }
+ 
+-int ggml_cuda_match_mul_l2_norm(const ggml_cgraph * cgraph, int i) {
++int ggml_cuda_match_mul_l2_norm(const ggml_cgraph * cgraph, int i, bool check_memory) {
+     if (i + 1 >= cgraph->n_nodes) {
+         return -1;
+     }
+@@ -217,6 +215,11 @@ int ggml_cuda_match_mul_l2_norm(const ggml_cgraph * cgraph, int i) {
+             last = i + 2;
+         }
+     }
++    // a row is read whole before it is written, by one warp: the output may only be exactly an input
++    const ggml_tensor * out = cgraph->nodes[last];
++    if (check_memory && (!ggml_cuda_fusion_elementwise_ok(out, mul->src[0]) || !ggml_cuda_fusion_elementwise_ok(out, mul->src[1]))) {
++        return -1;
++    }
+     return last;
+ }
+ 
+@@ -237,3 +240,134 @@ void ggml_cuda_op_mul_l2_norm(ggml_backend_cuda_context & ctx, const ggml_cgraph
+     mul_l2_norm_f32<<<grid, block_size, 0, ctx.stream()>>>((const float *) mul->src[0]->data, (const float *) mul->src[1]->data,
+         (float *) out->data, ncols, nrows, eps, scale);
+ }
++
++// out[h, i] = f16((<r_h, table_rel[i]> - sinks[h]) + mask[i]), stored as [n_kv, 1, n_head]
++static __global__ void rel_bias_f32_f16(const float * __restrict__ r, const float * __restrict__ table, const int64_t table_s1,
++        const float * __restrict__ sinks, const int32_t * __restrict__ rel, const float * __restrict__ mask,
++        half * __restrict__ dst, const int n_rel, const int n_kv) {
++    const int i = blockIdx.x*blockDim.x + threadIdx.x;
++    const int h = blockIdx.y;
++    if (i >= n_kv) {
++        return;
++    }
++    const float * rh = r + (int64_t) h*n_rel;
++    const float * ti = table + (int64_t) rel[i]*table_s1;
++    float dot = 0.0f;
++    for (int k = 0; k < n_rel; ++k) {
++        dot += rh[k]*ti[k];
++    }
++    dst[(int64_t) h*n_kv + i] = __float2half((dot - sinks[h]) + mask[i]);
++}
++
++int ggml_cuda_match_rel_bias(const ggml_cgraph * cgraph, int i, bool check_memory) {
++    const ggml_op ops[6] = { GGML_OP_MUL_MAT, GGML_OP_SUB, GGML_OP_GET_ROWS, GGML_OP_CONT, GGML_OP_ADD, GGML_OP_CPY };
++    int idx[6];
++    int n = 0;
++    for (int k = i; k < cgraph->n_nodes && n < 6; ++k) {
++        const ggml_tensor * t = cgraph->nodes[k];
++        if (ctrl_mix_is_view(t) && n > 0) {
++            continue;
++        }
++        if (t->op != ops[n]) {
++            return -1;
++        }
++        idx[n++] = k;
++    }
++    if (n < 6) {
++        return -1;
++    }
++    const ggml_tensor * mm   = cgraph->nodes[idx[0]];
++    const ggml_tensor * sub  = cgraph->nodes[idx[1]];
++    const ggml_tensor * gr   = cgraph->nodes[idx[2]];
++    const ggml_tensor * cont = cgraph->nodes[idx[3]];
++    const ggml_tensor * add  = cgraph->nodes[idx[4]];
++    const ggml_tensor * cpy  = cgraph->nodes[idx[5]];
++
++    const ggml_tensor * r     = mm->src[0];   // [n_rel, n_head]
++    const ggml_tensor * table = mm->src[1];   // [n_rel, n_extent + 1]
++    const ggml_tensor * sinks = sub->src[1];  // [n_head, 1]
++    const ggml_tensor * rel   = gr->src[1];   // I32 [n_kv, 1]
++    const ggml_tensor * kqb   = cont->src[0]; // permuted view of gr, [n_kv, 1, n_head]
++    const ggml_tensor * mask  = add->src[1];  // [n_kv, 1]
++
++    const int64_t n_rel  = r->ne[0];
++    const int64_t n_head = r->ne[1];
++    const int64_t n_kv   = rel->ne[0];
++
++    if (r->type != GGML_TYPE_F32 || table->type != GGML_TYPE_F32 || !ggml_is_contiguous(r) || r->ne[2] != 1 ||
++            table->nb[0] != sizeof(float) || table->ne[0] != n_rel || table->ne[2] != 1 || mm->ne[0] != n_head) {
++        return -1;
++    }
++    if (sub->src[0] != mm || sinks->type != GGML_TYPE_F32 || !ggml_is_contiguous(sinks) || ggml_nelements(sinks) != n_head ||
++            sinks->ne[0] != n_head) {
++        return -1;
++    }
++    if (gr->src[0] != sub || rel->type != GGML_TYPE_I32 || !ggml_is_contiguous(rel) || ggml_nelements(rel) != n_kv) {
++        return -1;
++    }
++    // the bias reaches the add through views of the gathered rows only, as [n_kv, 1, n_head]
++    const ggml_tensor * v = kqb;
++    while (v != gr && ctrl_mix_is_view(v)) {
++        v = v->src[0];
++    }
++    if (v != gr || kqb->ne[0] != n_kv || kqb->ne[1] != 1 || kqb->ne[2] != n_head || kqb->ne[3] != 1 ||
++            kqb->nb[0] != gr->nb[1] || kqb->nb[2] != gr->nb[0]) {
++        return -1;
++    }
++    if (add->src[0] != cont || !ggml_are_same_shape(cont, kqb) || mask->type != GGML_TYPE_F32 || mask->ne[0] != n_kv ||
++            ggml_nelements(mask) != n_kv || mask->nb[0] != sizeof(float)) {
++        return -1;
++    }
++    if (cpy->src[0] != add || cpy->type != GGML_TYPE_F16 || !ggml_is_contiguous(cpy) || !ggml_are_same_shape(cpy, add) ||
++            !ggml_is_contiguous(cpy->src[1])) {
++        return -1;
++    }
++    for (int k = 0; k < 5; ++k) {
++        const ggml_tensor * t = cgraph->nodes[idx[k]];
++        if (ggml_node_get_use_count(cgraph, idx[k]) != 1 || (t->flags & GGML_TENSOR_FLAG_OUTPUT)) {
++            return -1;
++        }
++    }
++    for (int k = 0; k < 6; ++k) {
++        if (!(cgraph->nodes[idx[k]]->flags & GGML_TENSOR_FLAG_COMPUTE)) {
++            return -1;
++        }
++    }
++    // every input is read by many threads
++    for (const ggml_tensor * src : { r, table, sinks, rel, mask }) {
++        if (check_memory && ggml_cuda_fusion_overlap(cpy->src[1], src)) {
++            return -1;
++        }
++    }
++    return idx[5];
++}
++
++void ggml_cuda_op_rel_bias(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last) {
++    const ggml_tensor * mm   = cgraph->nodes[i];
++    ggml_tensor       * cpy  = cgraph->nodes[last];
++    const ggml_tensor * add  = cpy->src[0];
++    const ggml_tensor * sub  = mm;
++    // walk back from the add to the SUB and GET_ROWS
++    const ggml_tensor * v = add->src[0];
++    while (v->op != GGML_OP_GET_ROWS) {
++        v = v->src[0];
++    }
++    const ggml_tensor * gr = v;
++    sub = gr->src[0];
++
++    const ggml_tensor * r     = mm->src[0];
++    const ggml_tensor * table = mm->src[1];
++    const ggml_tensor * sinks = sub->src[1];
++    const ggml_tensor * rel   = gr->src[1];
++    const ggml_tensor * mask  = add->src[1];
++
++    const int n_rel  = (int) r->ne[0];
++    const int n_head = (int) r->ne[1];
++    const int n_kv   = (int) rel->ne[0];
++
++    constexpr int block_size = 256;
++    const dim3 grid((n_kv + block_size - 1)/block_size, n_head);
++    rel_bias_f32_f16<<<grid, block_size, 0, ctx.stream()>>>((const float *) r->data, (const float *) table->data,
++        table->nb[1]/sizeof(float), (const float *) sinks->data, (const int32_t *) rel->data, (const float *) mask->data,
++        (half *) cpy->src[1]->data, n_rel, n_kv);
++}
+diff --git a/ggml/src/ggml-cuda/ctrl-mix.cuh b/ggml/src/ggml-cuda/ctrl-mix.cuh
+index 69358fd8a..f03023963 100644
+--- a/ggml/src/ggml-cuda/ctrl-mix.cuh
++++ b/ggml/src/ggml-cuda/ctrl-mix.cuh
+@@ -1,12 +1,43 @@
+ #include "common.cuh"
+ 
++// The fused kernels below run at the first node of their pattern but write the output of the last one, which the
++// allocator may have placed in the memory of an input that dies inside the pattern. They fuse only when every output
++// either does not overlap an input the kernel reads, or (for element-wise inputs) is exactly that input.
++static inline void ggml_cuda_fusion_span(const ggml_tensor * t, int64_t & beg, int64_t & end) {
++    beg = (int64_t) t->data;
++    end = beg + ggml_type_size(t->type);
++    for (int d = 0; d < GGML_MAX_DIMS; ++d) {
++        end += (t->ne[d] - 1)*t->nb[d];
++    }
++}
++
++static inline bool ggml_cuda_fusion_overlap(const ggml_tensor * a, const ggml_tensor * b) {
++    int64_t ab, ae, bb, be;
++    ggml_cuda_fusion_span(a, ab, ae);
++    ggml_cuda_fusion_span(b, bb, be);
++    return ab < be && bb < ae;
++}
++
++// in may be read element-wise at the index out writes: no overlap, or the very same contiguous elements
++static inline bool ggml_cuda_fusion_elementwise_ok(const ggml_tensor * out, const ggml_tensor * in) {
++    return !ggml_cuda_fusion_overlap(out, in) ||
++        (out->data == in->data && ggml_is_contiguous(out) && ggml_is_contiguous(in) && ggml_nelements(out) == ggml_nelements(in) &&
++         ggml_type_size(out->type) == ggml_type_size(in->type));
++}
++
+ // A gated mix of two vectors driven by two small matrix-vector products (Inkling 2 loop controllers), one token:
+ // MUL_MAT(W_f, g), MUL_MAT(W_g, g), TANH, MUL(., cur), SUB(cur, .), TANH, MUL(msg, .), ADD
+ // = cur - tanh(W_f g)*cur + msg*tanh(W_g g). Returns the index of the ADD, or -1.
+-int  ggml_cuda_match_ctrl_mix(const ggml_cgraph * cgraph, int i);
++int  ggml_cuda_match_ctrl_mix(const ggml_cgraph * cgraph, int i, bool check_memory = true);
+ void ggml_cuda_op_ctrl_mix(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last);
+ 
+ // MUL(x, w) -> L2_NORM [-> SCALE], w of the shape of x, as one kernel with a warp per row (Inkling 2 clipped Q and R).
+ // Returns the index of the last node, or -1.
+-int  ggml_cuda_match_mul_l2_norm(const ggml_cgraph * cgraph, int i);
++int  ggml_cuda_match_mul_l2_norm(const ggml_cgraph * cgraph, int i, bool check_memory = true);
+ void ggml_cuda_op_mul_l2_norm(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last);
++
++// A relative-position attention bias for one token (Inkling 2): MUL_MAT(r, table) -> SUB(sinks) -> GET_ROWS(distance)
++// -> PERMUTE -> ADD(mask) -> CPY(F16) as one kernel that computes only the gathered entries. Returns the index of the
++// CPY, or -1.
++int  ggml_cuda_match_rel_bias(const ggml_cgraph * cgraph, int i, bool check_memory = true);
++void ggml_cuda_op_rel_bias(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last);
+diff --git a/ggml/src/ggml-cuda/depth-mix.cu b/ggml/src/ggml-cuda/depth-mix.cu
+index ecee24786..ddcc597a0 100644
+--- a/ggml/src/ggml-cuda/depth-mix.cu
++++ b/ggml/src/ggml-cuda/depth-mix.cu
+@@ -1,4 +1,5 @@
+ #include "depth-mix.cuh"
++#include "ctrl-mix.cuh"
+ 
+ // out[:, q] = sum_j softmax_j(scale*<s_j, query_q>) s_j over the states s_j: the n_blocks stored (already
+ // normalized) blocks, then rms_norm(cur). One pass gathers the sum of squares of cur and all dot products (those of
+@@ -113,15 +114,7 @@ static __global__ void depth_mix_f32(
+     }
+ }
+ 
+-static void depth_mix_span(const ggml_tensor * t, int64_t & beg, int64_t & end) {
+-    beg = (int64_t) t->data;
+-    end = beg + ggml_type_size(t->type);
+-    for (int d = 0; d < GGML_MAX_DIMS; ++d) {
+-        end += (t->ne[d] - 1)*t->nb[d];
+-    }
+-}
+-
+-bool ggml_cuda_match_depth_mix(const ggml_cgraph * cgraph, int i) {
++bool ggml_cuda_match_depth_mix(const ggml_cgraph * cgraph, int i, bool check_memory) {
+     if (i + 6 >= cgraph->n_nodes) {
+         return false;
+     }
+@@ -176,13 +169,9 @@ bool ggml_cuda_match_depth_mix(const ggml_cgraph * cgraph, int i) {
+             return false;
+         }
+     }
+-    // the output is written while the blocks and the query are read
+-    int64_t ob, oe;
+-    depth_mix_span(m2, ob, oe);
+-    for (const ggml_tensor * src : { blocks, query }) {
+-        int64_t b, e;
+-        depth_mix_span(src, b, e);
+-        if (ob < e && b < oe) {
++    // the output is written while the blocks, the query and cur are read
++    for (const ggml_tensor * src : { blocks, query, cur }) {
++        if (check_memory && ggml_cuda_fusion_overlap(m2, src)) {
+             return false;
+         }
+     }
+diff --git a/ggml/src/ggml-cuda/depth-mix.cuh b/ggml/src/ggml-cuda/depth-mix.cuh
+index 5e3a34e76..a341e4f46 100644
+--- a/ggml/src/ggml-cuda/depth-mix.cuh
++++ b/ggml/src/ggml-cuda/depth-mix.cuh
+@@ -6,5 +6,5 @@
+ // One token of attention over stored states (Inkling 2 block attention residuals):
+ // RMS_NORM(cur) -> TRANSPOSE -> CONCAT(blocks_t, cur_t) -> CONCAT(blocks, cur) -> MUL_MAT(states, query) -> SOFT_MAX
+ // -> MUL_MAT(states_t, scores). Returns true and runs it as one kernel when node i starts that pattern.
+-bool ggml_cuda_match_depth_mix(const ggml_cgraph * cgraph, int i);
++bool ggml_cuda_match_depth_mix(const ggml_cgraph * cgraph, int i, bool check_memory = true);
+ void ggml_cuda_op_depth_mix(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i);
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 0f9c4d869..6e8007996 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -4510,7 +4510,7 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
+ // try and fuse nodes and return the number of nodes to skip
+ // a short convolution step for one token: CONCAT(history, x) -> VIEW(last n_conv - 1 columns) -> VIEW(state cell)
+ // -> CPY -> SSM_CONV -> RESHAPE -> ADD(residual) -> SCALE (Inkling 2), returns the index of the SCALE or -1
+-static int ggml_cuda_match_ssm_conv_step(const ggml_cgraph * cgraph, int i) {
++static int ggml_cuda_match_ssm_conv_step(const ggml_cgraph * cgraph, int i, bool check_memory = true) {
+     if (i + 7 >= cgraph->n_nodes) {
+         return -1;
+     }
+@@ -4568,19 +4568,10 @@ static int ggml_cuda_match_ssm_conv_step(const ggml_cgraph * cgraph, int i) {
+             return -1;
+         }
+     }
+-    // the output may share memory with the residual (read at the index written) but not with the history
+-    auto span = [](const ggml_tensor * t, int64_t & beg, int64_t & end) {
+-        beg = (int64_t) t->data;
+-        end = beg;
+-        for (int d = 0; d < GGML_MAX_DIMS; ++d) {
+-            end += (t->ne[d] - 1)*t->nb[d];
+-        }
+-        end += ggml_type_size(t->type);
+-    };
+-    int64_t ob, oe, pb, pe;
+-    span(scale, ob, oe);
+-    span(past, pb, pe);
+-    if (ob < pe && pb < oe) {
++    // the history and the weights are read across channels, x and the residual element-wise (x as [1, nc] of cur)
++    if (check_memory && (ggml_cuda_fusion_overlap(scale, past) || ggml_cuda_fusion_overlap(scale, w) ||
++            !ggml_cuda_fusion_elementwise_ok(scale, res) ||
++            (ggml_cuda_fusion_overlap(scale, x) && !(scale->data == x->data && x->nb[1] == sizeof(float))))) {
+         return -1;
+     }
+     return i + 7;
+@@ -5495,6 +5486,14 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         }
+     }
+ 
++    if (node->op == GGML_OP_MUL_MAT) {
++        const int last = ggml_cuda_match_rel_bias(cgraph, i);
++        if (last > 0) {
++            ggml_cuda_op_rel_bias(*cuda_ctx, cgraph, i, last);
++            return last - i;
++        }
++    }
++
+     if (node->op == GGML_OP_MUL_MAT) {
+         const int last = ggml_cuda_match_ctrl_mix(cgraph, i);
+         if (last > 0) {
+@@ -5950,6 +5949,30 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
+                 continue;
+             }
+ 
++            // the fused single-token kernels (Inkling 2): keep their inputs alive until their last node, so that
++            // the output they write early is never placed over an input they still read
++            {
++                int last = -1;
++                const ggml_op op = cgraph->nodes[i]->op;
++                if (op == GGML_OP_CONCAT) {
++                    last = ggml_cuda_match_ssm_conv_step(cgraph, i, false);
++                } else if (op == GGML_OP_RMS_NORM) {
++                    last = ggml_cuda_match_depth_mix(cgraph, i, false) ? i + 6 : -1;
++                } else if (op == GGML_OP_MUL) {
++                    last = ggml_cuda_match_mul_l2_norm(cgraph, i, false);
++                } else if (op == GGML_OP_MUL_MAT) {
++                    last = ggml_cuda_match_rel_bias(cgraph, i, false);
++                    if (last < 0) {
++                        last = ggml_cuda_match_ctrl_mix(cgraph, i, false);
++                    }
++                }
++                if (last > i) {
++                    add_alloc_deps(i, last);
++                    i = last;
++                    continue;
++                }
++            }
++
+             ggml_cuda_moe_weighted_reduction_match match;
+             if (ggml_cuda_match_moe_weighted_reduction(cgraph, i, match)) {
+                 params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(match.experts), match.dst);
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index f8f6a9545..37184593c 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -4976,6 +4976,81 @@ struct test_ssm_conv_res_scale : public test_case {
+     }
+ };
+ 
++// relative-position attention bias for one token (Inkling 2, fused by CUDA): the product of r and the bias table,
++// minus the sinks, gathered by distance, plus the mask, in F16
++struct test_rel_bias : public test_case {
++    const int64_t n_rel;
++    const int64_t n_head;
++    const int64_t n_ext;
++    const int64_t n_kv;
++
++    std::string op_desc(ggml_tensor * t) override {
++        GGML_UNUSED(t);
++        return "REL_BIAS";
++    }
++
++    bool run_whole_graph() override { return true; }
++
++    double max_nmse_err() override {
++        return 1e-5; // F16 output
++    }
++
++    std::string vars() override {
++        return VARS_TO_STR4(n_rel, n_head, n_ext, n_kv);
++    }
++
++    test_rel_bias(int64_t n_rel, int64_t n_head, int64_t n_ext, int64_t n_kv) : n_rel(n_rel), n_head(n_head), n_ext(n_ext), n_kv(n_kv) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * r     = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rel, n_head);
++        ggml_tensor * bias  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rel, n_ext);
++        ggml_tensor * sinks = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_head);
++        ggml_tensor * rel   = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, n_kv, 1);
++        ggml_tensor * mask  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_kv, 1);
++        ggml_set_name(r, "r");
++        ggml_set_name(bias, "bias");
++        ggml_set_name(sinks, "sinks");
++        ggml_set_name(rel, "rel");
++        ggml_set_name(mask, "mask");
++
++        ggml_tensor * table = ggml_pad(ctx, bias, 0, 1, 0, 0);
++        if (gf) {
++            ggml_build_forward_expand(gf, table);
++        }
++        table = ggml_mul_mat(ctx, r, table);
++        table = ggml_sub(ctx, table, ggml_reshape_2d(ctx, sinks, n_head, 1));
++
++        ggml_tensor * kq_b = ggml_get_rows(ctx, table, rel);
++        kq_b = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, kq_b, n_head, n_kv, 1, 1), 2, 0, 1, 3));
++
++        ggml_tensor * out = ggml_cast(ctx, ggml_add(ctx, kq_b, mask), GGML_TYPE_F16);
++        ggml_set_name(out, "out");
++        return out;
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        std::mt19937 rng(42);
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
++            if (t->type == GGML_TYPE_I32) {
++                std::vector<int32_t> v(ggml_nelements(t));
++                std::uniform_int_distribution<int32_t> d(0, (int32_t) n_ext);
++                for (auto & x : v) {
++                    x = d(rng);
++                }
++                ggml_backend_tensor_set(t, v.data(), 0, ggml_nbytes(t));
++            } else if (strcmp(t->name, "mask") == 0) {
++                std::vector<float> v(ggml_nelements(t));
++                for (size_t i = 0; i < v.size(); ++i) {
++                    v[i] = i % 3 == 0 ? -10000.0f : 0.0f;
++                }
++                ggml_backend_tensor_set(t, v.data(), 0, ggml_nbytes(t));
++            } else if (t->op == GGML_OP_NONE) {
++                init_tensor_uniform(t);
++            }
++        }
++    }
++};
++
+ // MUL(x, w) -> L2_NORM [-> SCALE] (Inkling 2 clipped Q and R, fused by CUDA)
+ struct test_mul_l2_norm : public test_case {
+     const std::array<int64_t, 4> ne;
+@@ -12166,6 +12241,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+ 
++    // relative-position attention bias for one token (Inkling 2)
++    test_cases.emplace_back(new test_rel_bias(16, 24, 1024, 1536));
++    test_cases.emplace_back(new test_rel_bias(16, 24, 1024, 256));
++    test_cases.emplace_back(new test_rel_bias(16, 24, 4096, 4096));
++    test_cases.emplace_back(new test_rel_bias(8, 5, 100, 300));
++
+     // per-channel scale, L2 norm with a clip threshold as eps, optional rescale (Inkling 2 Q and R)
+     for (bool with_scale : { false, true }) {
+         test_cases.emplace_back(new test_mul_l2_norm({128, 24, 1, 1}, 22.6f, with_scale));
+-- 
+2.56.1
+

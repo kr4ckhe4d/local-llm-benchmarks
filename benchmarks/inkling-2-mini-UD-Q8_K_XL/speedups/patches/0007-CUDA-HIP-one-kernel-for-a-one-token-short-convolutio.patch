@@ -1,0 +1,289 @@
+From c41b7352865b425bb03a60ee2eca9ca9989d05e9 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Sat, 21 Nov 2026 15:05:18 +0800
+Subject: [PATCH 07/16] CUDA/HIP: one kernel for a one-token short convolution
+ step with its state
+
+CONCAT(history, x) -> VIEW -> CPY(last n_conv - 1 columns to the state cell)
+-> SSM_CONV -> RESHAPE -> ADD(residual) -> SCALE, for one token and one
+sequence, runs as one kernel per channel: it reads the history and x, writes
+(sum(window*w) + res)*scale and the shifted window to the state. The window
+tensor is never written. Matches only with the exact node order and use counts,
+and not when the output overlaps the history.
+
+New test-backend-ops case SSM_CONV_STEP (n_conv 2-4, offset history views),
+all fused and passing on ROCm.
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu | 87 +++++++++++++++++++++++++++++++++
+ ggml/src/ggml-cuda/ssm-conv.cu  | 67 +++++++++++++++++++++++++
+ ggml/src/ggml-cuda/ssm-conv.cuh |  4 ++
+ tests/test-backend-ops.cpp      | 54 ++++++++++++++++++++
+ 4 files changed, 212 insertions(+)
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 5eef0b0e2..dc62fadc7 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -4506,6 +4506,84 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
+ }
+ 
+ // try and fuse nodes and return the number of nodes to skip
++// a short convolution step for one token: CONCAT(history, x) -> VIEW(last n_conv - 1 columns) -> VIEW(state cell)
++// -> CPY -> SSM_CONV -> RESHAPE -> ADD(residual) -> SCALE (Inkling 2), returns the index of the SCALE or -1
++static int ggml_cuda_match_ssm_conv_step(const ggml_cgraph * cgraph, int i) {
++    if (i + 7 >= cgraph->n_nodes) {
++        return -1;
++    }
++    const ggml_tensor * concat  = cgraph->nodes[i];
++    const ggml_tensor * v_last  = cgraph->nodes[i + 1];
++    const ggml_tensor * v_cell  = cgraph->nodes[i + 2];
++    const ggml_tensor * cpy     = cgraph->nodes[i + 3];
++    const ggml_tensor * conv    = cgraph->nodes[i + 4];
++    const ggml_tensor * reshape = cgraph->nodes[i + 5];
++    const ggml_tensor * add     = cgraph->nodes[i + 6];
++    const ggml_tensor * scale   = cgraph->nodes[i + 7];
++
++    if (concat->op != GGML_OP_CONCAT || v_last->op != GGML_OP_VIEW || v_cell->op != GGML_OP_VIEW || cpy->op != GGML_OP_CPY ||
++            conv->op != GGML_OP_SSM_CONV || reshape->op != GGML_OP_RESHAPE || add->op != GGML_OP_ADD || scale->op != GGML_OP_SCALE) {
++        return -1;
++    }
++
++    const ggml_tensor * past = concat->src[0];
++    const ggml_tensor * x    = concat->src[1];
++    const ggml_tensor * w    = conv->src[1];
++    const int64_t n_cols = past->ne[0];
++    const int64_t nc     = concat->ne[1];
++
++    // one token and one sequence, F32, the window along dim 0
++    if (ggml_get_op_params_i32(concat, 0) != 0 || concat->type != GGML_TYPE_F32 || past->type != GGML_TYPE_F32 ||
++            x->type != GGML_TYPE_F32 || w->type != GGML_TYPE_F32 || x->ne[0] != 1 || concat->ne[2] != 1 || concat->ne[3] != 1 ||
++            past->nb[0] != sizeof(float) || w->nb[0] != sizeof(float) || w->ne[0] != n_cols + 1 || w->ne[1] != nc ||
++            n_cols < 1 || n_cols > 3) {
++        return -1;
++    }
++    // the store copies the last n_cols columns of the window into a dense cell
++    if (v_last->src[0] != concat || v_last->view_offs != sizeof(float) || v_last->ne[0] != n_cols || v_last->ne[1] != nc ||
++            cpy->src[0] != v_last || cpy->src[1] != v_cell || v_cell->type != GGML_TYPE_F32 || !ggml_is_contiguous(v_cell) ||
++            ggml_nelements(v_cell) != n_cols*nc) {
++        return -1;
++    }
++    if (conv->src[0] != concat || reshape->src[0] != conv || scale->src[0] != add ||
++            (add->src[0] != reshape && add->src[1] != reshape) || ggml_get_op_params_f32(scale, 1) != 0.0f) {
++        return -1;
++    }
++    const ggml_tensor * res = add->src[0] == reshape ? add->src[1] : add->src[0];
++    if (res->type != GGML_TYPE_F32 || !ggml_is_contiguous(res) || ggml_nelements(res) != nc || !ggml_is_contiguous(scale) ||
++            scale->type != GGML_TYPE_F32) {
++        return -1;
++    }
++    // the window and its views stay inside the step
++    if (ggml_node_get_use_count(cgraph, i) != 2 || ggml_node_get_use_count(cgraph, i + 1) != 1 ||
++            ggml_node_get_use_count(cgraph, i + 4) != 1 || ggml_node_get_use_count(cgraph, i + 5) != 1 ||
++            ggml_node_get_use_count(cgraph, i + 6) != 1) {
++        return -1;
++    }
++    for (int k = 0; k <= 7; ++k) {
++        const ggml_tensor * t = cgraph->nodes[i + k];
++        if (!(t->flags & GGML_TENSOR_FLAG_COMPUTE) || ((t->flags & GGML_TENSOR_FLAG_OUTPUT) && k != 3 && k != 7)) {
++            return -1;
++        }
++    }
++    // the output may share memory with the residual (read at the index written) but not with the history
++    auto span = [](const ggml_tensor * t, int64_t & beg, int64_t & end) {
++        beg = (int64_t) t->data;
++        end = beg;
++        for (int d = 0; d < GGML_MAX_DIMS; ++d) {
++            end += (t->ne[d] - 1)*t->nb[d];
++        }
++        end += ggml_type_size(t->type);
++    };
++    int64_t ob, oe, pb, pe;
++    span(scale, ob, oe);
++    span(past, pb, pe);
++    if (ob < pe && pb < oe) {
++        return -1;
++    }
++    return i + 7;
++}
++
+ // the number of consecutive MUL_MAT nodes from i, at most 4, that one mmvf launch can compute: one F32 vector, the
+ // same src1, 2D contiguous src0 of one type and row length, and no node reading another's result
+ static int ggml_cuda_mul_mat_vec_f_group(const ggml_cgraph * cgraph, int i) {
+@@ -5393,6 +5471,15 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         return 2;
+     }
+ 
++    if (node->op == GGML_OP_CONCAT) {
++        const int last = ggml_cuda_match_ssm_conv_step(cgraph, i);
++        if (last > 0) {
++            ggml_cuda_op_ssm_conv_step(*cuda_ctx, node, cgraph->nodes[i + 3], cgraph->nodes[i + 4], cgraph->nodes[i + 6],
++                                       cgraph->nodes[last]);
++            return last - i;
++        }
++    }
++
+     // consecutive matrix-vector products on the same vector in one mmvf launch (e.g. separate Q, K, V projections)
+     if (node->op == GGML_OP_MUL_MAT) {
+         const int n_fused = ggml_cuda_mul_mat_vec_f_group(cgraph, i);
+diff --git a/ggml/src/ggml-cuda/ssm-conv.cu b/ggml/src/ggml-cuda/ssm-conv.cu
+index 6f8eecf63..ed508c7b7 100644
+--- a/ggml/src/ggml-cuda/ssm-conv.cu
++++ b/ggml/src/ggml-cuda/ssm-conv.cu
+@@ -238,3 +238,70 @@ void ggml_cuda_op_ssm_conv(ggml_backend_cuda_context & ctx, ggml_tensor * dst, g
+                           lay->nb[2], nc, nr, n_t, n_s, stream);
+     }
+ }
++
++// one token of a short convolution with its state: the window is the n_conv - 1 columns of history and the new
++// column x, out = (sum(window*w) + res)*scale, and the state keeps the last n_conv - 1 columns of the window
++template <int d_conv>
++static __global__ void ssm_conv_step_f32(
++        const float * __restrict__ past, const int64_t past_s1, const char * __restrict__ x, const int64_t x_s,
++        const float * __restrict__ w, const int64_t w_s1, const float * res, const float scale,
++        float * dst, float * __restrict__ state, const int nc) {
++    const int c = blockIdx.x*blockDim.x + threadIdx.x;
++    if (c >= nc) {
++        return;
++    }
++
++    float win[d_conv];
++#pragma unroll
++    for (int k = 0; k < d_conv - 1; ++k) {
++        win[k] = past[c*past_s1 + k];
++    }
++    win[d_conv - 1] = *(const float *) (x + c*x_s);
++
++    float sumf = 0.0f;
++#pragma unroll
++    for (int k = 0; k < d_conv; ++k) {
++        sumf += win[k] * w[c*w_s1 + k];
++    }
++    const float y = (sumf + res[c]) * scale;
++
++#pragma unroll
++    for (int k = 0; k < d_conv - 1; ++k) {
++        state[c*(d_conv - 1) + k] = win[k + 1];
++    }
++    dst[c] = y;
++}
++
++void ggml_cuda_op_ssm_conv_step(ggml_backend_cuda_context & ctx, const ggml_tensor * concat, ggml_tensor * cpy,
++        const ggml_tensor * conv, const ggml_tensor * add, ggml_tensor * scale) {
++    const ggml_tensor * past  = concat->src[0];   // [n_conv - 1, nc]
++    const ggml_tensor * x     = concat->src[1];   // [1, nc]
++    const ggml_tensor * w     = conv->src[1];     // [n_conv, nc]
++    const ggml_tensor * state = cpy->src[1];      // n_conv - 1 floats per channel
++    const ggml_tensor * res   = add->src[0]->op == GGML_OP_RESHAPE && add->src[0]->src[0] == conv ? add->src[1] : add->src[0];
++
++    const int nc     = (int) w->ne[1];
++    const int n_conv = (int) w->ne[0];
++
++    const int64_t past_s1 = past->nb[1] / sizeof(float);
++    const int64_t w_s1    = w->nb[1] / sizeof(float);
++    const float   s       = ggml_get_op_params_f32(scale, 0);
++
++    const int block = 256;
++    const dim3 grid((nc + block - 1) / block);
++    cudaStream_t stream = ctx.stream();
++
++    const float * past_d  = (const float *) past->data;
++    const char  * x_d     = (const char *) x->data;
++    const float * w_d     = (const float *) w->data;
++    const float * res_d   = (const float *) res->data;
++    float       * dst_d   = (float *) scale->data;
++    float       * state_d = (float *) state->data;
++
++    switch (n_conv) {
++        case 2: ssm_conv_step_f32<2><<<grid, block, 0, stream>>>(past_d, past_s1, x_d, x->nb[1], w_d, w_s1, res_d, s, dst_d, state_d, nc); break;
++        case 3: ssm_conv_step_f32<3><<<grid, block, 0, stream>>>(past_d, past_s1, x_d, x->nb[1], w_d, w_s1, res_d, s, dst_d, state_d, nc); break;
++        case 4: ssm_conv_step_f32<4><<<grid, block, 0, stream>>>(past_d, past_s1, x_d, x->nb[1], w_d, w_s1, res_d, s, dst_d, state_d, nc); break;
++        default: GGML_ABORT("unsupported conv width %d", n_conv);
++    }
++}
+diff --git a/ggml/src/ggml-cuda/ssm-conv.cuh b/ggml/src/ggml-cuda/ssm-conv.cuh
+index e6c07e3a5..b0508d17f 100644
+--- a/ggml/src/ggml-cuda/ssm-conv.cuh
++++ b/ggml/src/ggml-cuda/ssm-conv.cuh
+@@ -2,3 +2,7 @@
+ 
+ void ggml_cuda_op_ssm_conv(ggml_backend_cuda_context & ctx, ggml_tensor * dst, ggml_tensor * bias_add_node = nullptr, ggml_tensor * silu_dst = nullptr,
+                            ggml_tensor * res_add_node = nullptr, ggml_tensor * res_scale_dst = nullptr);
++
++// CONCAT(history, x) -> VIEW -> CPY(state) -> SSM_CONV -> RESHAPE -> ADD(residual) -> SCALE, for one token and sequence
++void ggml_cuda_op_ssm_conv_step(ggml_backend_cuda_context & ctx, const ggml_tensor * concat, ggml_tensor * cpy,
++        const ggml_tensor * conv, const ggml_tensor * add, ggml_tensor * scale);
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 9f39f4b20..44c8fa2f2 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -4976,6 +4976,53 @@ struct test_ssm_conv_res_scale : public test_case {
+     }
+ };
+ 
++// one token of a short convolution with its state (fused by CUDA): CONCAT(history, x) -> CPY(last columns to the
++// state) -> SSM_CONV -> ADD(residual) -> SCALE, the output holds the new state and the convolution
++struct test_ssm_conv_step : public test_case {
++    const int64_t n_conv;
++    const int64_t nc;
++    const int64_t ch_offs; // channel offset of the history view in a wider history
++
++    std::string op_desc(ggml_tensor * t) override {
++        GGML_UNUSED(t);
++        return "SSM_CONV_STEP";
++    }
++
++    bool run_whole_graph() override { return true; }
++
++    std::string vars() override {
++        return VARS_TO_STR3(n_conv, nc, ch_offs);
++    }
++
++    test_ssm_conv_step(int64_t n_conv, int64_t nc, int64_t ch_offs) : n_conv(n_conv), nc(nc), ch_offs(ch_offs) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * hist  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_conv - 1, nc + 2*ch_offs);
++        ggml_tensor * cur   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nc, 1);
++        ggml_tensor * w     = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_conv, nc);
++        ggml_tensor * state = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (n_conv - 1)*nc, 1);
++        ggml_set_name(hist, "hist");
++        ggml_set_name(cur, "cur");
++        ggml_set_name(w, "w");
++        ggml_set_name(state, "state");
++
++        ggml_tensor * past = ggml_view_3d(ctx, hist, n_conv - 1, nc, 1, hist->nb[1], hist->nb[1]*hist->ne[1], ch_offs*hist->nb[1]);
++        ggml_tensor * x    = ggml_concat(ctx, past, ggml_transpose(ctx, ggml_reshape_3d(ctx, cur, nc, 1, 1)), 0);
++
++        ggml_tensor * last = ggml_view_3d(ctx, x, n_conv - 1, nc, 1, x->nb[1], x->nb[2], ggml_row_size(x->type, 1));
++        ggml_tensor * cell = ggml_view_2d(ctx, state, (n_conv - 1)*nc, 1, state->nb[1], 0);
++        ggml_tensor * stored = ggml_cpy(ctx, last, cell);
++
++        ggml_tensor * conv = ggml_reshape_2d(ctx, ggml_ssm_conv(ctx, x, w), nc, 1);
++        ggml_tensor * y    = ggml_scale(ctx, ggml_add(ctx, cur, conv), 0.33f);
++
++        // the store first, so that the graph keeps the step's nodes side by side
++        ggml_tensor * out = ggml_concat(ctx, stored, y, 0);
++        ggml_set_name(out, "out");
++        return out;
++    }
++};
++
+ // consecutive GGML_OP_MUL_MAT on the same vector (fused into one launch by CUDA mmvf)
+ struct test_mul_mat_same_src1 : public test_case {
+     const ggml_type type;
+@@ -11964,6 +12011,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+ 
++    // one token of a short convolution with its state (Inkling 2)
++    for (int64_t n_conv : {2, 3, 4}) {
++        test_cases.emplace_back(new test_ssm_conv_step(n_conv, 1024, 0));
++        test_cases.emplace_back(new test_ssm_conv_step(n_conv, 2304, 1024));
++        test_cases.emplace_back(new test_ssm_conv_step(n_conv, 384, 7));
++    }
++
+     // matrix-vector products on one vector, in one launch (Inkling 2 Q/gate/R/sink, K/V, loop controllers)
+     for (ggml_type type : { GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16 }) {
+         test_cases.emplace_back(new test_mul_mat_same_src1(type, 2304, { 3072, 3072, 384, 24 }));
+-- 
+2.56.1
+

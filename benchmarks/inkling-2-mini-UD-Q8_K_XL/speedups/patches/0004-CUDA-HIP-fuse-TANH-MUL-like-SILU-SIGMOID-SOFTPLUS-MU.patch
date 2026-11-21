@@ -1,0 +1,70 @@
+From 4c2507f86ebf4731ce39254def8e8db82470b31b Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Sat, 21 Nov 2026 14:37:24 +0800
+Subject: [PATCH 04/16] CUDA/HIP: fuse TANH + MUL like SILU/SIGMOID/SOFTPLUS +
+ MUL
+
+Inkling 2's loop controllers gate with tanh(W x)*cur and tanh(W x)*message, two
+pairs per controller, 96 controllers per token. R9700 tg128 40.2 -> 40.5 tok/s
+on Inkling-2-Mini UD-Q8_K_XL, output unchanged. TANH added to the
+test_unary_mul cases (40 pass on ROCm).
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu | 6 ++++--
+ ggml/src/ggml-cuda/unary.cu     | 3 +++
+ tests/test-backend-ops.cpp      | 2 +-
+ 3 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 32f1e39cf..e7da8e52e 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -4422,7 +4422,8 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
+     }
+ 
+     if (ops.size() == 2 && ops.begin()[0] == GGML_OP_UNARY && ops.begin()[1] == GGML_OP_MUL
+-     && unary_ops.size() == 1 && (unary_ops.begin()[0] == GGML_UNARY_OP_SILU || unary_ops.begin()[0] == GGML_UNARY_OP_SIGMOID || unary_ops.begin()[0] == GGML_UNARY_OP_SOFTPLUS)) {
++     && unary_ops.size() == 1 && (unary_ops.begin()[0] == GGML_UNARY_OP_SILU || unary_ops.begin()[0] == GGML_UNARY_OP_SIGMOID ||
++                                  unary_ops.begin()[0] == GGML_UNARY_OP_SOFTPLUS || unary_ops.begin()[0] == GGML_UNARY_OP_TANH)) {
+         const ggml_tensor * unary = cgraph->nodes[node_idx];
+         const ggml_tensor * mul   = cgraph->nodes[node_idx+1];
+ 
+@@ -5331,7 +5332,8 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+ 
+     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_SILU }) ||
+         ggml_cuda_can_fuse(cgraph, i, { GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_SIGMOID }) ||
+-        ggml_cuda_can_fuse(cgraph, i, { GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_SOFTPLUS })) {
++        ggml_cuda_can_fuse(cgraph, i, { GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_SOFTPLUS }) ||
++        ggml_cuda_can_fuse(cgraph, i, { GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_TANH })) {
+         ggml_cuda_op_unary_mul(*cuda_ctx, node, cgraph->nodes[i + 1]);
+         return 1;
+     }
+diff --git a/ggml/src/ggml-cuda/unary.cu b/ggml/src/ggml-cuda/unary.cu
+index b3b6aa48d..95dec64a2 100644
+--- a/ggml/src/ggml-cuda/unary.cu
++++ b/ggml/src/ggml-cuda/unary.cu
+@@ -756,6 +756,9 @@ void ggml_cuda_op_unary_mul(ggml_backend_cuda_context & ctx, ggml_tensor * unary
+         case GGML_UNARY_OP_SOFTPLUS:
+             ggml_cuda_op_unary_mul_impl<op_softplus>(ctx, unary_node, mul_node);
+             break;
++        case GGML_UNARY_OP_TANH:
++            ggml_cuda_op_unary_mul_impl<op_tanh>(ctx, unary_node, mul_node);
++            break;
+         default:
+             GGML_ABORT("Unsupported unary op for fused unary+mul");
+     }
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 1e9800f55..5d7efe527 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10783,7 +10783,7 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     }
+ 
+     // fused unary + mul (gated activations that are not expressed as GGML_OP_GLU)
+-    for (ggml_unary_op op : { GGML_UNARY_OP_GELU, GGML_UNARY_OP_SILU, GGML_UNARY_OP_RELU, GGML_UNARY_OP_SIGMOID, GGML_UNARY_OP_SOFTPLUS }) {
++    for (ggml_unary_op op : { GGML_UNARY_OP_GELU, GGML_UNARY_OP_SILU, GGML_UNARY_OP_RELU, GGML_UNARY_OP_SIGMOID, GGML_UNARY_OP_SOFTPLUS, GGML_UNARY_OP_TANH }) {
+         for (ggml_type type : { GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_BF16 }) {
+             for (bool swap : { false, true }) {
+                 test_cases.emplace_back(new test_unary_mul(op, type, { 128, 2, 2, 2 }, swap));
+-- 
+2.56.1
+

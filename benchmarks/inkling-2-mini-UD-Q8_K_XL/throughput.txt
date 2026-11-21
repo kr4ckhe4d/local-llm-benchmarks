@@ -11,3 +11,27 @@
 | inkling2_loop ?B BF16 |  21.29 GiB | 26.07 B | ROCm    |  99 |  1 | ROCm1 | dio |  tg128 |  30.98 ± 0.12 |
 
 Generation in the server runs was 27-30 tok/s.
+
+## Why only 31 tok/s (2026-11-21)
+Same file, same R9700, Vulkan (RADV, build-vk of the same worktree) vs ROCm, llama-bench -fa 1 -lm dio -r 3:
+
+| backend | pp512          | tg128        |
+| ------- | -------------: | -----------: |
+| Vulkan1 | 629.65 ± 8.22  | 27.00 ± 0.02 |
+| ROCm1   | 825.34 ± 2.81  | 30.98 ± 0.12 |
+
+Vulkan is slower, so ROCm is not the cause. The cause is the graph: test-export-graph-ops
+(graph-ops.txt) reports 12,178 nodes per token, 4,150 of them views, so ~8,000 kernels per
+generated token (48 layer passes from the 3x loop over layers 6-18, each with shortconv,
+relative attention, attention-residual and loop-gate ops on 2-5 element tensors).
+test-backend-ops perf on ROCm1 (op-perf-rocm.txt; it hit a GPU memory fault after 240 of 310
+ops, all generation-shape matmuls finished) puts every tiny op at ~2.9-3.4 us. The weight
+matmuls run at bandwidth: 8-expert MUL_MAT_ID 21 us NVFP4 down (~570 GB/s of active
+weights), 28 us NVFP4 gate_up, 65 / 150 us BF16 down / gate_up (~570-660 GB/s); the 201K
+output head 1.6 ms (539 GB/s). Summed, weight reads are ~8 ms of the 32 ms per token; the
+other ~24 ms is ~8,000 small kernels at ~3 us each. Getting past ~30 tok/s needs op fusion
+in llama.cpp's inkling2_loop graph, not a different backend or quant.
+
+Follow-up (same day): with fewer kernels per token and CUDA/HIP fusions on a local llama.cpp branch,
+tg128 on the R9700 went 31.0 -> 54.0 tok/s, pp512 825 -> 876. See ../../inkling-2-mini-speedups.md and
+speedups/ (final throughput, build-equivalence KLD, test results and the 16 patches).
