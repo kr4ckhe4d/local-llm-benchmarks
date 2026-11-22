@@ -1,0 +1,1 @@
+"""Tiny personal-finance ledger."""

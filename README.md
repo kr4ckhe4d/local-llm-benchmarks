@@ -47,6 +47,8 @@ in the linked files.
 | [instella-moe.md](instella-moe.md) | AMD Instella-MoE-16B-A3B |
 | [nemotron-3.5-lightning-30B.md](nemotron-3.5-lightning-30B.md) | Nemotron 3.5 Lightning 30B-A3B `Q8_0`: the repo's fastest generation and cheapest 128K, spent on 28K reasoning tokens a task |
 | [inkling-2-mini-speedups.md](inkling-2-mini-speedups.md) | Inkling-2-Mini 31 to 54 tok/s on the R9700: fewer kernels per token, CUDA/HIP fusions, and an RDNA4 matvec grid fix |
+| [huihui-qwen3.8-27b.md](huihui-qwen3.8-27b.md) | Huihui-Qwen3.8-27B-abliterated UD-Q6_K_XL against stock Qwen3.8 Q6 from 0 to 120K context (2.5-3.6% slower generation, 8-13% faster prefill), then Huihui alone to 261K: 20.9 tok/s and recall 5/5 at 240K |
+| [agent-eval.md](agent-eval.md) | Agentic coding eval: 21 tasks (10 synthetic repos, 11 real bug fixes from click, tomlkit, sqlparse and Python-Markdown), sandboxed tool loop, hidden tests, ×3. Huihui-Qwen3.8-27B and stock Qwen3.8-27B tie at 42/63; false claims 6 vs 4 |
 | [handover.md](handover.md) | Working notes, including the KLD-vs-BF16 quant study |
 | [`models-preset.ini`](models-preset.ini) | The llama-server router presets, each with the measurements that set it |
 | [`benchmarks/`](benchmarks/) | The scripts (`fit.sh`, `kld-test.sh`, `throughput-test.py`, ...) and raw logs |
@@ -855,6 +857,9 @@ that needs KLD or perplexity against the 54 GB BF16.
 
 ### Qwen3.5-27B-Uncensored (HauhauCS, Aggressive) — 12.4GB, **dense** 27B, 64 layers
 
+> **Removed 2026-11-22.** The GGUF and its presets are deleted; the measurements below stay as history.
+> A Q6_K was downloaded for agent-eval the same day and deleted too, after 8 runs (7 pass).
+
 `HauhauCS/Qwen3.5-27B-Uncensored-HauhauCS-Aggressive`, Q3_K_M, added
 2026-08-18. Arch is `qwen35` and it reports 26.90B params over 64 layers with
 the same 3:1 hybrid-attention ratio as Qwen3.8-27B — so it is that model's
@@ -920,6 +925,9 @@ are less reproducible than they read. New rows report model-attributable VRAM
 and state the reference baseline.
 
 ### Qwen3.5-9B-Uncensored (HauhauCS, Aggressive) — 8.9GB, **dense** 9B, 32 layers
+
+> **Removed 2026-11-22** from this PC (GGUF and presets); the measurements below stay as history.
+> The Arc B580 server keeps its own copies. agent-eval: 4 of 9 runs passed before it was stopped.
 
 `HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive`, Q8_0, added 2026-08-18.
 SHA256 verified against the HF-reported LFS oid. Same `qwen35` family as

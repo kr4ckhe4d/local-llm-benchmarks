@@ -1,0 +1,1049 @@
+{
+ "metrics": {
+  "task": "sqlparse-begin-end-split",
+  "turns": 50,
+  "tool_calls": 52,
+  "bad_calls": 0,
+  "prompt_tokens": 678397,
+  "completion_tokens": 6832,
+  "max_prompt": 23350,
+  "finish": null,
+  "summary": null,
+  "end": "turn limit",
+  "wall_s": 164.0,
+  "pass": false,
+  "check_exit": 1,
+  "protected_changed": [],
+  "check_tail": "_____________________________ test_split_begintag ______________________________\n\nload_file = <function load_file.<locals>.make_load_file at 0x7f4cd4af2e50>\n\n    def test_split_begintag(load_file):\n        sql = load_file('begintag.sql')\n        stmts = sqlparse.parse(sql)\n>       assert len(stmts) == 3\nE       AssertionError: assert 2 == 3\nE        +  where 2 = len((<Statement 'begin ...' at 0x7F4CD4A59050>, <Statement ' commi...' at 0x7F4CD4A40950>))\n\ntests/test_split.py:56: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_split.py::test_split_begintag - AssertionError: assert 2 == 3\n1 failed, 40 passed in 0.06s",
+  "claimed": false,
+  "false_claim": false,
+  "diffstat": " 2 files changed, 55 insertions(+), 2 deletions(-)",
+  "repeat": 3
+ },
+ "log": [
+  {
+   "turn": 1,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"find /work -name \\\"*.py\\\" | head -50; ls /work\"}"
+     },
+     "id": "h4p9hLyPouUzRebHKKz87DjZ66Ww0lbJ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "/work/tests/test_utils.py\n/work/tests/test_tokenize.py\n/work/tests/test_split.py\n/work/tests/test_regressions.py\n/work/tests/test_parse.py\n/work/tests/test_keywords.py\n/work/tests/test_grouping.py\n/work/tests/test_format.py\n/work/tests/test_dos_prevention.py\n/work/tests/test_cli.py\n/work/tests/conftest.py\n/work/tests/__init__.py\n/work/sqlparse/utils.py\n/work/sqlparse/tokens.py\n/work/sqlparse/sql.py\n/work/sqlparse/lexer.py\n/work/sqlparse/keywords.py\n/work/sqlparse/formatter.py\n/work/sqlparse/filters/tokens.py\n/work/sqlparse/filters/right_margin.py\n/work/sqlparse/filters/reindent.py\n/work/sqlparse/filters/output.py\n/work/sqlparse/filters/others.py\n/work/sqlparse/filters/aligned_indent.py\n/work/sqlparse/filters/__init__.py\n/work/sqlparse/exceptions.py\n/work/sqlparse/engine/statement_splitter.py\n/work/sqlparse/engine/grouping.py\n/work/sqlparse/engine/filter_stack.py\n/work/sqlparse/engine/__init__.py\n/work/sqlparse/cli.py\n/work/sqlparse/__main__.py\n/work/sqlparse/__init__.py\n/work/examples/extract_table_names.py\n/work/examples/column_defs_lowlevel.py\n/work/docs/source/conf.py\nAGENTS.md\nAUTHORS\nCHANGELOG\nCLAUDE.md\nCONTRIBUTING.md\nLICENSE\nMakefile\nREADME.rst\nSECURITY.md\nTODO\ndocs\nexamples\npixi.lock\npyproject.toml\nsqlparse\ntests\n\n[exit code 0]"
+  },
+  {
+   "turn": 2,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\"}"
+     },
+     "id": "BXyiv7hu5ejxsCCgUw0PMHFqYoon7s0K"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "    1\t#\n    2\t# Copyright (C) 2009-2020 the sqlparse authors and contributors\n    3\t# <see AUTHORS file>\n    4\t#\n    5\t# This module is part of python-sqlparse and is released under\n    6\t# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n    7\t\n    8\tfrom sqlparse import sql, tokens as T\n    9\t\n   10\t\n   11\tclass StatementSplitter:\n   12\t    \"\"\"Filter that split stream at individual statements\"\"\"\n   13\t\n   14\t    def __init__(self):\n   15\t        self._reset()\n   16\t\n   17\t    def _reset(self):\n   18\t        \"\"\"Set the filter attributes to its default values\"\"\"\n   19\t        self._in_declare = False\n   20\t        self._in_case = False\n   21\t        self._is_create = False\n   22\t        self._begin_depth = 0\n   23\t\n   24\t        self.consume_ws = False\n   25\t        self.tokens = []\n   26\t        self.level = 0\n   27\t\n   28\t    def _change_splitlevel(self, ttype, value):\n   29\t        \"\"\"Get the new split level (increase, decrease or remain equal)\"\"\"\n   30\t\n   31\t        # parenthesis increase/decrease a level\n   32\t        if ttype is T.Punctuation and value == '(':\n   33\t            return 1\n   34\t        elif ttype is T.Punctuation and value == ')':\n   35\t            return -1\n   36\t        elif ttype not in T.Keyword:  # if normal token return\n   37\t            return 0\n   38\t\n   39\t        # Everything after here is ttype = T.Keyword\n   40\t        # Also to note, once entered an If statement you are done and basically\n   41\t        # returning\n   42\t        unified = value.upper()\n   43\t\n   44\t        # three keywords begin with CREATE, but only one of them is DDL\n   45\t        # DDL Create though can contain more words such as \"or replace\"\n   46\t        if ttype is T.Keyword.DDL and unified.startswith('CREATE'):\n   47\t            self._is_create = True\n   48\t            return 0\n   49\t\n   50\t        # can have nested declare inside of being...\n   51\t        if unified == 'DECLARE' and self._is_create and self._begin_depth == 0:\n   52\t            self._in_declare = True\n   53\t            return 1\n   54\t\n   55\t        if unified == 'BEGIN':\n   56\t            self._begin_depth += 1\n   57\t            if self._is_create:\n   58\t                # FIXME(andi): This makes no sense.  ## this comment neither\n   59\t                return 1\n   60\t            return 0\n   61\t\n   62\t        # BEGIN and CASE/WHEN both end with END\n   63\t        if unified == 'END':\n   64\t            if not self._in_case:\n   65\t                self._begin_depth = max(0, self._begin_depth - 1)\n   66\t            else:\n   67\t                self._in_case = False\n   68\t            return -1\n   69\t\n   70\t        if (unified in ('IF', 'FOR', 'WHILE', 'CASE')\n   71\t                and self._is_create and self._begin_depth > 0):\n   72\t            if unified == 'CASE':\n   73\t                self._in_case = True\n   74\t            return 1\n   75\t\n   76\t        if unified in ('END IF', 'END FOR', 'END WHILE'):\n   77\t            return -1\n   78\t\n   79\t        # Default\n   80\t        return 0\n   81\t\n   82\t    def process(self, stream):\n   83\t        \"\"\"Process the stream\"\"\"\n   84\t        EOS_TTYPE = T.Whitespace, T.Comment.Single\n   85\t\n   86\t        # Run over all stream tokens\n   87\t        for ttype, value in stream:\n   88\t            # Yield token if we finished a statement and there's no whitespaces\n   89\t            # It will count newline token as a non whitespace. In this context\n   90\t            # whitespace ignores newlines.\n   91\t            # why don't multi line comments also count?\n   92\t            if self.consume_ws and ttype not in EOS_TTYPE:\n   93\t                yield sql.Statement(self.tokens)\n   94\t\n   95\t                # Reset filter and prepare to process next statement\n   96\t                self._reset()\n   97\t\n   98\t            # Change current split level (increase, decrease or remain equal)\n   99\t            self.level += self._change_splitlevel(ttype, value)\n  100\t\n  101\t            # Append the token to the current statement\n"
+  },
+  {
+   "turn": 3,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;'''\\nfor s in sqlparse.split(sql):\\n    print(repr(s))\\n\\\"\"}"
+     },
+     "id": "eyHryccHUY1Cmkb1djNG1bbcvsqAyk2Z"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "'CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND;'\n\n[exit code 0]"
+  },
+  {
+   "turn": 4,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\nsql = '''WITH FUNCTION f(x INT) RETURNS INT DETERMINISTIC\\nBEGIN\\n  RETURN x + 1;\\nEND\\nSELECT f(1) AS y;'''\\nfor s in sqlparse.split(sql):\\n    print(repr(s))\\nprint('---')\\nsql = '''BEGIN\\n  SET @a = 1;\\n  SELECT @a;\\nEND;\\nSELECT 1;'''\\nfor s in sqlparse.split(sql):\\n    print(repr(s))\\n\\\"\"}"
+     },
+     "id": "ptodP1SxVp6Xhl8bR0yoQFA7AOmdHqO8"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "'WITH FUNCTION f(x INT) RETURNS INT DETERMINISTIC\\nBEGIN\\n  RETURN x + 1;'\n'END\\nSELECT f(1) AS y;'\n---\n'BEGIN\\n  SET @a = 1;'\n'SELECT @a;'\n'END;'\n'SELECT 1;'\n\n[exit code 0]"
+  },
+  {
+   "turn": 5,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\nfrom sqlparse import tokens as T\\nfor ttype, val in sqlparse.tokenize('''CREATE OR REPLACE PROCEDURE p() BEGIN DECLARE id INT; SET id = 1; END; BEGIN x; END;'''):\\n    print(ttype, repr(val))\\n\\\"\"}"
+     },
+     "id": "bgxgIuWOrR6WFsTX2F3kFHOUF4SJKZkU"
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\nfrom sqlparse import tokens as T\\nfor ttype, val in sqlparse.tokenize('''BEGIN SET @a = 1; SELECT @a; END;'''):\\n    print(ttype, repr(val))\\n\\\"\"}"
+     },
+     "id": "TIexmSkm7nkMcR2jV1cNix19RKWXHb1S"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 4, in <module>\n    for ttype, val in sqlparse.tokenize('''CREATE OR REPLACE PROCEDURE p() BEGIN DECLARE id INT; SET id = 1; END; BEGIN x; END;'''):\n                      ^^^^^^^^^^^^^^^^^\nAttributeError: module 'sqlparse' has no attribute 'tokenize'\n\n[exit code 1]"
+  },
+  {
+   "tool": "bash",
+   "result": "\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 4, in <module>\n    for ttype, val in sqlparse.tokenize('''BEGIN SET @a = 1; SELECT @a; END;'''):\n                      ^^^^^^^^^^^^^^^^^\nAttributeError: module 'sqlparse' has no attribute 'tokenize'\n\n[exit code 1]"
+  },
+  {
+   "turn": 6,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nfrom sqlparse.lexer import get_default_lexer\\nfrom sqlparse import tokens as T\\nlex = get_default_lexer()\\nfor ttype, val in lex.tokenize('''CREATE OR REPLACE PROCEDURE p() BEGIN DECLARE id INT; SET id = 1; END; BEGIN x; END;'''):\\n    print(ttype, repr(val))\\n\\\"\"}"
+     },
+     "id": "8avzZRStWs8WWLJq4Xnf9tmllyxMXRt5"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 2, in <module>\n    from sqlparse.lexer import get_default_lexer\nImportError: cannot import name 'get_default_lexer' from 'sqlparse.lexer' (/work/sqlparse/lexer.py)\n\n[exit code 1]"
+  },
+  {
+   "turn": 7,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && grep -n \\\"def \\\" sqlparse/lexer.py | head; grep -rn \\\"split(\\\" sqlparse/__init__.py\"}"
+     },
+     "id": "MyBzcBSrl7YH9zvP0bHIUdena0Knk1RC"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "49:    def get_default_instance(cls):\n58:    def default_initialization(self):\n73:    def clear(self):\n81:    def set_SQL_REGEX(self, SQL_REGEX):\n89:    def add_keywords(self, keywords):\n94:    def is_keyword(self, value):\n107:    def get_tokens(self, text, encoding=None):\n155:def tokenize(sql, encoding=None):\n68:def split(\n\n[exit code 0]"
+  },
+  {
+   "turn": 8,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nfrom sqlparse.lexer import tokenize\\nfor ttype, val in tokenize('''CREATE OR REPLACE PROCEDURE p() BEGIN DECLARE id INT; SET id = 1; END; BEGIN x; END;'''):\\n    print(ttype, repr(val))\\nprint('===')\\nfor ttype, val in tokenize('''BEGIN SET @a = 1; SELECT @a; END;'''):\\n    print(ttype, repr(val))\\n\\\"\"}"
+     },
+     "id": "hp6joxLqfFBOa5RzptbFiMeSfEkGqanj"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Token.Keyword.DDL 'CREATE OR REPLACE'\nToken.Text.Whitespace ' '\nToken.Keyword 'PROCEDURE'\nToken.Text.Whitespace ' '\nToken.Name 'p'\nToken.Punctuation '('\nToken.Punctuation ')'\nToken.Text.Whitespace ' '\nToken.Keyword 'BEGIN'\nToken.Text.Whitespace ' '\nToken.Keyword 'DECLARE'\nToken.Text.Whitespace ' '\nToken.Name 'id'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Punctuation ';'\nToken.Text.Whitespace ' '\nToken.Keyword 'SET'\nToken.Text.Whitespace ' '\nToken.Name 'id'\nToken.Text.Whitespace ' '\nToken.Operator.Comparison '='\nToken.Text.Whitespace ' '\nToken.Literal.Number.Integer '1'\nToken.Punctuation ';'\nToken.Text.Whitespace ' '\nToken.Keyword 'END'\nToken.Punctuation ';'\nToken.Text.Whitespace ' '\nToken.Keyword 'BEGIN'\nToken.Text.Whitespace ' '\nToken.Name 'x'\nToken.Punctuation ';'\nToken.Text.Whitespace ' '\nToken.Keyword 'END'\nToken.Punctuation ';'\n===\nToken.Keyword 'BEGIN'\nToken.Text.Whitespace ' '\nToken.Keyword 'SET'\nToken.Text.Whitespace ' '\nToken.Operator '@'\nToken.Name 'a'\nToken.Text.Whitespace ' '\nToken.Operator.Comparison '='\nToken.Text.Whitespace ' '\nToken.Literal.Number.Integer '1'\nToken.Punctuation ';'\nToken.Text.Whitespace ' '\nToken.Keyword.DML 'SELECT'\nToken.Text.Whitespace ' '\nToken.Operator '@'\nToken.Name 'a'\nToken.Punctuation ';'\nToken.Text.Whitespace ' '\nToken.Keyword 'END'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 9,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"tests/test_split.py\"}"
+     },
+     "id": "MYALEcW1yVPw5jXQg2Mj4Uk4o3hVjLTj"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "    1\t# Tests splitting functions.\n    2\t\n    3\timport types\n    4\tfrom io import StringIO\n    5\t\n    6\timport pytest\n    7\t\n    8\timport sqlparse\n    9\t\n   10\t\n   11\tdef test_split_semicolon():\n   12\t    sql1 = 'select * from foo;'\n   13\t    sql2 = \"select * from foo where bar = 'foo;bar';\"\n   14\t    stmts = sqlparse.parse(''.join([sql1, sql2]))\n   15\t    assert len(stmts) == 2\n   16\t    assert str(stmts[0]) == sql1\n   17\t    assert str(stmts[1]) == sql2\n   18\t\n   19\t\n   20\tdef test_split_backslash():\n   21\t    stmts = sqlparse.parse(\"select '\\'; select '\\'';\")\n   22\t    assert len(stmts) == 2\n   23\t\n   24\t\n   25\t@pytest.mark.parametrize('fn', ['function.sql',\n   26\t                                'function_psql.sql',\n   27\t                                'function_psql2.sql',\n   28\t                                'function_psql3.sql',\n   29\t                                'function_psql4.sql'])\n   30\tdef test_split_create_function(load_file, fn):\n   31\t    sql = load_file(fn)\n   32\t    stmts = sqlparse.parse(sql)\n   33\t    assert len(stmts) == 1\n   34\t    assert str(stmts[0]) == sql\n   35\t\n   36\t\n   37\tdef test_split_dashcomments(load_file):\n   38\t    sql = load_file('dashcomment.sql')\n   39\t    stmts = sqlparse.parse(sql)\n   40\t    assert len(stmts) == 3\n   41\t    assert ''.join(str(q) for q in stmts) == sql\n   42\t\n   43\t\n   44\t@pytest.mark.parametrize('s', ['select foo; -- comment\\n',\n   45\t                               'select foo; -- comment\\r',\n   46\t                               'select foo; -- comment\\r\\n',\n   47\t                               'select foo; -- comment'])\n   48\tdef test_split_dashcomments_eol(s):\n   49\t    stmts = sqlparse.parse(s)\n   50\t    assert len(stmts) == 1\n   51\t\n   52\t\n   53\tdef test_split_begintag(load_file):\n   54\t    sql = load_file('begintag.sql')\n   55\t    stmts = sqlparse.parse(sql)\n   56\t    assert len(stmts) == 3\n   57\t    assert ''.join(str(q) for q in stmts) == sql\n   58\t\n   59\t\n   60\tdef test_split_begintag_2(load_file):\n   61\t    sql = load_file('begintag_2.sql')\n   62\t    stmts = sqlparse.parse(sql)\n   63\t    assert len(stmts) == 1\n   64\t    assert ''.join(str(q) for q in stmts) == sql\n   65\t\n   66\t\n   67\tdef test_split_dropif():\n   68\t    sql = 'DROP TABLE IF EXISTS FOO;\\n\\nSELECT * FROM BAR;'\n   69\t    stmts = sqlparse.parse(sql)\n   70\t    assert len(stmts) == 2\n   71\t    assert ''.join(str(q) for q in stmts) == sql\n   72\t\n   73\t\n   74\tdef test_split_comment_with_umlaut():\n   75\t    sql = ('select * from foo;\\n'\n   76\t           '-- Testing an umlaut: \u00e4\\n'\n   77\t           'select * from bar;')\n   78\t    stmts = sqlparse.parse(sql)\n   79\t    assert len(stmts) == 2\n   80\t    assert ''.join(str(q) for q in stmts) == sql\n   81\t\n   82\t\n   83\tdef test_split_comment_end_of_line():\n   84\t    sql = ('select * from foo; -- foo\\n'\n   85\t           'select * from bar;')\n   86\t    stmts = sqlparse.parse(sql)\n   87\t    assert len(stmts) == 2\n   88\t    assert ''.join(str(q) for q in stmts) == sql\n   89\t    # make sure the comment belongs to first query\n   90\t    assert str(stmts[0]) == 'select * from foo; -- foo\\n'\n   91\t\n   92\t\n   93\tdef test_split_casewhen():\n   94\t    sql = (\"SELECT case when val = 1 then 2 else null end as foo;\\n\"\n   95\t           \"comment on table actor is 'The actor table.';\")\n   96\t    stmts = sqlparse.split(sql)\n   97\t    assert len(stmts) == 2\n   98\t\n   99\t\n  100\tdef test_split_casewhen_procedure(load_file):\n  101\t    # see issue580\n  102\t    stmts = sqlparse.split(load_file('casewhen_procedure.sql'))\n  103\t    assert len(stmts) == 2\n  104\t\n  105\t\n  106\tdef test_split_cursor_declare():\n  107\t    sql = ('DECLARE CURSOR \"foo\" AS SELECT 1;\\n'\n  108\t           'SELECT 2;')\n  109\t    stmts = sqlparse.split(sql)\n  110\t    assert len(stmts) == 2\n  111\t\n  112\t\n  113\tdef test_split_if_function():  # see issue 33\n  114\t    # don't let IF as a function confuse the splitter\n  115\t    sql = ('CREATE TEMPORARY TABLE tmp '\n  116\t           'SELECT IF(a=1, a, b) AS o FROM one; '\n  "
+  },
+  {
+   "turn": 10,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && cat tests/data/begintag.sql tests/data/begintag_2.sql tests/data/mysql_handler.sql tests/data/multiple_case_in_begin.sql tests/data/casewhen_procedure.sql 2>/dev/null\"}"
+     },
+     "id": "KxchWtDl1PCBX9KsO5Wfril9gPB9uXmR"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\n[exit code 1]"
+  },
+  {
+   "turn": 11,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && cat tests/conftest.py; find /work/tests -name \\\"*.sql\\\" | head -30\"}"
+     },
+     "id": "vGHGwMrXBKfEVMoD5tWkTiYAsPbzgCyd"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\"\"\"Helpers for testing.\"\"\"\n\nimport io\nimport os\n\nimport pytest\n\nDIR_PATH = os.path.dirname(__file__)\nFILES_DIR = os.path.join(DIR_PATH, 'files')\n\n\n@pytest.fixture()\ndef filepath():\n    \"\"\"Returns full file path for test files.\"\"\"\n\n    def make_filepath(filename):\n        # https://stackoverflow.com/questions/18011902/py-test-pass-a-parameter-to-a-fixture-function\n        # Alternate solution is to use parametrization `indirect=True`\n        # https://stackoverflow.com/questions/18011902/py-test-pass-a-parameter-to-a-fixture-function/33879151#33879151\n        # Syntax is noisy and requires specific variable names\n        return os.path.join(FILES_DIR, filename)\n\n    return make_filepath\n\n\n@pytest.fixture()\ndef load_file(filepath):\n    \"\"\"Opens filename with encoding and return its contents.\"\"\"\n\n    def make_load_file(filename, encoding='utf-8'):\n        # https://stackoverflow.com/questions/18011902/py-test-pass-a-parameter-to-a-fixture-function\n        # Alternate solution is to use parametrization `indirect=True`\n        # https://stackoverflow.com/questions/18011902/py-test-pass-a-parameter-to-a-fixture-function/33879151#33879151\n        # Syntax is noisy and requires specific variable names\n        # And seems to be limited to only 1 argument.\n        with open(filepath(filename), encoding=encoding) as f:\n            return f.read().strip()\n\n    return make_load_file\n\n\n@pytest.fixture()\ndef get_stream(filepath):\n    def make_stream(filename, encoding='utf-8'):\n        return open(filepath(filename), encoding=encoding)\n\n    return make_stream\n/work/tests/files/test_cp1251.sql\n/work/tests/files/stream.sql\n/work/tests/files/mysql_handler.sql\n/work/tests/files/multiple_case_in_begin.sql\n/work/tests/files/huge_select.sql\n/work/tests/files/function_psql4.sql\n/work/tests/files/function_psql3.sql\n/work/tests/files/function_psql2.sql\n/work/tests/files/function_psql.sql\n/work/tests/files/function.sql\n/work/tests/files/encoding_utf8.sql\n/work/tests/files/encoding_gbk.sql\n/work/tests/files/dashcomment.sql\n/work/tests/files/casewhen_procedure.sql\n/work/tests/files/begintag_2.sql\n/work/tests/files/begintag.sql\n/work/tests/files/_Make_DirEntry.sql\n\n[exit code 0]"
+  },
+  {
+   "turn": 12,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work/tests/files && for f in begintag.sql begintag_2.sql mysql_handler.sql multiple_case_in_begin.sql casewhen_procedure.sql function.sql function_psql4.sql; do echo \\\"=== $f\\\"; cat $f; echo; done\"}"
+     },
+     "id": "JNTUQGFWR0v1Djv8JljiwtvRrm7LacSr"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "=== begintag.sql\nbegin;\nupdate foo\n       set bar = 1;\ncommit;\n=== begintag_2.sql\nCREATE TRIGGER IF NOT EXISTS remove_if_it_was_the_last_file_link\n-- Delete the direntry when is removed it's last static link\n    AFTER DELETE ON links\n    WHEN NOT EXISTS\n    (\n        SELECT * FROM links\n        WHERE child_entry = OLD.child_entry\n        LIMIT 1\n    )\nBEGIN\n    DELETE FROM dir_entries\n    WHERE dir_entries.inode = OLD.child_entry;\nEND;\n=== mysql_handler.sql\ncreate procedure proc1()\nbegin\n  declare handler for foo begin end;\n  select 1;\nend;\n\ncreate procedure proc2()\nbegin\n  select 1;\nend;\n\n=== multiple_case_in_begin.sql\nCREATE TRIGGER mytrig\nAFTER UPDATE OF vvv ON mytable\nBEGIN\n    UPDATE aa\n        SET mycola = (CASE WHEN (A=1) THEN 2 END);\n    UPDATE bb\n        SET mycolb = (CASE WHEN (B=1) THEN 5 END);\nEND;\n=== casewhen_procedure.sql\ncreate procedure procName()\nbegin\n  select case when column = 'value' then column else 0 end;\nend;\ncreate procedure procName()\nbegin\n  select 1;\nend;\n\n=== function.sql\nCREATE OR REPLACE FUNCTION foo(\n\tp_in1 VARCHAR\n\t, p_in2 INTEGER\n) RETURNS INTEGER AS\n\n  DECLARE\n\tv_foo INTEGER;  \n  BEGIN\n  \tSELECT *\n  \tFROM foo\n  \tINTO v_foo;\n  \tRETURN v_foo.id;\n  END;\n=== function_psql4.sql\nCREATE FUNCTION doubledollarinbody(var1 text) RETURNS text\n/* see issue277 */\nLANGUAGE plpgsql\nAS $_$\nDECLARE\n  str text;\n  BEGIN\n    str = $$'foo'$$||var1;\n    execute 'select '||str into str;\n    return str;\n  END\n$_$;\n\n\n[exit code 0]"
+  },
+  {
+   "turn": 13,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work/tests/files && cat function_psql.sql function_psql2.sql function_psql3.sql\"}"
+     },
+     "id": "L6PPVXS9N1KtHuOxBljvP1T17WYhuCZt"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "CREATE OR REPLACE FUNCTION public.delete_data (\n    p_tabelle VARCHAR\n  , p_key VARCHAR\n  , p_value INTEGER\n) RETURNS INTEGER AS\n$$\nDECLARE\n    p_retval                INTEGER;\n    v_constraint            RECORD;\n    v_count                 INTEGER;\n    v_data                  RECORD;\n    v_fieldname             VARCHAR;\n    v_sql                   VARCHAR;\n    v_key                   VARCHAR;\n    v_value                 INTEGER;\nBEGIN\n    v_sql := 'SELECT COUNT(*) FROM ' || p_tabelle || ' WHERE ' || p_key || ' = ' || p_value;\n    --RAISE NOTICE '%', v_sql;\n    EXECUTE v_sql INTO v_count;\n    IF v_count::integer != 0 THEN\n        SELECT att.attname\n            INTO v_key\n            FROM pg_attribute att\n                LEFT JOIN pg_constraint con ON con.conrelid = att.attrelid \n                    AND con.conkey[1] = att.attnum \n                    AND con.contype = 'p', pg_type typ, pg_class rel, pg_namespace ns\n            WHERE att.attrelid = rel.oid\n                AND att.attnum > 0 \n                AND typ.oid = att.atttypid\n                AND att.attisdropped = false\n                AND rel.relname = p_tabelle\n                AND con.conkey[1] = 1\n                AND ns.oid = rel.relnamespace\n                AND ns.nspname = 'public'\n            ORDER BY att.attnum;\n        v_sql := 'SELECT ' || v_key || ' AS id FROM ' || p_tabelle || ' WHERE ' || p_key || ' = ' || p_value;\n        FOR v_data IN EXECUTE v_sql\n        LOOP\n            --RAISE NOTICE ' -> % %', p_tabelle, v_data.id;\n            FOR v_constraint IN SELECT t.constraint_name\n                                , t.constraint_type\n                                , t.table_name\n                                , c.column_name\n                                FROM public.v_table_constraints t\n                                    , public.v_constraint_columns c\n                                WHERE t.constraint_name = c.constraint_name\n                                    AND t.constraint_type = 'FOREIGN KEY'\n                                    AND c.table_name = p_tabelle\n                                    AND t.table_schema = 'public'\n                                    AND c.table_schema = 'public'\n            LOOP\n                v_fieldname := substring(v_constraint.constraint_name from 1 for length(v_constraint.constraint_name) - length(v_constraint.column_name) - 1);\n                IF (v_constraint.table_name = p_tabelle) AND (p_value = v_data.id) THEN\n                    --RAISE NOTICE 'Skip (Selbstverweis)';\n                    CONTINUE;\n                ELSE\n                    PERFORM delete_data(v_constraint.table_name::varchar, v_fieldname::varchar, v_data.id::integer);\n                END IF;\n            END LOOP;\n        END LOOP;\n        v_sql := 'DELETE FROM ' || p_tabelle || ' WHERE ' || p_key || ' = ' || p_value;\n        --RAISE NOTICE '%', v_sql;\n        EXECUTE v_sql;\n        p_retval := 1;\n    ELSE\n        --RAISE NOTICE ' -> Keine S\u00e4tze gefunden';\n        p_retval := 0;\n    END IF;\n    RETURN p_retval;\nEND;\n$$\nLANGUAGE plpgsql;CREATE OR REPLACE FUNCTION update_something() RETURNS void AS\n$body$\nBEGIN\n    raise notice 'foo';\nEND;\n$body$\nLANGUAGE 'plpgsql' VOLATILE CALLED ON NULL INPUT SECURITY INVOKER;CREATE OR REPLACE FUNCTION foo() RETURNS integer AS\n$body$\nDECLARE\nBEGIN\n select * from foo;\nEND;\n$body$\nLANGUAGE 'plpgsql' VOLATILE CALLED ON NULL INPUT SECURITY INVOKER;\n[exit code 0]"
+  },
+  {
+   "turn": 14,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && grep -n \\\"BEGIN\\\\|END\\\" sqlparse/keywords.py | head -40\"}"
+     },
+     "id": "LcHg5ZWQUEGy8IrtqGSIVx6oZ0cIEHh5"
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/test_split.py -q 2>&1 | tail -3\"}"
+     },
+     "id": "q3oEMPjeiMNoYZq6luJ8QPpeNpLefaWj"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "72:    (r'END(\\s+IF|\\s+LOOP|\\s+WHILE)?\\b', tokens.Keyword),\n133:    'BEGIN': tokens.Keyword,\n253:    'END-EXEC': tokens.Keyword,\n440:    'PENDANT': tokens.Keyword,\n710:    'END': tokens.Keyword,\n907:    'EXTENDED': tokens.Keyword,\n\n[exit code 0]"
+  },
+  {
+   "tool": "bash",
+   "result": ".......................................                                  [100%]\n39 passed in 0.05s\n\n[exit code 0]"
+  },
+  {
+   "turn": 15,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"sqlparse/keywords.py\",\"offset\":55,\"limit\":40}"
+     },
+     "id": "HY1RnyjR2PGaQzAWTz9qk80ReEZF9lVQ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "   55\t    (r'(?<=\\.)[A-Z\u00c0-\u00dc]\\w*', tokens.Name),  # .'Name'\n   56\t    (r'[A-Z\u00c0-\u00dc]\\w*(?=\\()', tokens.Name),  # side effect: change kw to func\n   57\t    (r'-?0x[\\dA-F]+', tokens.Number.Hexadecimal),\n   58\t    (r'-?\\d+(\\.\\d+)?E-?\\d+', tokens.Number.Float),\n   59\t    (r'(?![_A-Z\u00c0-\u00dc])-?(\\d+(\\.\\d*)|\\.\\d+)(?![_A-Z\u00c0-\u00dc])',\n   60\t     tokens.Number.Float),\n   61\t    (r'(?![_A-Z\u00c0-\u00dc])-?\\d+(?![_A-Z\u00c0-\u00dc])', tokens.Number.Integer),\n   62\t    (r\"'(''|\\\\'|[^'])*'\", tokens.String.Single),\n   63\t    # not a real string literal in ANSI SQL:\n   64\t    (r'\"(\"\"|\\\\\"|[^\"])*\"', tokens.String.Symbol),\n   65\t    (r'(\"\"|\".*?[^\\\\]\")', tokens.String.Symbol),\n   66\t    # sqlite names can be escaped with [square brackets]. left bracket\n   67\t    # cannot be preceded by word character or a right bracket --\n   68\t    # otherwise it's probably an array index\n   69\t    (r'(?<![\\w\\])])(\\[[^\\]\\[]+\\])', tokens.Name),\n   70\t    (r'((LEFT\\s+|RIGHT\\s+|FULL\\s+)?(INNER\\s+|OUTER\\s+|STRAIGHT\\s+)?'\n   71\t     r'|(CROSS\\s+|NATURAL\\s+)?)?JOIN\\b', tokens.Keyword),\n   72\t    (r'END(\\s+IF|\\s+LOOP|\\s+WHILE)?\\b', tokens.Keyword),\n   73\t    (r'IF\\s+(NOT\\s+)?EXISTS\\b', tokens.Keyword),\n   74\t    (r'NOT\\s+NULL\\b', tokens.Keyword),\n   75\t    (r'(ASC|DESC)(\\s+NULLS\\s+(FIRST|LAST))?\\b', tokens.Keyword.Order),\n   76\t    (r'(ASC|DESC)\\b', tokens.Keyword.Order),\n   77\t    (r'NULLS\\s+(FIRST|LAST)\\b', tokens.Keyword.Order),\n   78\t    (r'UNION\\s+ALL\\b', tokens.Keyword),\n   79\t    (r'CREATE(\\s+OR\\s+REPLACE)?\\b', tokens.Keyword.DDL),\n   80\t    (r'DOUBLE\\s+PRECISION\\b', tokens.Name.Builtin),\n   81\t    (r'GROUP\\s+BY\\b', tokens.Keyword),\n   82\t    (r'ORDER\\s+BY\\b', tokens.Keyword),\n   83\t    (r'PRIMARY\\s+KEY\\b', tokens.Keyword),\n   84\t    (r'HANDLER\\s+FOR\\b', tokens.Keyword),\n   85\t    (r'GO(\\s\\d+)\\b', tokens.Keyword),\n   86\t    (r'(LATERAL\\s+VIEW\\s+)'\n   87\t     r'(EXPLODE|INLINE|PARSE_URL_TUPLE|POSEXPLODE|STACK)\\b',\n   88\t     tokens.Keyword),\n   89\t    (r\"(AT|WITH')\\s+TIME\\s+ZONE\\s+'[^']+'\", tokens.Keyword.TZCast),\n   90\t    (r'(NOT\\s+)?(LIKE|ILIKE|RLIKE)\\b', tokens.Operator.Comparison),\n   91\t    (r'(NOT\\s+)?(REGEXP)(\\s+(BINARY))?\\b', tokens.Operator.Comparison),\n   92\t    # Check for keywords, also returns tokens.Name if regex matches\n   93\t    # but the match isn't a keyword.\n   94\t    (r'\\w[$#\\w]*', PROCESS_AS_KEYWORD),\n[911 more lines]"
+  },
+  {
+   "turn": 16,
+   "content": "Let me check what tests exist across the suite that could be affected, and look at grouping code for BEGIN/END handling.",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && grep -rln \\\"BEGIN\\\\|begin\\\" tests/ | head; grep -rn \\\"split(\\\" tests/test_regressions.py | head -20\"}"
+     },
+     "id": "b380zhqyDxVesapPNJpuK8dpIgsGZM6z"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "tests/test_split.py\ntests/test_regressions.py\ntests/test_grouping.py\ntests/test_cli.py\ntests/files/mysql_handler.sql\ntests/files/multiple_case_in_begin.sql\ntests/files/function_psql4.sql\ntests/files/function_psql3.sql\ntests/files/function_psql2.sql\ntests/files/function_psql.sql\n146:    t = sqlparse.split(sql)\n252:    statements = sqlparse.split(sql)\n266:    statements = sqlparse.split(sql)\n399:    assert len(sqlparse.split(p_sql)) == 1\n430:    splitted = sqlparse.split(\n\n[exit code 0]"
+  },
+  {
+   "turn": 17,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && sed -n 130-160p tests/test_regressions.py 2>/dev/null; sed -n '130,160p;240,280p;390,440p' tests/test_regressions.py\"}"
+     },
+     "id": "5Pu5GpqGouS3PbpfRVDuRJXEhMnjSsCp"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "                  RETURNS boolean  LANGUAGE plpgsql STRICT IMMUTABLE AS\n                $_$\n                BEGIN\n                 ...\n                END;\n                $_$;\n\n                CREATE OR REPLACE FUNCTION func_b(text)\n                  RETURNS boolean  LANGUAGE plpgsql STRICT IMMUTABLE AS\n                $_$\n                BEGIN\n                 ...\n                END;\n                $_$;\n\n                ALTER TABLE..... ;\"\"\"\n    t = sqlparse.split(sql)\n    assert len(t) == 3\n\n\ndef test_comment_encoding_when_reindent():\n    # There was an UnicodeEncodeError in the reindent filter that\n    # casted every comment followed by a keyword to str.\n    sql = 'select foo -- Comment containing \u00dcml\u00e4uts\\nfrom bar'\n    formatted = sqlparse.format(sql, reindent=True)\n    assert formatted == sql\n\n\ndef test_parse_sql_with_binary():\n    # See https://github.com/andialbrecht/sqlparse/pull/88\n    # digest = '\u0082|\u00cb\u000e\u00ea\u008aplL4\u00a1h\u0091\u00f8N{'\n    with open(path) as stream:\n        p = sqlparse.parse(stream)[0]\n        assert p.get_type() == 'INSERT'\n\n\ndef test_issue193_splitting_function():\n    sql = \"\"\"   CREATE FUNCTION a(x VARCHAR(20)) RETURNS VARCHAR(20)\n                BEGIN\n                 DECLARE y VARCHAR(20);\n                 RETURN x;\n                END;\n                SELECT * FROM a.b;\"\"\"\n    statements = sqlparse.split(sql)\n    assert len(statements) == 2\n\n\ndef test_issue194_splitting_function():\n    sql = \"\"\"   CREATE FUNCTION a(x VARCHAR(20)) RETURNS VARCHAR(20)\n                BEGIN\n                 DECLARE y VARCHAR(20);\n                 IF (1 = 1) THEN\n                 SET x = y;\n                 END IF;\n                 RETURN x;\n                END;\n                SELECT * FROM a.b;\"\"\"\n    statements = sqlparse.split(sql)\n    assert len(statements) == 2\n\n\ndef test_issue186_get_type():\n    sql = \"-- comment\\ninsert into foo\"\n    p = sqlparse.parse(sql)[0]\n    assert p.get_type() == 'INSERT'\n\n\ndef test_issue212_py2unicode():\n    t1 = sql.Token(T.String, 'sch\u00f6ner ')\n    t2 = sql.Token(T.String, 'bug')\n    token_list = sql.TokenList([t1, t2])\n    assert str(token_list) == 'sch\u00f6ner bug'\n\n\ndef test_issue485_split_multi():\n    p_sql = '''CREATE OR REPLACE RULE ruled_tab_2rules AS ON INSERT\nTO public.ruled_tab\nDO instead (\nselect 1;\nselect 2;\n);'''\n    assert len(sqlparse.split(p_sql)) == 1\n\n\ndef test_issue489_tzcasts():\n    p = sqlparse.parse('select bar at time zone \\'UTC\\' as foo')[0]\n    assert p.tokens[-1].has_alias() is True\n    assert p.tokens[-1].get_alias() == 'foo'\n\n\ndef test_issue562_tzcasts():\n    # Test that whitespace between 'from' and 'bar' is retained\n    formatted = sqlparse.format(\n        'SELECT f(HOUR from bar AT TIME ZONE \\'UTC\\') from foo', reindent=True\n    )\n    assert formatted == \\\n           'SELECT f(HOUR\\n         from bar AT TIME ZONE \\'UTC\\')\\nfrom foo'\n\n\ndef test_as_in_parentheses_indents():\n    # did raise NoneType has no attribute is_group in _process_parentheses\n    formatted = sqlparse.format('(as foo)', reindent=True)\n    assert formatted == '(as foo)'\n\n\ndef test_format_invalid_where_clause():\n    # did raise ValueError\n    formatted = sqlparse.format('where, foo', reindent=True)\n    assert formatted == 'where, foo'\n\n\ndef test_splitting_at_and_backticks_issue588():\n    splitted = sqlparse.split(\n        'grant foo to user1@`myhost`; grant bar to user1@`myhost`;')\n    assert len(splitted) == 2\n    assert splitted[-1] == 'grant bar to user1@`myhost`;'\n\n\ndef test_comment_between_cte_clauses_issue632():\n    p, = sqlparse.parse(\"\"\"\n        WITH foo AS (),\n             -- A comment before baz subquery\n             baz AS ()\n\n[exit code 0]"
+  },
+  {
+   "turn": 18,
+   "content": "Now let me check the regression test around line 146 context (dollar-quoted `$_$` body) to make sure my change keeps it passing:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && sed -n '105,150p' tests/test_regressions.py; python -c \\\"\\nfrom sqlparse.lexer import tokenize\\nfor tt,v in tokenize('''CREATE OR REPLACE FUNCTION f() RETURNS boolean AS\\n\\\\$_\\\\$\\nBEGIN\\n...\\nEND;\\n\\\\$_\\\\$;\\nALTER TABLE..... ;'''):\\n    if v.strip() and tt not in ('Token.Text.Whitespace',):\\n        print(tt, repr(v))\\n\\\"\"}"
+     },
+     "id": "bH148pS2CZoiBJdTddSybGYAMDFu5d5W"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "@pytest.mark.parametrize('s', ['select x.y::text as z from foo',\n                               'select x.y::text as \"z\" from foo',\n                               'select x.\"y\"::text as z from foo',\n                               'select x.\"y\"::text as \"z\" from foo',\n                               'select \"x\".y::text as z from foo',\n                               'select \"x\".y::text as \"z\" from foo',\n                               'select \"x\".\"y\"::text as z from foo',\n                               'select \"x\".\"y\"::text as \"z\" from foo'])\n@pytest.mark.parametrize('func_name, result', [('get_name', 'z'),\n                                               ('get_real_name', 'y'),\n                                               ('get_parent_name', 'x'),\n                                               ('get_alias', 'z'),\n                                               ('get_typecast', 'text')])\ndef test_issue78(s, func_name, result):\n    # the bug author provided this nice examples, let's use them!\n    p = sqlparse.parse(s)[0]\n    i = p.tokens[2]\n    assert isinstance(i, sql.Identifier)\n\n    func = getattr(i, func_name)\n    assert func() == result\n\n\ndef test_issue83():\n    sql = \"\"\"   CREATE OR REPLACE FUNCTION func_a(text)\n                  RETURNS boolean  LANGUAGE plpgsql STRICT IMMUTABLE AS\n                $_$\n                BEGIN\n                 ...\n                END;\n                $_$;\n\n                CREATE OR REPLACE FUNCTION func_b(text)\n                  RETURNS boolean  LANGUAGE plpgsql STRICT IMMUTABLE AS\n                $_$\n                BEGIN\n                 ...\n                END;\n                $_$;\n\n                ALTER TABLE..... ;\"\"\"\n    t = sqlparse.split(sql)\n    assert len(t) == 3\n\n\ndef test_comment_encoding_when_reindent():\nToken.Keyword.DDL 'CREATE OR REPLACE'\nToken.Keyword 'FUNCTION'\nToken.Name 'f'\nToken.Punctuation '('\nToken.Punctuation ')'\nToken.Keyword 'RETURNS'\nToken.Name.Builtin 'boolean'\nToken.Keyword 'AS'\nToken.Literal '$_$\\nBEGIN\\n...\\nEND;\\n$_$'\nToken.Punctuation ';'\nToken.Keyword.DDL 'ALTER'\nToken.Name 'TABLE'\nToken.Punctuation '.'\nToken.Punctuation '.'\nToken.Punctuation '.'\nToken.Punctuation '.'\nToken.Punctuation '.'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 19,
+   "content": "Good \u2014 dollar-quoted bodies are single `Literal` tokens, unaffected. Now let me check the git log for context on this file:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && git log --oneline -5 -- sqlparse/engine/statement_splitter.py; git log --oneline -3\"}"
+     },
+     "id": "8nNFb63uEEyBxsX552JDSC6vwQGUxJuZ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "b372d48 initial\nb372d48 initial\n\n[exit code 0]"
+  },
+  {
+   "turn": 20,
+   "content": "Now I'll implement the fix in `statement_splitter.py`:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"        self.consume_ws = False\\n        self.tokens = []\\n        self.level = 0\\n\\n    def _change_splitlevel(self, ttype, value):\",\"new_str\":\"        self.consume_ws = False\\n        self.tokens = []\\n        self.level = 0\\n        self.block_depth = 0\\n\\n    def _change_splitlevel(self, ttype, value):\"}"
+     },
+     "id": "dfYA50j05UqY8lU3kVgNGc7hxLIrxnGS"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 21,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"        if unified == 'BEGIN':\\n            self._begin_depth += 1\\n            if self._is_create:\\n                # FIXME(andi): This makes no sense.  ## this comment neither\\n                return 1\\n            return 0\",\"new_str\":\"        if unified == 'BEGIN':\\n            self._begin_depth += 1\\n            if self._is_create:\\n                # FIXME(andi): This makes no sense.  ## this comment neither\\n                return 1\\n            self.block_depth += 1\\n            return 0\"}"
+     },
+     "id": "K6iyddrg294pNifJFG8TOVuzdbfxmExH"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 22,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"        if unified == 'END':\\n            if not self._in_case:\\n                self._begin_depth = max(0, self._begin_depth - 1)\\n            else:\\n                self._in_case = False\\n            return -1\",\"new_str\":\"        if unified == 'END':\\n            if not self._in_case:\\n                self._begin_depth = max(0, self._begin_depth - 1)\\n            else:\\n                self._in_case = False\\n            if self.block_depth > 0 and self._begin_depth == 0:\\n                self.block_depth -= 1\\n            return -1\"}"
+     },
+     "id": "EQKVS7nVV0Nvs315tW7ZbXN9yOuer3Re"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 23,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"            if (self.level <= 0 and ttype is T.Punctuation and value == ';') \\\\\\n                    or (ttype is T.Keyword and value.split()[0] == 'GO'):\",\"new_str\":\"            if ((self.level <= 0 and self.block_depth == 0\\n                 and ttype is T.Punctuation and value == ';')\\n                    or (ttype is T.Keyword and value.split()[0] == 'GO')):\"}"
+     },
+     "id": "MJOrUZDTtem2xYi5Azn5iIjOZT6OEdlT"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 24,
+   "content": "Now test with the bug report examples:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;\\nSELECT 1;'''\\nfor s in sqlparse.split(sql):\\n    print('---'); print(s)\\nprint('===')\\nsql = '''WITH FUNCTION f(x INT) RETURNS INT DETERMINISTIC\\nBEGIN\\n  RETURN x + 1;\\nEND\\nSELECT f(1) AS y;'''\\nfor s in sqlparse.split(sql):\\n    print('---'); print(s)\\nprint('=== begin...end block')\\nsql = '''BEGIN\\n  SET @a = 1;\\n  SELECT @a;\\nEND;\\nSELECT 1;'''\\nfor s in sqlparse.split(sql):\\n    print('---'); print(s)\\n\\\"\"}"
+     },
+     "id": "Ko8PtptrUFkDNSXkNw2cGcxWQKAKCwNb"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "---\nCREATE OR REPLACE PROCEDURE mydataset.create_customer()\nBEGIN\n  DECLARE id STRING;\n  SET id = GENERATE_UUID();\n  INSERT INTO mydataset.customers (customer_id)\n    VALUES(id);\n  SELECT FORMAT(\"Created customer %s\", id);\nEND;\n---\nSELECT 1;\n===\n---\nWITH FUNCTION f(x INT) RETURNS INT DETERMINISTIC\nBEGIN\n  RETURN x + 1;\nEND\nSELECT f(1) AS y;\n=== begin...end block\n---\nBEGIN\n  SET @a = 1;\n  SELECT @a;\nEND;\n---\nSELECT 1;\n\n[exit code 0]"
+  },
+  {
+   "turn": 25,
+   "content": "All three cases work. Now run the full test suite:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/ -q 2>&1 | tail -5\"}"
+     },
+     "id": "l9MPrTcLAEHTfpT3i4WzCrs7biAn2PPk"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\ntests/test_split.py:56: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_split.py::test_split_begintag - AssertionError: assert 1 == 3\n1 failed, 474 passed, 2 xfailed, 1 xpassed in 1.13s\n\n[exit code 0]"
+  },
+  {
+   "turn": 26,
+   "content": "The `begin;` (MySQL transaction start) case is being captured by the block logic since it's a bare `BEGIN`. I'll add a check that if a `;` or `(` follows `BEGIN`, it's a transaction-start `BEGIN` rather than the start of a block:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"        if unified == 'BEGIN':\\n            self._begin_depth += 1\\n            if self._is_create:\\n                # FIXME(andi): This makes no sense.  ## this comment neither\\n                return 1\\n            self.block_depth += 1\\n            return 0\",\"new_str\":\"        if unified == 'BEGIN':\\n            self._begin_depth += 1\\n            if self._is_create:\\n                # FIXME(andi): This makes no sense.  ## this comment neither\\n                return 1\\n            # A standalone BEGIN starts a transaction (e.g. ``begin;``)\\n            # rather than a BEGIN ... END block, unless it is directly\\n            # followed by the block's parameters (``BEGIN()``).\\n            nxt = self._next_significant_token()\\n            if nxt is not None and nxt[0] is T.Punctuation and nxt[1] == '(':\\n                self.block_depth += 1\\n            return 0\"}"
+     },
+     "id": "qPzPNnzBNLqp4ncKBnTXj36BJaQvF6HX"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 27,
+   "content": "Now add the lookahead helper. Let me view the current process method:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"offset\":82}"
+     },
+     "id": "GqylMAt5QFsxCGdWkB4vT56rYfJwpSwX"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "   82\t                self._in_case = True\n   83\t            return 1\n   84\t\n   85\t        if unified in ('END IF', 'END FOR', 'END WHILE'):\n   86\t            return -1\n   87\t\n   88\t        # Default\n   89\t        return 0\n   90\t\n   91\t    def process(self, stream):\n   92\t        \"\"\"Process the stream\"\"\"\n   93\t        EOS_TTYPE = T.Whitespace, T.Comment.Single\n   94\t\n   95\t        # Run over all stream tokens\n   96\t        for ttype, value in stream:\n   97\t            # Yield token if we finished a statement and there's no whitespaces\n   98\t            # It will count newline token as a non whitespace. In this context\n   99\t            # whitespace ignores newlines.\n  100\t            # why don't multi line comments also count?\n  101\t            if self.consume_ws and ttype not in EOS_TTYPE:\n  102\t                yield sql.Statement(self.tokens)\n  103\t\n  104\t                # Reset filter and prepare to process next statement\n  105\t                self._reset()\n  106\t\n  107\t            # Change current split level (increase, decrease or remain equal)\n  108\t            self.level += self._change_splitlevel(ttype, value)\n  109\t\n  110\t            # Append the token to the current statement\n  111\t            self.tokens.append(sql.Token(ttype, value))\n  112\t\n  113\t            # Check if we get the end of a statement\n  114\t            # Issue762: Allow GO (or \"GO 2\") as statement splitter.\n  115\t            # When implementing a language toggle, it's not only to add\n  116\t            # keywords it's also to change some rules, like this splitting\n  117\t            # rule.\n  118\t            if ((self.level <= 0 and self.block_depth == 0\n  119\t                 and ttype is T.Punctuation and value == ';')\n  120\t                    or (ttype is T.Keyword and value.split()[0] == 'GO')):\n  121\t                self.consume_ws = True\n  122\t\n  123\t        # Yield pending statement (if any)\n  124\t        if self.tokens and not all(t.is_whitespace for t in self.tokens):\n  125\t            yield sql.Statement(self.tokens)"
+  },
+  {
+   "turn": 28,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"    def process(self, stream):\\n        \\\"\\\"\\\"Process the stream\\\"\\\"\\\"\\n        EOS_TTYPE = T.Whitespace, T.Comment.Single\\n\\n        # Run over all stream tokens\\n        for ttype, value in stream:\\n            # Yield token if we finished a statement and there's no whitespaces\\n            # It will count newline token as a non whitespace. In this context\\n            # whitespace ignores newlines.\\n            # why don't multi line comments also count?\\n            if self.consume_ws and ttype not in EOS_TTYPE:\\n                yield sql.Statement(self.tokens)\\n\\n                # Reset filter and prepare to process next statement\\n                self._reset()\\n\\n            # Change current split level (increase, decrease or remain equal)\\n            self.level += self._change_splitlevel(ttype, value)\",\"new_str\":\"    def _next_significant_token(self):\\n        \\\"\\\"\\\"Return the next token in the stream (skipping blanks), or None\\\"\\\"\\\"\\n        for ttype, value in self.stream:\\n            if ttype not in (T.Whitespace, T.Comment.Single):\\n                return ttype, value\\n        return None\\n\\n    def process(self, stream):\\n        \\\"\\\"\\\"Process the stream\\\"\\\"\\\"\\n        EOS_TTYPE = T.Whitespace, T.Comment.Single\\n        self.stream = stream\\n\\n        # Run over all stream tokens\\n        for ttype, value in stream:\\n            # Yield token if we finished a statement and there's no whitespaces\\n            # It will count newline token as a non whitespace. In this context\\n            # whitespace ignores newlines.\\n            # why don't multi line comments also count?\\n            if self.consume_ws and ttype not in EOS_TTYPE:\\n                yield sql.Statement(self.tokens)\\n\\n                # Reset filter and prepare to process next statement\\n                self._reset()\\n\\n            # Change current split level (increase, decrease or remain equal)\\n            self.level += self._change_splitlevel(ttype, value)\"}"
+     },
+     "id": "kKC8UA57CPxaCDJVuBtSUypqFqjV1BRD"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 29,
+   "content": "Now update the `END` decrement to only trigger for block-form BEGINs (those followed by `(`):",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"            if self.block_depth > 0 and self._begin_depth == 0:\\n                self.block_depth -= 1\\n            return -1\",\"new_str\":\"            if (self.block_depth > 0 and self._begin_depth == 0\\n                    and self._last_block_begin):\\n                self.block_depth -= 1\\n                self._last_block_begin = False\\n            return -1\"}"
+     },
+     "id": "ZBCF6VnYZZArRXDFyNqrU5f78s6Asy7O"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 30,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"        if unified == 'BEGIN':\\n            self._begin_depth += 1\\n            if self._is_create:\\n                # FIXME(andi): This makes no sense.  ## this comment neither\\n                return 1\\n            # A standalone BEGIN starts a transaction (e.g. ``begin;``)\\n            # rather than a BEGIN ... END block, unless it is directly\\n            # followed by the block's parameters (``BEGIN()``).\\n            nxt = self._next_significant_token()\\n            if nxt is not None and nxt[0] is T.Punctuation and nxt[1] == '(':\\n                self.block_depth += 1\\n            return 0\",\"new_str\":\"        if unified == 'BEGIN':\\n            self._begin_depth += 1\\n            if self._is_create:\\n                # FIXME(andi): This makes no sense.  ## this comment neither\\n                return 1\\n            # A standalone BEGIN starts a transaction (e.g. ``begin;``)\\n            # rather than a BEGIN ... END block, unless it is directly\\n            # followed by the block's parameter list (``BEGIN()``).\\n            nxt = self._next_significant_token()\\n            if (nxt is not None and nxt[0] is T.Punctuation\\n                    and nxt[1] == '('):\\n                self.block_depth += 1\\n                self._last_block_begin = True\\n            return 0\"}"
+     },
+     "id": "kmEfhBIZo4cgW40Wh9vsstHzhOQDEmRQ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 31,
+   "content": "Wait, there's a subtlety with nested CREATE statements inside a block. Let me reconsider \u2014 the simplest correct rule: a standalone BEGIN not in a create context always opens a block; the `END` closes it. The `begin;` case: BEGIN \u2192 block_depth 1, `;` ignored, `END` \u2192 0, `;` splits. Let me test the naive version first:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"            # A standalone BEGIN starts a transaction (e.g. ``begin;``)\\n            # rather than a BEGIN ... END block, unless it is directly\\n            # followed by the block's parameter list (``BEGIN()``).\\n            nxt = self._next_significant_token()\\n            if (nxt is not None and nxt[0] is T.Punctuation\\n                    and nxt[1] == '('):\\n                self.block_depth += 1\\n                self._last_block_begin = True\\n            return 0\",\"new_str\":\"            self.block_depth += 1\\n            return 0\"}"
+     },
+     "id": "19XktBa76U9ydBORBamGxF564jszfrxz"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 32,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"            if (self.block_depth > 0 and self._begin_depth == 0\\n                    and self._last_block_begin):\\n                self.block_depth -= 1\\n                self._last_block_begin = False\\n            return -1\",\"new_str\":\"            if self.block_depth > 0 and self._begin_depth == 0:\\n                self.block_depth -= 1\\n            return -1\"}"
+     },
+     "id": "jYvuBGqd9E7l8JqUnddthZZnl8W1i2UQ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 33,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/ -q 2>&1 | tail -3\"}"
+     },
+     "id": "wjNNQEsie8wpdypnLTUw5zACYKlaJGR6"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "=========================== short test summary info ============================\nFAILED tests/test_split.py::test_split_begintag - AssertionError: assert 1 == 3\n1 failed, 474 passed, 2 xfailed, 1 xpassed in 1.12s\n\n[exit code 0]"
+  },
+  {
+   "turn": 34,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\nsql = 'begin;\\\\nupdate foo set bar = 1;\\\\ncommit;'\\nfor s in sqlparse.split(sql):\\n    print('---'); print(s)\\n\\\"\"}"
+     },
+     "id": "McgWLMc4hvXFqNNsgq7LCFN1yJmajN6A"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "---\nbegin;\nupdate foo set bar = 1;\ncommit;\n\n[exit code 0]"
+  },
+  {
+   "turn": 35,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\nsql = 'begin; update foo set bar = 1; commit;'\\nfor s in sqlparse.split(sql):\\n    print('---'); print(repr(s))\\n\\\"\"}"
+     },
+     "id": "HGWf5SupuHL1yiby5yRQ9wfJRYkpoJLP"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "---\n'begin; update foo set bar = 1; commit;'\n\n[exit code 0]"
+  },
+  {
+   "turn": 36,
+   "content": "Interesting \u2014 the multiline case now works but the single-line case fails. Let me check if `Statement` mutates tokens on init:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && grep -n \\\"class Statement\\\\|class TokenList\\\\|def __init__\\\" sqlparse/sql.py | head; sed -n \\\"$(grep -n 'class Statement' sqlparse/sql.py | cut -d: -f1),+20p\\\" sqlparse/sql.py\"}"
+     },
+     "id": "OcfoeX60LibufRW9Z5xltr8Fpel7tTtV"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "50:    def __init__(self, ttype, value):\n150:class TokenList(Token):\n159:    def __init__(self, tokens=None):\n403:class Statement(TokenList):\nclass Statement(TokenList):\n    \"\"\"Represents a SQL statement.\"\"\"\n\n    def get_type(self):\n        \"\"\"Returns the type of a statement.\n\n        The returned value is a string holding an upper-cased reprint of\n        the first DML or DDL keyword. If the first token in this group\n        isn't a DML or DDL keyword \"UNKNOWN\" is returned.\n\n        Whitespaces and comments at the beginning of the statement\n        are ignored.\n        \"\"\"\n        token = self.token_first(skip_cm=True)\n        if token is None:\n            # An \"empty\" statement that either has not tokens at all\n            # or only whitespace tokens.\n            return 'UNKNOWN'\n\n        elif token.ttype in (T.Keyword.DML, T.Keyword.DDL):\n            return token.normalized\n\n[exit code 0]"
+  },
+  {
+   "turn": 37,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && sed -n '150,200p' sqlparse/sql.py\"}"
+     },
+     "id": "BF9yqClcQF9O39cbH1JX85NZr6QC2OmD"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "class TokenList(Token):\n    \"\"\"A group of tokens.\n\n    It has an additional instance attribute ``tokens`` which holds a\n    list of child-tokens.\n    \"\"\"\n\n    __slots__ = 'tokens'\n\n    def __init__(self, tokens=None):\n        self.tokens = tokens or []\n        [setattr(token, 'parent', self) for token in self.tokens]\n        super().__init__(None, str(self))\n        self.is_group = True\n\n    def __str__(self):\n        return ''.join(token.value for token in self.flatten())\n\n    # weird bug\n    # def __len__(self):\n    #     return len(self.tokens)\n\n    def __iter__(self):\n        return iter(self.tokens)\n\n    def __getitem__(self, item):\n        return self.tokens[item]\n\n    def _get_repr_name(self):\n        return type(self).__name__\n\n    def _pprint_tree(self, max_depth=None, depth=0, f=None, _pre=''):\n        \"\"\"Pretty-print the object tree.\"\"\"\n        token_count = len(self.tokens)\n        for idx, token in enumerate(self.tokens):\n            cls = token._get_repr_name()\n            value = token._get_repr_value()\n\n            last = idx == (token_count - 1)\n            pre = '`- ' if last else '|- '\n\n            q = '\"' if value.startswith(\"'\") and value.endswith(\"'\") else \"'\"\n            print(f\"{_pre}{pre}{idx} {cls} {q}{value}{q}\", file=f)\n\n            if token.is_group and (max_depth is None or depth < max_depth):\n                parent_pre = '   ' if last else '|  '\n                token._pprint_tree(max_depth, depth + 1, f, _pre + parent_pre)\n\n    def get_token_at_offset(self, offset):\n        \"\"\"Returns the token that is on position offset.\"\"\"\n        idx = 0\n\n[exit code 0]"
+  },
+  {
+   "turn": 38,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nfrom sqlparse import sql, tokens as T\\ntoks = [sql.Token(T.Keyword, 'begin'), sql.Token(T.Punctuation, ';')]\\ns = sql.Statement(toks)\\nfor t in toks:\\n    print(t.ttype, repr(t.value))\\n\\\"\"}"
+     },
+     "id": "Yawwry0dsbdDwVWW7WwZykKJLHC8iHjO"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Token.Keyword 'begin'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 39,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nfrom sqlparse.lexer import tokenize\\nprint([ (str(tt), v) for tt, v in tokenize('begin; update foo set bar = 1; commit;')])\\n\\\"\"}"
+     },
+     "id": "DLoUMuILV4E4IRl791GOWX1eyxAC4CPR"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "[('Token.Keyword', 'begin'), ('Token.Punctuation', ';'), ('Token.Text.Whitespace', ' '), ('Token.Keyword.DML', 'update'), ('Token.Text.Whitespace', ' '), ('Token.Name', 'foo'), ('Token.Text.Whitespace', ' '), ('Token.Keyword', 'set'), ('Token.Text.Whitespace', ' '), ('Token.Name', 'bar'), ('Token.Text.Whitespace', ' '), ('Token.Operator.Comparison', '='), ('Token.Text.Whitespace', ' '), ('Token.Literal.Number.Integer', '1'), ('Token.Punctuation', ';'), ('Token.Text.Whitespace', ' '), ('Token.Keyword.DML', 'commit'), ('Token.Punctuation', ';')]\n\n[exit code 0]"
+  },
+  {
+   "turn": 40,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\nsql = 'begin;\\\\nupdate foo set bar = 1;\\\\ncommit;'\\nfor s in sqlparse.split(sql):\\n    print('---'); print(repr(s))\\n\\\"\"}"
+     },
+     "id": "46Cey3wnoxbhqjNXTXa6GyfiUwvaHwUn"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "---\n'begin;\\nupdate foo set bar = 1;\\ncommit;'\n\n[exit code 0]"
+  },
+  {
+   "turn": 41,
+   "content": "That's the original bug. Let me trace:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nfrom sqlparse.engine.statement_splitter import StatementSplitter\\nfrom sqlparse.lexer import tokenize\\nfrom sqlparse import sql\\nf = StatementSplitter()\\nstream = tokenize('begin;\\\\nupdate foo set bar = 1;\\\\ncommit;')\\nstream = iter(stream)\\nf.stream = stream\\ndef chg(tt, v):\\n    r = f._change_splitlevel(tt, v)\\n    return r\\n# manually replicate\\nfor tt, v in tokenize('begin;\\\\nupdate foo set bar = 1;\\\\ncommit;'):\\n    if tt in (sql.T if hasattr(sql,'T') else ()):\\n        pass\\n    from sqlparse import tokens as T\\n    level_delta = f._change_splitlevel(tt, v)\\n    f.level += level_delta\\n    f.tokens.append(sql.Token(tt, v))\\n    print(f'level={f.level} block={f.block_depth} begin={f._begin_depth} delta={level_delta} {tt} {v!r}')\\n    if f.level <= 0 and f.block_depth == 0 and tt is T.Punctuation and v == ';':\\n        f.consume_ws = True\\n        f.level=0; f.tokens=[]; f.block_depth=0; f._begin_depth=0\\n        print('  ^^ reset')\\n\\\"\"}"
+     },
+     "id": "pqUbAJoWe9QnidxqrQa3kT0wjvLloBwG"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 14, in <module>\n    if tt in (sql.T if hasattr(sql,'T') else ()):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: argument of type 'module' is not a container or iterable\n\n[exit code 1]"
+  },
+  {
+   "turn": 42,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nfrom sqlparse.engine.statement_splitter import StatementSplitter\\nfrom sqlparse.lexer import tokenize\\nfrom sqlparse import sql, tokens as T\\nf = StatementSplitter()\\nfor tt, v in tokenize('begin;\\\\nupdate foo set bar = 1;\\\\ncommit;'):\\n    level_delta = f._change_splitlevel(tt, v)\\n    f.level += level_delta\\n    f.tokens.append(sql.Token(tt, v))\\n    print(f'level={f.level} block={f.block_depth} begin={f._begin_depth} delta={level_delta} {tt} {v!r}')\\n    if f.level <= 0 and f.block_depth == 0 and tt is T.Punctuation and v == ';':\\n        print('  ^^ RESET')\\n        f.level=0; f.tokens=[]; f.block_depth=0; f._begin_depth=0\\n\\\"\"}"
+     },
+     "id": "JPhrCDF4dueeAuPJLIXwo12GYZReLScc"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "level=0 block=1 begin=1 delta=0 Token.Keyword 'begin'\nlevel=0 block=1 begin=1 delta=0 Token.Punctuation ';'\nlevel=0 block=1 begin=1 delta=0 Token.Text.Whitespace.Newline '\\n'\nlevel=0 block=1 begin=1 delta=0 Token.Keyword.DML 'update'\nlevel=0 block=1 begin=1 delta=0 Token.Text.Whitespace ' '\nlevel=0 block=1 begin=1 delta=0 Token.Name 'foo'\nlevel=0 block=1 begin=1 delta=0 Token.Text.Whitespace ' '\nlevel=0 block=1 begin=1 delta=0 Token.Keyword 'set'\nlevel=0 block=1 begin=1 delta=0 Token.Text.Whitespace ' '\nlevel=0 block=1 begin=1 delta=0 Token.Name 'bar'\nlevel=0 block=1 begin=1 delta=0 Token.Text.Whitespace ' '\nlevel=0 block=1 begin=1 delta=0 Token.Operator.Comparison '='\nlevel=0 block=1 begin=1 delta=0 Token.Text.Whitespace ' '\nlevel=0 block=1 begin=1 delta=0 Token.Literal.Number.Integer '1'\nlevel=0 block=1 begin=1 delta=0 Token.Punctuation ';'\nlevel=0 block=1 begin=1 delta=0 Token.Text.Whitespace.Newline '\\n'\nlevel=0 block=1 begin=1 delta=0 Token.Keyword.DML 'commit'\nlevel=0 block=1 begin=1 delta=0 Token.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 43,
+   "content": "Found it \u2014 a nested `BEGIN` inside a block increments `_begin_depth` to 2, so the inner `END` doesn't close the block. Fix: decrement `block_depth` on any END that returns -1 when `_begin_depth == 1` (regardless of `_in_case`):",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"        if unified == 'END':\\n            if not self._in_case:\\n                self._begin_depth = max(0, self._begin_depth - 1)\\n            else:\\n                self._in_case = False\\n            if self.block_depth > 0 and self._begin_depth == 0:\\n                self.block_depth -= 1\\n            return -1\",\"new_str\":\"        if unified == 'END':\\n            if not self._in_case:\\n                self._begin_depth = max(0, self._begin_depth - 1)\\n            else:\\n                self._in_case = False\\n            if self.block_depth > 0 and self._begin_depth == 1:\\n                self.block_depth -= 1\\n            return -1\"}"
+     },
+     "id": "dXKfvIzWImlVTp4cs1lZWuczYXD17UpG"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 44,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/ -q 2>&1 | tail -3 && python -c \\\"\\nimport sqlparse\\ncases = [\\n('begin; update foo set bar = 1; commit;', 3),\\n('begin;\\\\nupdate foo set bar = 1;\\\\ncommit;', 3),\\n]\\nfor sql, n in cases:\\n    s = sqlparse.split(sql)\\n    print(n, len(s), [repr(x) for x in s])\\n\\\"\"}"
+     },
+     "id": "w3dSBgWCaSxSyS13Ju2kxUTlypvzLaes"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "=========================== short test summary info ============================\nFAILED tests/test_split.py::test_split_begintag - AssertionError: assert 1 == 3\n1 failed, 474 passed, 2 xfailed, 1 xpassed in 1.11s\n3 1 [\"'begin; update foo set bar = 1; commit;'\"]\n3 1 [\"'begin;\\\\nupdate foo set bar = 1;\\\\ncommit;'\"]\n\n[exit code 0]"
+  },
+  {
+   "turn": 45,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\"}"
+     },
+     "id": "9ig5K6j03RDVgoKsaNRJNVqxML3cH9rw"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "    1\t#\n    2\t# Copyright (C) 2009-2020 the sqlparse authors and contributors\n    3\t# <see AUTHORS file>\n    4\t#\n    5\t# This module is part of python-sqlparse and is released under\n    6\t# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n    7\t\n    8\tfrom sqlparse import sql, tokens as T\n    9\t\n   10\t\n   11\tclass StatementSplitter:\n   12\t    \"\"\"Filter that split stream at individual statements\"\"\"\n   13\t\n   14\t    def __init__(self):\n   15\t        self._reset()\n   16\t\n   17\t    def _reset(self):\n   18\t        \"\"\"Set the filter attributes to its default values\"\"\"\n   19\t        self._in_declare = False\n   20\t        self._in_case = False\n   21\t        self._is_create = False\n   22\t        self._begin_depth = 0\n   23\t\n   24\t        self.consume_ws = False\n   25\t        self.tokens = []\n   26\t        self.level = 0\n   27\t        self.block_depth = 0\n   28\t\n   29\t    def _change_splitlevel(self, ttype, value):\n   30\t        \"\"\"Get the new split level (increase, decrease or remain equal)\"\"\"\n   31\t\n   32\t        # parenthesis increase/decrease a level\n   33\t        if ttype is T.Punctuation and value == '(':\n   34\t            return 1\n   35\t        elif ttype is T.Punctuation and value == ')':\n   36\t            return -1\n   37\t        elif ttype not in T.Keyword:  # if normal token return\n   38\t            return 0\n   39\t\n   40\t        # Everything after here is ttype = T.Keyword\n   41\t        # Also to note, once entered an If statement you are done and basically\n   42\t        # returning\n   43\t        unified = value.upper()\n   44\t\n   45\t        # three keywords begin with CREATE, but only one of them is DDL\n   46\t        # DDL Create though can contain more words such as \"or replace\"\n   47\t        if ttype is T.Keyword.DDL and unified.startswith('CREATE'):\n   48\t            self._is_create = True\n   49\t            return 0\n   50\t\n   51\t        # can have nested declare inside of being...\n   52\t        if unified == 'DECLARE' and self._is_create and self._begin_depth == 0:\n   53\t            self._in_declare = True\n   54\t            return 1\n   55\t\n   56\t        if unified == 'BEGIN':\n   57\t            self._begin_depth += 1\n   58\t            if self._is_create:\n   59\t                # FIXME(andi): This makes no sense.  ## this comment neither\n   60\t                return 1\n   61\t            self.block_depth += 1\n   62\t            return 0\n   63\t\n   64\t        # BEGIN and CASE/WHEN both end with END\n   65\t        if unified == 'END':\n   66\t            if not self._in_case:\n   67\t                self._begin_depth = max(0, self._begin_depth - 1)\n   68\t            else:\n   69\t                self._in_case = False\n   70\t            if self.block_depth > 0 and self._begin_depth == 1:\n   71\t                self.block_depth -= 1\n   72\t            return -1\n   73\t\n   74\t        if (unified in ('IF', 'FOR', 'WHILE', 'CASE')\n   75\t                and self._is_create and self._begin_depth > 0):\n   76\t            if unified == 'CASE':\n   77\t                self._in_case = True\n   78\t            return 1\n   79\t\n   80\t        if unified in ('END IF', 'END FOR', 'END WHILE'):\n   81\t            return -1\n   82\t\n   83\t        # Default\n   84\t        return 0\n   85\t\n   86\t    def _next_significant_token(self):\n   87\t        \"\"\"Return the next token in the stream (skipping blanks), or None\"\"\"\n   88\t        for ttype, value in self.stream:\n   89\t            if ttype not in (T.Whitespace, T.Comment.Single):\n   90\t                return ttype, value\n   91\t        return None\n   92\t\n   93\t    def process(self, stream):\n   94\t        \"\"\"Process the stream\"\"\"\n   95\t        EOS_TTYPE = T.Whitespace, T.Comment.Single\n   96\t        self.stream = stream\n   97\t\n   98\t        # Run over all stream tokens\n   99\t        for ttype, value in stream:\n  100\t            # Yield token if we finished a statement and there's no whitespaces\n  101\t            # It will count newline token as a non whitespace. In this context\n  102\t            # whitespace ignore"
+  },
+  {
+   "turn": 46,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nfrom sqlparse.engine.statement_splitter import StatementSplitter\\nfrom sqlparse.lexer import tokenize\\nfrom sqlparse import sql, tokens as T\\nf = StatementSplitter()\\nf.stream = iter(tokenize('begin; update foo set bar = 1; commit;'))\\nfor stmt in f.process(f.stream):\\n    print(repr(str(stmt)))\\n\\\"\"}"
+     },
+     "id": "Ma3W952C2n88hPjb0Q4cvSid6hso22B4"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "'begin; update foo set bar = 1; commit;'\n\n[exit code 0]"
+  },
+  {
+   "turn": 47,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nfrom sqlparse.engine.statement_splitter import StatementSplitter\\nfrom sqlparse.lexer import tokenize\\nfrom sqlparse import sql, tokens as T\\nf = StatementSplitter()\\nfor tt, v in tokenize('begin; update foo set bar = 1; commit;'):\\n    delta = f._change_splitlevel(tt, v)\\n    f.level += delta\\n    f.tokens.append(sql.Token(tt, v))\\n    print(f'level={f.level} block={f.block_depth} begin={f._begin_depth} d={delta} {v!r}')\\n\\\"\"}"
+     },
+     "id": "SoNsy3pFffl8Vg7MX2aT55Z5FPmb23ZN"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "level=0 block=1 begin=1 d=0 'begin'\nlevel=0 block=1 begin=1 d=0 ';'\nlevel=0 block=1 begin=1 d=0 ' '\nlevel=0 block=1 begin=1 d=0 'update'\nlevel=0 block=1 begin=1 d=0 ' '\nlevel=0 block=1 begin=1 d=0 'foo'\nlevel=0 block=1 begin=1 d=0 ' '\nlevel=0 block=1 begin=1 d=0 'set'\nlevel=0 block=1 begin=1 d=0 ' '\nlevel=0 block=1 begin=1 d=0 'bar'\nlevel=0 block=1 begin=1 d=0 ' '\nlevel=0 block=1 begin=1 d=0 '='\nlevel=0 block=1 begin=1 d=0 ' '\nlevel=0 block=1 begin=1 d=0 '1'\nlevel=0 block=1 begin=1 d=0 ';'\nlevel=0 block=1 begin=1 d=0 ' '\nlevel=0 block=1 begin=1 d=0 'commit'\nlevel=0 block=1 begin=1 d=0 ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 48,
+   "content": "There's no END in the transaction case \u2014 block never closes. I need to close a standalone block when its `BEGIN` is immediately followed by `;`. Let me restructure:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\",\"old_str\":\"        if unified == 'BEGIN':\\n            self._begin_depth += 1\\n            if self._is_create:\\n                # FIXME(andi): This makes no sense.  ## this comment neither\\n                return 1\\n            self.block_depth += 1\\n            return 0\\n\\n        # BEGIN and CASE/WHEN both end with END\\n        if unified == 'END':\\n            if not self._in_case:\\n                self._begin_depth = max(0, self._begin_depth - 1)\\n            else:\\n                self._in_case = False\\n            if self.block_depth > 0 and self._begin_depth == 1:\\n                self.block_depth -= 1\\n            return -1\",\"new_str\":\"        if unified == 'BEGIN':\\n            self._begin_depth += 1\\n            if self._is_create:\\n                # FIXME(andi): This makes no sense.  ## this comment neither\\n                return 1\\n            # A BEGIN not directly followed by a parameter list is a\\n            # transaction statement (e.g. ``begin;``) rather than the\\n            # start of a BEGIN ... END block.  Such a block may contain\\n            # semicolons that must not end the statement.\\n            nxt = self._next_significant_token()\\n            if nxt is None or (nxt[0] is T.Punctuation and nxt[1] != '('):\\n                self._begin_depth = 0\\n            else:\\n                self.block_depth += 1\\n            return 0\\n\\n        # BEGIN and CASE/WHEN both end with END\\n        if unified == 'END':\\n            if not self._in_case:\\n                self._begin_depth = max(0, self._begin_depth - 1)\\n            else:\\n                self._in_case = False\\n            if self.block_depth > 0 and self._begin_depth == 0:\\n                self.block_depth -= 1\\n            return -1\"}"
+     },
+     "id": "BDlV4HTXgDTulbPLiA5EZYgPYBmRsw0M"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited sqlparse/engine/statement_splitter.py"
+  },
+  {
+   "turn": 49,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/ -q 2>&1 | tail -3\"}"
+     },
+     "id": "3XeoJ3JAqSMgQ6HVGBoXlRoGzZkGEicZ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "FAILED tests/test_grouping.py::test_nested_begin - AttributeError: 'Token' ob...\nFAILED tests/test_split.py::test_split_begintag - AssertionError: assert 2 == 3\n3 failed, 472 passed, 2 xfailed, 1 xpassed in 1.12s\n\n[exit code 0]"
+  },
+  {
+   "turn": 50,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/ -q 2>&1 | grep FAILED; python -m pytest tests/test_grouping.py::test_nested_begin -q 2>&1 | tail -30\"}"
+     },
+     "id": "UxzPjaE96FihUP1Awh2i7wRsXWajQ4t4"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "FAILED tests/test_cli.py::test_stdout - AssertionError: assert 'begin\\nupdat....\nFAILED tests/test_grouping.py::test_nested_begin - AttributeError: 'Token' ob...\nFAILED tests/test_split.py::test_split_begintag - AssertionError: assert 2 == 3\nF                                                                        [100%]\n=================================== FAILURES ===================================\n______________________________ test_nested_begin _______________________________\n\n    def test_nested_begin():\n        p = sqlparse.parse('BEGIN foo BEGIN bar END END')[0]\n        assert len(p.tokens) == 1\n        outer = p.tokens[0]\n        assert outer.tokens[0].value == 'BEGIN'\n        assert outer.tokens[-1].value == 'END'\n        inner = outer.tokens[4]\n>       assert inner.tokens[0].value == 'BEGIN'\n               ^^^^^^^^^^^^\nE       AttributeError: 'Token' object has no attribute 'tokens'\n\ntests/test_grouping.py:625: AttributeError\n=========================== short test summary info ============================\nFAILED tests/test_grouping.py::test_nested_begin - AttributeError: 'Token' ob...\n1 failed in 0.09s\n\n[exit code 0]"
+  }
+ ]
+}

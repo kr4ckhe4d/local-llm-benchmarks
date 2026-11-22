@@ -1,0 +1,32 @@
+title = "sqlparse: split() breaks procedures at semicolons inside BEGIN...END"
+kind = "real-bugfix"
+upstream = "https://github.com/andialbrecht/sqlparse"
+commit = "e92a032c81d51a6645b4f8c32470481894818ba0"
+overlay = true
+max_turns = 50
+check = 'python -m pytest -q -p no:cacheprovider -o addopts="" tests/test_split.py'
+prompt = """
+This is the source of `sqlparse`, a non-validating SQL parser and formatter for Python. Run
+tests with `python -m pytest tests/<file>`.
+
+Bug report:
+
+> `sqlparse.split()` cuts my BigQuery procedure into pieces at every semicolon inside its
+> body:
+>
+>     CREATE OR REPLACE PROCEDURE mydataset.create_customer()
+>     BEGIN
+>       DECLARE id STRING;
+>       SET id = GENERATE_UUID();
+>       INSERT INTO mydataset.customers (customer_id)
+>         VALUES(id);
+>       SELECT FORMAT("Created customer %s", id);
+>     END;
+>
+> The same happens for a `WITH FUNCTION ... BEGIN ... END SELECT ...` query (MySQL-style
+> function defined in a WITH clause), which should stay one statement.
+
+Expected: semicolons inside a `BEGIN ... END` block do not end the statement; the statement
+ends at the first semicolon after the block's `END`, or at the end of the input. Everything
+`split()` already handles must keep working.
+"""

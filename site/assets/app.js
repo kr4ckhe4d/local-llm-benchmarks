@@ -171,6 +171,7 @@
     for (const r of D.m.cdn) get(r.model).cdn = r;
     for (const r of D.m.tools) get(r.model).tools = r;
     for (const r of D.m.fit) get(r.model).fit = r;
+    for (const r of D.m.depthsweep || []) get(r.model).depth = r;
     for (const m of Object.values(M)) {
       m.base = m.code.find(isBaseline) || null;
       m.best = m.code.reduce((a, b) => (!a || b.pass / b.total > a.pass / a.total) && b.total === 50 ? b : a, null);
@@ -204,6 +205,7 @@
       if (kind === 'densemoe') return denseMoePage();
       if (kind === 'strata-oss') return strataOssPage();
       if (kind === 'arc') return arcPage();
+      if (kind === 'agent') return agentPage();
       if (kind === 'files') return filesPage(rest.join('/'), prevKind === 'files');
       app.innerHTML = `<div class="wrap"><div class="empty">Not found. <a href="#/">Back to overview</a></div></div>`;
     } catch (err) {
@@ -448,6 +450,9 @@
       </div>
       ${name.endsWith('-strata') ? `<div class="note">Runs on the Strata engine, not llama.cpp. ${t?.probe ? esc(t.probe) + '. ' : ''}<a href="#/strata">Strata tuning, card split and expert-mode results →</a></div>` : ''}
       ${spec ? `<div class="card"><h3>Speculative decoding: drafter comparison</h3><p class="sub">Generation tok/s on the same target, 700 tokens, temp 0, thinking off; hover for draft acceptance and tokens per step. <a href="${fileHref(spec.path)}">${esc(spec.path)}</a></p><div class="legend">${SPEC_TASKS.map((k, i) => `<span><i style="background:var(--s${i + 1})"></i>${k}</span>`).join('')}</div><div id="c-spec"></div></div>` : ''}
+      ${m.depth ? `<div class="card"><h3>Speed as the context grows</h3><p class="sub">Code-shaped filler of the given depth before the 700-token throughput prompt, temp 0, thinking off, prompt cache off, ${[...new Set(m.depth.pts.map(p => p.runs))].length > 1 ? 'runs per point in the tooltip' : `mean of ${m.depth.pts[0].runs} runs`}; every model with a depth sweep is drawn for comparison, this one in bold. ${m.depth.recall.map(r => `<a href="${fileHref(r.path)}">${r.kind === 'needle' ? 'Verbatim' : 'Semantic'} recall ${r.pass}/${r.total} at ${fmtInt(r.tokens)} tokens</a>`).join(' · ')} · <a href="${fileHref(m.depth.txt)}">${esc(m.depth.txt)}</a></p>
+        <div class="legend">${(D.m.depthsweep || []).map((d, i) => `<span><i style="background:var(--s${i % 4 + 1})"></i>${d.model === name ? `<b>${esc(d.model)}</b>` : esc(d.model)}</span>`).join('')}</div>
+        <div id="c-depth-tg"></div><div id="c-depth-pp"></div></div>` : ''}
       ${b ? `<div class="card"><h3>Code quality by task (baseline)</h3><p class="sub"><a href="${fileHref(b.path)}">${esc(b.path)}</a></p><div id="c-task"></div></div>` : ''}
       ${runs.length > 1 ? `<div class="section-h"><h2>All ${runs.length} code-quality runs</h2><a href="#/code/${esc(name)}">Task matrix →</a></div><div id="c-runs" class="card"></div>` : ''}
       ${docs.length ? `<div class="section-h"><h2>Discussed in</h2></div><div class="doccards">${docs.map(d => `<a class="doccard" href="#/doc/${d.slug}"><b>${esc(d.title)}</b><span>${esc(d.path)}</span></a>`).join('')}</div>` : ''}
@@ -462,6 +467,13 @@
           tip: tipRows(`${l} · ${t}`, [['generation', r ? fmt(r.tg, 1) + ' tok/s' : '—'], ['draft accepted', r?.acc != null ? r.acc + '%' : null], ['tokens per step (est.)', r?.tau], ['runs', r?.runs]]) });
       });
       hbar($('#c-spec'), out, { title: 'generation tok/s', dec: 1, rowH: 18, labW: 220 });
+    }
+    if (m.depth) for (const [id, k, lab] of [['#c-depth-tg', 'tg', 'generation tok/s'], ['#c-depth-pp', 'pp', 'prefill tok/s']]) {
+      const pp = k === 'pp';
+      scatter($(id), (D.m.depthsweep || []).map((d, i) => ({ name: d.model, cls: 's' + (i % 4 + 1), line: true,
+        pts: d.pts.filter(p => !pp || p.depth > 1000).map((p, j, a) => ({ x: p.depth, y: p[k], label: d.model === name && j === a.length - 1 ? fmt(p[k], pp ? 0 : 1) : '',
+          tip: tipRows(`${d.model}, ${fmtInt(p.depth)} tokens`, [['generation', fmt(p.tg, 1) + ' tok/s'], ['prefill', fmtInt(Math.round(p.pp)) + ' tok/s'], ['MTP draft accepted', p.draft != null ? p.draft + '%' : null], ['runs', p.runs], ['flags', d.flags], ['build', d.build], ['date', d.date]]) })) })),
+        { xlin: true, xfmt: v => v ? Math.round(v / 1000) + 'K' : '0', xlab: 'context depth (tokens)', ylab: lab, h: 280, title: lab });
     }
     if (b) hbar($('#c-task'), b.tasks.map(x => ({ label: x.task, value: x.pass / x.total * 100, text: `${x.pass}/${x.total}`, tip: tipRows(x.task, [['passed', `${x.pass}/${x.total}`], ['missed', x.missed.join(', ') || 'none']]) })), { max: 100, step: 25, tickFmt: v => v + '%' });
     if (runs.length > 1) hbar($('#c-runs'), runs.map(r => ({ label: r.label + (r.total !== 50 ? ` (${r.total})` : ''), value: r.pass / r.total * 50, text: `${r.pass}/${r.total}`, href: fileHref(r.path), dim: !cqCorrected(r), tip: tipRows(r.label, [['group', cqGroup(r)], ['score', `${r.pass}/${r.total}`], ['clean tasks', `${r.clean}/${r.ntasks}`], ['prompts', cqCorrected(r) ? 'corrected' : 'old'], ['file', r.path.split('/').slice(2).join('/')]]) })), { max: 50, step: 10, labW: 240 });
@@ -871,6 +883,49 @@
   }
 
   // ------------------------------------------------------------------ arc b580
+  function agentPage() {
+    setTitle('Agentic coding');
+    const A = D.m.agent || [];
+    const NAMES = {
+      'huihui-qwen3.8-27B-q6': 'Huihui-Qwen3.8-27B UD-Q6_K_XL', 'qwen3.8-27B-q6': 'Qwen3.8-27B UD-Q6_K (stock)',
+      'qwen3.5-27B-uncensored-q6': 'Qwen3.5-27B Uncensored Q6_K', 'qwen3.5-9B-uncensored-q8': 'Qwen3.5-9B Uncensored Q8_0',
+    };
+    const name = a => NAMES[a.label] || a.label;
+    const order = Object.keys(NAMES);
+    const L = [...A].sort((a, b) => (order.indexOf(a.label) + 1 || 99) - (order.indexOf(b.label) + 1 || 99));
+    const full = L.filter(a => a.repeats >= 3), part = L.filter(a => a.repeats < 3);
+    const KIND = { synthetic: 'synthetic', click: 'click', tomlkit: 'tomlkit', sqlparse: 'sqlparse', markdown: 'Python-Markdown' };
+    const kinds = Object.assign({}, ...L.map(a => a.kinds));
+    const tasks = Object.keys(kinds).sort((a, b) => (kinds[a] === 'synthetic' ? 0 : 1) - (kinds[b] === 'synthetic' ? 0 : 1) || a.localeCompare(b));
+    const doc = docBySlug('agent-eval');
+    const pct = a => 100 * a.pass / a.runs;
+    // a partial run is shown next to what the full runs scored on the same task/repeat pairs
+    const same = (a, b) => { const k = new Set(a.keys.map(x => x[0] + '#' + x[1])); return b.keys.filter(x => k.has(x[0] + '#' + x[1])).reduce((n, x) => n + x[2], 0); };
+    const tile = a => `<div class="tile"><div class="v">${a.pass}<small>/${a.runs}</small></div><div class="k">${esc(name(a))}</div><div class="s">${fmt(pct(a), 0)}% of runs pass · ${a.fc} false claims</div></div>`;
+    const heat = (k, n) => { if (!n) return `<td class="c">—</td>`; const lv = Math.round(6 * k / n); return `<td class="c l${lv}" title="${k} of ${n} runs pass">${k}/${n}</td>`; };
+    app.innerHTML = `<div class="wrap">
+      <div class="page-h"><div class="eyebrow">agent-eval · ${esc(full[0]?.date || '')}</div><h1>Agentic coding: real bugs, hidden tests</h1>
+      <p>Each model gets a repo it has never seen and a bug report, in one small tool loop (<span class="mono">bash</span>, <span class="mono">read_file</span>, <span class="mono">write_file</span>, <span class="mono">edit_file</span>, <span class="mono">finish</span>) with every command sandboxed and no network. Hidden tests decide whether the work is done. 21 tasks: 10 synthetic repos and 11 real fixes from click, tomlkit, sqlparse and Python-Markdown; 3 repeats; thinking off. A <b>false claim</b> is <span class="mono">finish("done")</span> with the hidden tests failing. Write-up: ${doc ? `<a href="#/doc/agent-eval">agent-eval.md</a>` : 'agent-eval.md'} · harness, tasks and transcripts: <a href="#/files/benchmarks/agent-eval/">agent-eval/</a>.</p></div>
+      <div class="tiles">${full.map(tile).join('')}</div>
+      <div class="grid2">
+        <div class="card"><h3>Runs that pass</h3><p class="sub">Percent of runs whose hidden tests pass. Partial runs are faded; hover for the full-run models on the same tasks.</p><div id="g-pass"></div></div>
+        <div class="card"><h3>How runs end without passing</h3><p class="sub">Per model: false claims (said done, tests fail) and runs that hit the turn limit.</p><div id="g-fail"></div></div>
+      </div>
+      <div class="section-h"><h2>Per task</h2></div>
+      <p class="sub" style="color:var(--ink-2);margin:-6px 0 12px">Runs passing out of runs made. Partial runs covered only the first few tasks of the first repeat.</p>
+      <div class="tbl heat"><table><thead><tr><th>task</th><th>source</th>${L.map(a => `<th class="n">${esc(name(a).replace(/ (UD-)?Q\d.*$/, ''))}${a.repeats < 3 ? ' <small>(partial)</small>' : ''}</th>`).join('')}</tr></thead><tbody>
+        ${tasks.map(t => `<tr><td class="mono" style="white-space:nowrap">${esc(t)}</td><td>${esc(KIND[kinds[t]] || kinds[t])}</td>${L.map(a => heat(a.tasks[t]?.pass ?? 0, a.tasks[t]?.n ?? 0)).join('')}</tr>`).join('')}
+      </tbody></table></div>
+      <div class="note">${full.length >= 2 ? `<b>Abliteration costs nothing here:</b> ${full.map(a => `${esc(name(a))} ${a.pass}/${a.runs}`).join(', ')}. With 63 runs the 95% interval on 67% is about ±12 points. ` : ''}Neither model made a malformed tool call. The tasks both models fail every time (slow-dedupe, sqlparse-begin-end-split, tomlkit-inline-table-delete) are where a stronger model would show.</div>
+      ${footer()}</div>`;
+    const tipFor = a => tipRows(name(a), [['runs pass', `${a.pass} / ${a.runs}`], ['said done', `${a.claimed} (${a.claimed - a.fc} correct)`], ['false claims', String(a.fc)],
+      ['turn limit', String(a.limit)], ['malformed calls', String(a.bad)], ['turns / run', fmt(a.turns, 1)], ['wall / run', a.wall + ' s'], ['completion tokens / run', fmtInt(a.tokens)],
+      ...(a.repeats < 3 ? full.map(f => [`${name(f)}, same runs`, `${same(a, f)} / ${a.runs}`]) : []), ['preset', a.preset], ['llama.cpp', a.build], ['file', a.path]]);
+    hbar($('#g-pass'), L.map(a => ({ label: name(a), value: pct(a), dim: a.repeats < 3, text: `${fmt(pct(a), 0)}%  (${a.pass}/${a.runs}${a.repeats < 3 ? ', partial' : ''})`, href: fileHref(a.summary), tip: tipFor(a) })), { labW: 240, rowH: 26, max: 100, step: 25, dec: 0 });
+    hbar($('#g-fail'), full.flatMap(a => [
+      { label: `${name(a).replace(/ (UD-)?Q\d.*$/, '')}: false claims`, value: a.fc, cls: 'alt', href: fileHref(a.summary), tip: tipFor(a) },
+      { label: `${name(a).replace(/ (UD-)?Q\d.*$/, '')}: turn limit`, value: a.limit, cls: 'c3', href: fileHref(a.summary), tip: tipFor(a) }]), { labW: 240, rowH: 24, dec: 0 });
+  }
   function arcPage() {
     setTitle('Arc B580');
     const A = D.m.arc || [];

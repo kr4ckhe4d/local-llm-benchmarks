@@ -1,0 +1,445 @@
+{
+ "metrics": {
+  "task": "click-usage-no-args",
+  "turns": 21,
+  "tool_calls": 21,
+  "bad_calls": 0,
+  "prompt_tokens": 111289,
+  "completion_tokens": 3117,
+  "max_prompt": 8086,
+  "finish": "done",
+  "summary": "Fixed `HelpFormatter.write_usage` in `src/click/formatting.py`: when `args` is empty, it now writes a single line \u2014 the (indent-aligned) prefix plus the program name, no trailing space \u2014 and returns, instead of calling `wrap_text(\"\")` which produced an extra `\"\\n\"` in the wide branch and a stray indent-only line in the narrow branch. The early-return uses the same prefix alignment expression as the normal path, so indentation behavior is unchanged, and the non-empty-args code path is untouched. Verified: `Usage: Program\\n` and `Run: Program\\n` (custom prefix) across widths 10\u201380 and with indentation, long program names included; non-empty-args output is byte-identical to before. Full test suite passes (1602 passed, 24 skipped, 1 xfailed).",
+  "end": "finish",
+  "wall_s": 70.3,
+  "pass": true,
+  "check_exit": 0,
+  "protected_changed": [],
+  "check_tail": "...................................                                      [100%]\n35 passed in 0.03s",
+  "claimed": true,
+  "false_claim": false,
+  "diffstat": " 2 files changed, 121 insertions(+)",
+  "repeat": 1
+ },
+ "log": [
+  {
+   "turn": 1,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -n \\\"write_usage\\\" -r /work/src | head\"}"
+     },
+     "id": "zQv0BbNRm3BWz2gNBX2yKDLhYUupP845"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "/work/src/click/formatting.py:153:    def write_usage(self, prog: str, args: str = \"\", prefix: str | None = None) -> None:\n/work/src/click/core.py:1086:        formatter.write_usage(ctx.command_path, \" \".join(pieces))\n\n[exit code 0]"
+  },
+  {
+   "turn": 2,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"/work/src/click/formatting.py\",\"offset\":100,\"limit\":120}"
+     },
+     "id": "qtfyIeYM1fnJM1pW3M6FBCWmSomrZydQ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "  100\t    for indent, raw, text in p:\n  101\t        with wrapper.extra_indent(\" \" * indent):\n  102\t            if raw:\n  103\t                rv.append(wrapper.indent_only(text))\n  104\t            else:\n  105\t                rv.append(wrapper.fill(text))\n  106\t\n  107\t    return \"\\n\\n\".join(rv)\n  108\t\n  109\t\n  110\tclass HelpFormatter:\n  111\t    \"\"\"This class helps with formatting text-based help pages.  It's\n  112\t    usually just needed for very special internal cases, but it's also\n  113\t    exposed so that developers can write their own fancy outputs.\n  114\t\n  115\t    At present, it always writes into memory.\n  116\t\n  117\t    :param indent_increment: the additional increment for each level.\n  118\t    :param width: the width for the text.  This defaults to the terminal\n  119\t                  width clamped to a maximum of 78.\n  120\t    \"\"\"\n  121\t\n  122\t    def __init__(\n  123\t        self,\n  124\t        indent_increment: int = 2,\n  125\t        width: int | None = None,\n  126\t        max_width: int | None = None,\n  127\t    ) -> None:\n  128\t        self.indent_increment = indent_increment\n  129\t        if max_width is None:\n  130\t            max_width = 80\n  131\t        if width is None:\n  132\t            import shutil\n  133\t\n  134\t            width = FORCED_WIDTH\n  135\t            if width is None:\n  136\t                width = max(min(shutil.get_terminal_size().columns, max_width) - 2, 50)\n  137\t        self.width = width\n  138\t        self.current_indent: int = 0\n  139\t        self.buffer: list[str] = []\n  140\t\n  141\t    def write(self, string: str) -> None:\n  142\t        \"\"\"Writes a unicode string into the internal buffer.\"\"\"\n  143\t        self.buffer.append(string)\n  144\t\n  145\t    def indent(self) -> None:\n  146\t        \"\"\"Increases the indentation.\"\"\"\n  147\t        self.current_indent += self.indent_increment\n  148\t\n  149\t    def dedent(self) -> None:\n  150\t        \"\"\"Decreases the indentation.\"\"\"\n  151\t        self.current_indent -= self.indent_increment\n  152\t\n  153\t    def write_usage(self, prog: str, args: str = \"\", prefix: str | None = None) -> None:\n  154\t        \"\"\"Writes a usage line into the buffer.\n  155\t\n  156\t        :param prog: the program name.\n  157\t        :param args: whitespace separated list of arguments.\n  158\t        :param prefix: The prefix for the first line. Defaults to\n  159\t            ``\"Usage: \"``.\n  160\t        \"\"\"\n  161\t        if prefix is None:\n  162\t            prefix = \"{usage} \".format(usage=_(\"Usage:\"))\n  163\t\n  164\t        usage_prefix = f\"{prefix:>{self.current_indent}}{prog} \"\n  165\t        text_width = self.width - self.current_indent\n  166\t\n  167\t        if text_width >= (term_len(usage_prefix) + 20):\n  168\t            # The arguments will fit to the right of the prefix.\n  169\t            indent = \" \" * term_len(usage_prefix)\n  170\t            self.write(\n  171\t                wrap_text(\n  172\t                    args,\n  173\t                    text_width,\n  174\t                    initial_indent=usage_prefix,\n  175\t                    subsequent_indent=indent,\n  176\t                )\n  177\t            )\n  178\t        else:\n  179\t            # The prefix is too long, put the arguments on the next line.\n  180\t            self.write(usage_prefix)\n  181\t            self.write(\"\\n\")\n  182\t            indent = \" \" * (max(self.current_indent, term_len(prefix)) + 4)\n  183\t            self.write(\n  184\t                wrap_text(\n  185\t                    args, text_width, initial_indent=indent, subsequent_indent=indent\n  186\t                )\n  187\t            )\n  188\t\n  189\t        self.write(\"\\n\")\n  190\t\n  191\t    def write_heading(self, heading: str) -> None:\n  192\t        \"\"\"Writes a heading into the buffer.\"\"\"\n  193\t        self.write(f\"{'':>{self.current_indent}}{heading}:\\n\")\n  194\t\n  195\t    def write_paragraph(self) -> None:\n  196\t        \"\"\"Writes a paragraph into the buffer.\"\"\"\n  197\t        if self.buffer:\n  198\t            self.write(\"\\n\")\n  199\t\n  200\t    def write_text(sel"
+  },
+  {
+   "turn": 3,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -n \\\"def wrap_text\\\" -A 60 /work/src/click/utils.py\"}"
+     },
+     "id": "Zp6su3nGYJYnR5SsN1vHUqhYTHwc4ZM3"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\n[exit code 1]"
+  },
+  {
+   "turn": 4,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -rn \\\"def wrap_text\\\" /work/src\"}"
+     },
+     "id": "FANAAUa0q4YJvDhJDOo0YisCGQIHfjnj"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "/work/src/click/formatting.py:31:def wrap_text(\n\n[exit code 0]"
+  },
+  {
+   "turn": 5,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"/work/src/click/formatting.py\",\"offset\":1,\"limit\":100}"
+     },
+     "id": "ihISS5dP4djFXhIe5OYzwtWRTLd5htgB"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "    1\tfrom __future__ import annotations\n    2\t\n    3\timport collections.abc as cabc\n    4\tfrom contextlib import contextmanager\n    5\tfrom gettext import gettext as _\n    6\t\n    7\tfrom ._compat import term_len\n    8\tfrom .parser import _split_opt\n    9\t\n   10\t# Can force a width.  This is used by the test system\n   11\tFORCED_WIDTH: int | None = None\n   12\t\n   13\t\n   14\tdef measure_table(rows: cabc.Iterable[tuple[str, str]]) -> tuple[int, ...]:\n   15\t    widths: dict[int, int] = {}\n   16\t\n   17\t    for row in rows:\n   18\t        for idx, col in enumerate(row):\n   19\t            widths[idx] = max(widths.get(idx, 0), term_len(col))\n   20\t\n   21\t    return tuple(y for x, y in sorted(widths.items()))\n   22\t\n   23\t\n   24\tdef iter_rows(\n   25\t    rows: cabc.Iterable[tuple[str, str]], col_count: int\n   26\t) -> cabc.Iterator[tuple[str, ...]]:\n   27\t    for row in rows:\n   28\t        yield row + (\"\",) * (col_count - len(row))\n   29\t\n   30\t\n   31\tdef wrap_text(\n   32\t    text: str,\n   33\t    width: int = 78,\n   34\t    initial_indent: str = \"\",\n   35\t    subsequent_indent: str = \"\",\n   36\t    preserve_paragraphs: bool = False,\n   37\t) -> str:\n   38\t    \"\"\"A helper function that intelligently wraps text.  By default, it\n   39\t    assumes that it operates on a single paragraph of text but if the\n   40\t    `preserve_paragraphs` parameter is provided it will intelligently\n   41\t    handle paragraphs (defined by two empty lines).\n   42\t\n   43\t    If paragraphs are handled, a paragraph can be prefixed with an empty\n   44\t    line containing the ``\\\\b`` character (``\\\\x08``) to indicate that\n   45\t    no rewrapping should happen in that block.\n   46\t\n   47\t    :param text: the text that should be rewrapped.\n   48\t    :param width: the maximum width for the text.\n   49\t    :param initial_indent: the initial indent that should be placed on the\n   50\t                           first line as a string.\n   51\t    :param subsequent_indent: the indent string that should be placed on\n   52\t                              each consecutive line.\n   53\t    :param preserve_paragraphs: if this flag is set then the wrapping will\n   54\t                                intelligently handle paragraphs.\n   55\t\n   56\t    .. versionchanged:: 8.4\n   57\t        Width is measured in visible characters. ANSI escape sequences in\n   58\t        ``text``, ``initial_indent``, or ``subsequent_indent`` no longer\n   59\t        count toward the width budget, so styled input wraps based on what\n   60\t        the user sees instead of raw byte length.\n   61\t    \"\"\"\n   62\t    from ._textwrap import TextWrapper\n   63\t\n   64\t    text = text.expandtabs()\n   65\t    wrapper = TextWrapper(\n   66\t        width,\n   67\t        initial_indent=initial_indent,\n   68\t        subsequent_indent=subsequent_indent,\n   69\t        replace_whitespace=False,\n   70\t    )\n   71\t    if not preserve_paragraphs:\n   72\t        return wrapper.fill(text)\n   73\t\n   74\t    p: list[tuple[int, bool, str]] = []\n   75\t    buf: list[str] = []\n   76\t    indent = None\n   77\t\n   78\t    def _flush_par() -> None:\n   79\t        if not buf:\n   80\t            return\n   81\t        if buf[0].strip() == \"\\b\":\n   82\t            p.append((indent or 0, True, \"\\n\".join(buf[1:])))\n   83\t        else:\n   84\t            p.append((indent or 0, False, \" \".join(buf)))\n   85\t        del buf[:]\n   86\t\n   87\t    for line in text.splitlines():\n   88\t        if not line:\n   89\t            _flush_par()\n   90\t            indent = None\n   91\t        else:\n   92\t            if indent is None:\n   93\t                orig_len = term_len(line)\n   94\t                line = line.lstrip()\n   95\t                indent = orig_len - term_len(line)\n   96\t            buf.append(line)\n   97\t    _flush_par()\n   98\t\n   99\t    rv = []\n  100\t    for indent, raw, text in p:\n[207 more lines]"
+  },
+  {
+   "turn": 6,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && git log --oneline -3 -- src/click/formatting.py && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\nf = HelpFormatter(width=80)\\nf.write_usage('Program', '')\\nprint(repr(''.join(f.buffer)))\\n\\\"\"}"
+     },
+     "id": "Whzu86ZzeolVP3QLiRj3lL8vrKJoh4QH"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "08da6c0 initial\n'\\n'\n\n[exit code 0]"
+  },
+  {
+   "turn": 7,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\nfor w in (20, 25, 26, 27, 28, 30):\\n    f = HelpFormatter(width=w)\\n    f.write_usage('Program', '')\\n    print(w, repr(''.join(f.buffer)))\\nf = HelpFormatter(width=80)\\nf.write_usage('Program', '--opt ARG')\\nprint(repr(''.join(f.buffer)))\\nf = HelpFormatter(width=80)\\nf.write_usage('LongProgramName', 'ARG --opt')\\nprint(repr(''.join(f.buffer)))\\n\\\"\"}"
+     },
+     "id": "khUP1G4wRwS89QC3susYubecQUVJW6iE"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "20 'Usage: Program \\n\\n'\n25 'Usage: Program \\n\\n'\n26 'Usage: Program \\n\\n'\n27 'Usage: Program \\n\\n'\n28 'Usage: Program \\n\\n'\n30 'Usage: Program \\n\\n'\n'Usage: Program --opt ARG\\n'\n'Usage: LongProgramName ARG --opt\\n'\n\n[exit code 0]"
+  },
+  {
+   "turn": 8,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\nf = HelpFormatter(width=80)\\nf.indent(); f.indent()\\nf.write_usage('Program', '')\\nprint(repr(''.join(f.buffer)))\\nf = HelpFormatter(width=28)\\nf.indent()\\nf.write_usage('Program', '')\\nprint(repr(''.join(f.buffer)))\\n\\\"\"}"
+     },
+     "id": "JhykVhvvkeeUIiTsPAyKA4hgKjODULwr"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "'\\n'\n'Usage: Program \\n\\n'\n\n[exit code 0]"
+  },
+  {
+   "turn": 9,
+   "content": "Now I understand the bug. When `args` is empty:\n\n- Wide branch: `wrap_text(\"\")` returns `\"\\n\"`, so the output is `\"\\n\\n\"`.\n- Narrow branch: `wrap_text(\"\")` returns `\"\\n\"` after the indent, producing `\"\\n\"` plus a stray empty indented line `\"<indent>\"`.\n\nThe fix is to short-circuit the empty-args case in `write_usage`.",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"/work/src/click/formatting.py\",\"old_str\":\"        if prefix is None:\\n            prefix = \\\"{usage} \\\".format(usage=_(\\\"Usage:\\\"))\\n\\n        usage_prefix = f\\\"{prefix:>{self.current_indent}}{prog} \\\"\\n        text_width = self.width - self.current_indent\",\"new_str\":\"        if prefix is None:\\n            prefix = \\\"{usage} \\\".format(usage=_(\\\"Usage:\\\"))\\n\\n        if not args:\\n            self.write(f\\\"{prefix:>{self.current_indent}}{prog}\\\\n\\\")\\n            return\\n\\n        usage_prefix = f\\\"{prefix:>{self.current_indent}}{prog} \\\"\\n        text_width = self.width - self.current_indent\"}"
+     },
+     "id": "lGZ2Ka9D38C9F8Gm4Q6xWeX4hOEHXcwR"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited /work/src/click/formatting.py"
+  },
+  {
+   "turn": 10,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\n# empty args, default\\nf = HelpFormatter(width=80); f.write_usage('Program', '')\\nassert ''.join(f.buffer) == 'Usage: Program\\\\n', repr(''.join(f.buffer))\\n# custom prefix\\nf = HelpFormatter(width=80); f.write_usage('Program', '', prefix='Run: ')\\nassert ''.join(f.buffer) == 'Run: Program\\\\n', repr(''.join(f.buffer))\\n# narrow widths with long prog name\\nfor w in (10, 20, 26, 27, 28, 30):\\n    f = HelpFormatter(width=w); f.write_usage('Program', '')\\n    assert ''.join(f.buffer) == 'Usage: Program\\\\n', (w, repr(''.join(f.buffer)))\\n# with indent\\nf = HelpFormatter(width=80); f.indent(); f.write_usage('Program', '')\\nassert ''.join(f.buffer) == '  Usage: Program\\\\n', repr(''.join(f.buffer))\\nf = HelpFormatter(width=28); f.indent(); f.write_usage('Program', '')\\nassert ''.join(f.buffer) == '  Usage: Program\\\\n', repr(''.join(f.buffer))\\n# non-empty args unchanged\\nf = HelpFormatter(width=80); f.write_usage('Program', '--opt ARG')\\nassert ''.join(f.buffer) == 'Usage: Program --opt ARG\\\\n', repr(''.join(f.buffer))\\nf = HelpFormatter(width=80); f.write_usage('LongProgramName', 'ARG --opt')\\nassert ''.join(f.buffer) == 'Usage: LongProgramName ARG --opt\\\\n', repr(''.join(f.buffer))\\n# wrap case non-empty\\nf = HelpFormatter(width=80); f.write_usage('Program', '--a A --b B --c C --d D --e E --f F --g G --h H --i I')\\nprint(repr(''.join(f.buffer)))\\nprint('all ok')\\n\\\"\"}"
+     },
+     "id": "HGO7JGbS9PZLDXUAYZpIsKnw4S0jTLW2"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 15, in <module>\n    assert ''.join(f.buffer) == '  Usage: Program\\n', repr(''.join(f.buffer))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'Usage: Program\\n'\n\n[exit code 1]"
+  },
+  {
+   "turn": 11,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && git stash && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\nf = HelpFormatter(width=80); f.indent(); f.write_usage('Program', 'ARG')\\nprint(repr(''.join(f.buffer)))\\nf = HelpFormatter(width=28); f.indent(); f.write_usage('Program', 'ARG')\\nprint(repr(''.join(f.buffer)))\\n\\\" ; git stash pop\"}"
+     },
+     "id": "2Yf5X3OXKX49s2t0WMFYQfW8gIEJWic6"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Saved working directory and index state WIP on main: 08da6c0 initial\n'Usage: Program ARG\\n'\n'Usage: Program \\n           ARG\\n'\nOn branch main\nChanges not staged for commit:\n  (use \"git add <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   src/click/formatting.py\n\nno changes added to commit (use \"git add\" and/or \"git commit -a\")\nDropped refs/stash@{0} (1fb7ffbd2f79138948413b9abe222f9559799056)\n\n[exit code 0]"
+  },
+  {
+   "turn": 12,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"/work/src/click/formatting.py\",\"old_str\":\"        if not args:\\n            self.write(f\\\"{prefix:>{self.current_indent}}{prog}\\\\n\\\")\\n            return\",\"new_str\":\"        if not args:\\n            usage_prefix = f\\\"{prefix:>{self.current_indent}}{prog}\\\"\\n            self.write(usage_prefix)\\n            self.write(\\\"\\\\n\\\")\\n            return\"}"
+     },
+     "id": "SBZogDiBsrdIa6vqbh4FT6YHv7pZGp6D"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited /work/src/click/formatting.py"
+  },
+  {
+   "turn": 13,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\nf = HelpFormatter(width=80); f.write_usage('Program', '')\\nassert ''.join(f.buffer) == 'Usage: Program\\\\n', repr(''.join(f.buffer))\\nf = HelpFormatter(width=80); f.write_usage('Program', '', prefix='Run: ')\\nassert ''.join(f.buffer) == 'Run: Program\\\\n'\\nfor w in (10, 20, 26, 27, 28, 30):\\n    f = HelpFormatter(width=w); f.write_usage('Program', '')\\n    assert ''.join(f.buffer) == 'Usage: Program\\\\n', (w, repr(''.join(f.buffer)))\\nf = HelpFormatter(width=80); f.indent(); f.write_usage('Program', '')\\nassert ''.join(f.buffer) == '  Usage: Program\\\\n', repr(''.join(f.buffer))\\nf = HelpFormatter(width=28); f.indent(); f.write_usage('Program', '')\\nassert ''.join(f.buffer) == '  Usage: Program\\\\n', repr(''.join(f.buffer))\\nf = HelpFormatter(width=80); f.write_usage('Program', '--opt ARG')\\nassert ''.join(f.buffer) == 'Usage: Program --opt ARG\\\\n'\\nf = HelpFormatter(width=80); f.write_usage('LongProgramName', 'ARG --opt')\\nassert ''.join(f.buffer) == 'Usage: LongProgramName ARG --opt\\\\n'\\nprint('ok')\\n\\\" && PYTHONPATH=src python -m pytest tests/test_utils.py tests/test_formatting.py -q 2>&1 | tail -3\"}"
+     },
+     "id": "0AWEXiej923F4gRYgUKx539ClTk70cN1"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 11, in <module>\n    assert ''.join(f.buffer) == '  Usage: Program\\n', repr(''.join(f.buffer))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'Usage: Program\\n'\n\n[exit code 1]"
+  },
+  {
+   "turn": 14,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\nf = HelpFormatter(width=80); f.indent(); f.write_usage('Program', '')\\nprint(''.join(f.buffer))\\nf = HelpFormatter(width=80); f.write_usage('Program', '')\\nprint(''.join(f.buffer))\\n\\\"\"}"
+     },
+     "id": "TTeqg3PQSBqwjFpmAAGCUJu28UIA4IJ5"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Usage: Program\n\nUsage: Program\n\n\n[exit code 0]"
+  },
+  {
+   "turn": 15,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\nf = HelpFormatter(width=80)\\nf.indent()\\nprint('indent =', f.current_indent)\\nf.write_usage('Program', '')\\nassert ''.join(f.buffer) == '  Usage: Program\\\\n', repr(''.join(f.buffer))\\nf2 = HelpFormatter(width=28)\\nf2.indent()\\nf2.write_usage('Program', '')\\nassert ''.join(f2.buffer) == '  Usage: Program\\\\n', repr(''.join(f2.buffer))\\nprint('ok')\\n\\\"\"}"
+     },
+     "id": "qUVbh9g5EYeEDbbiKzM8QrPgT5V3A640"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "indent = 2\n\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 7, in <module>\n    assert ''.join(f.buffer) == '  Usage: Program\\n', repr(''.join(f.buffer))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'Usage: Program\\n'\n\n[exit code 1]"
+  },
+  {
+   "turn": 16,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\nf = HelpFormatter(width=80)\\nf.indent()\\np = 'Usage: '\\nprint(repr(f'{p:>{f.current_indent}}'))\\n\\\"\"}"
+     },
+     "id": "oa2Ido52rxEC6bNAj8nJYV3nODB1dxYF"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "'Usage: '\n\n[exit code 0]"
+  },
+  {
+   "turn": 17,
+   "content": "The indent isn't applied because `len(\"Usage: \")` (7) already exceeds `current_indent` (2), so the right-align pad is a no-op \u2014 this matches the existing behavior exactly. My assertion was wrong. Let me verify against the original code with args to confirm behavior parity:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nfrom click.formatting import HelpFormatter\\ncases = []\\n# empty args, various widths, indents, prefixes\\nfor w in (10, 20, 26, 27, 28, 30, 80):\\n    f = HelpFormatter(width=w); f.write_usage('Program', '')\\n    assert ''.join(f.buffer) == 'Usage: Program\\\\n', (w, repr(''.join(f.buffer)))\\nfor w in (10, 28, 80):\\n    f = HelpFormatter(width=w); f.indent(); f.write_usage('Program', '')\\n    assert ''.join(f.buffer) == 'Usage: Program\\\\n', (w, repr(''.join(f.buffer)))\\nf = HelpFormatter(width=80); f.write_usage('Program', '', prefix='Run: ')\\nassert ''.join(f.buffer) == 'Run: Program\\\\n'\\n# long prog name\\nf = HelpFormatter(width=12); f.write_usage('LongProgramName', '')\\nassert ''.join(f.buffer) == 'Usage: LongProgramName\\\\n', repr(''.join(f.buffer))\\n# non-empty args unchanged (compare to expected originals)\\nf = HelpFormatter(width=80); f.write_usage('Program', '--opt ARG')\\nassert ''.join(f.buffer) == 'Usage: Program --opt ARG\\\\n'\\nf = HelpFormatter(width=28); f.indent(); f.write_usage('Program', 'ARG')\\nassert ''.join(f.buffer) == 'Usage: Program \\\\n           ARG\\\\n', repr(''.join(f.buffer))\\nprint('ok')\\n\\\"\"}"
+     },
+     "id": "dhledPkr6J233dZBKzUuD29VKxMpl0Pu"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "ok\n\n[exit code 0]"
+  },
+  {
+   "turn": 18,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -m pytest tests/test_utils.py tests/test_formatting.py tests/test_commands.py tests/test_options.py -q 2>&1 | tail -3\"}"
+     },
+     "id": "D7a9jTaccfP6xdDXzPBu9CNYMYH8ow8u"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "........................................................................ [ 96%]\n.............................                                            [100%]\n893 passed in 0.57s\n\n[exit code 0]"
+  },
+  {
+   "turn": 19,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -m pytest tests -q 2>&1 | tail -3\"}"
+     },
+     "id": "lNEyEqoF8MrnHYJvIcfRzE9vBRYFd5Yn"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "........................................................................ [ 97%]\n...........................................                              [100%]\n1602 passed, 24 skipped, 30000 deselected, 1 xfailed in 1.74s\n\n[exit code 0]"
+  },
+  {
+   "turn": 20,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && git diff\"}"
+     },
+     "id": "MniCbAe3vaz7o4XMsgRx4sJWnREiPJ3k"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "diff --git a/src/click/formatting.py b/src/click/formatting.py\nindex d9075ca..2bc09fa 100644\n--- a/src/click/formatting.py\n+++ b/src/click/formatting.py\n@@ -161,6 +161,12 @@ class HelpFormatter:\n         if prefix is None:\n             prefix = \"{usage} \".format(usage=_(\"Usage:\"))\n \n+        if not args:\n+            usage_prefix = f\"{prefix:>{self.current_indent}}{prog}\"\n+            self.write(usage_prefix)\n+            self.write(\"\\n\")\n+            return\n+\n         usage_prefix = f\"{prefix:>{self.current_indent}}{prog} \"\n         text_width = self.width - self.current_indent\n \n\n[exit code 0]"
+  },
+  {
+   "turn": 21,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "finish",
+      "arguments": "{\"status\":\"done\",\"summary\":\"Fixed `HelpFormatter.write_usage` in `src/click/formatting.py`: when `args` is empty, it now writes a single line \u2014 the (indent-aligned) prefix plus the program name, no trailing space \u2014 and returns, instead of calling `wrap_text(\\\"\\\")` which produced an extra `\\\"\\\\n\\\"` in the wide branch and a stray indent-only line in the narrow branch. The early-return uses the same prefix alignment expression as the normal path, so indentation behavior is unchanged, and the non-empty-args code path is untouched. Verified: `Usage: Program\\\\n` and `Run: Program\\\\n` (custom prefix) across widths 10\u201380 and with indentation, long program names included; non-empty-args output is byte-identical to before. Full test suite passes (1602 passed, 24 skipped, 1 xfailed).\"}"
+     },
+     "id": "d7uU9bd0jguM5wAM6KUBK7FCCNu0FxSo"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "finish",
+   "result": "ok"
+  }
+ ]
+}

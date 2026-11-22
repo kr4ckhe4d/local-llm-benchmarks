@@ -1,0 +1,317 @@
+{
+ "metrics": {
+  "task": "sqlparse-cli-truncation",
+  "turns": 14,
+  "tool_calls": 15,
+  "bad_calls": 0,
+  "prompt_tokens": 105513,
+  "completion_tokens": 2454,
+  "max_prompt": 10782,
+  "finish": "done",
+  "summary": "Fixed `sqlparse/cli.py:_process_file` so the output file is no longer opened (and thus truncated) before the SQL is formatted. The input is now read, options validated (still reporting `[ERROR] Invalid options: ...` as before), and `sqlparse.format()` runs to completion *before* the output stream is opened. A `SQLParseError` during formatting is caught and reported via `_error(f'Failed to format: {e}')` (stderr, starts with `[ERROR] Failed to format`), and `main()` returns 1. Since the target is only opened after formatting succeeds, `--in-place` keeps the input contents and `-o` keeps an existing output file's contents on failure; successful runs behave as before. Verified: all 23 pre-existing CLI tests plus the full suite (513 passed) succeed, and I added two regression tests (`test_cli_inplace_format_error_keeps_input`, `test_cli_outfile_format_error_keeps_output`) that reproduce the reported scenario with a query exceeding the grouping depth limit \u2014 both confirm the target file is untouched and the error message/exit code are correct.",
+  "end": "finish",
+  "wall_s": 60.5,
+  "pass": true,
+  "check_exit": 0,
+  "protected_changed": [],
+  "check_tail": ".........................                                                [100%]\n25 passed in 0.21s",
+  "claimed": true,
+  "false_claim": false,
+  "diffstat": " 2 files changed, 55 insertions(+), 18 deletions(-)",
+  "repeat": 1
+ },
+ "log": [
+  {
+   "turn": 1,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"ls /work && find /work -name \\\"*.py\\\" -path \\\"*cli*\\\" | head -20\"}"
+     },
+     "id": "HduvVHn6iKU6AzUna3ED6gEd87qTZJNV"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "AGENTS.md\nAUTHORS\nCHANGELOG\nCLAUDE.md\nCONTRIBUTING.md\nLICENSE\nMakefile\nREADME.md\nSECURITY.md\nTODO\nbenchmarks\ndocs\nexamples\npyproject.toml\nsqlparse\ntests\nuv.lock\n/work/tests/test_cli.py\n/work/sqlparse/cli.py\n\n[exit code 0]"
+  },
+  {
+   "turn": 2,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"/work/sqlparse/cli.py\"}"
+     },
+     "id": "QMN7ZtbM69FKgMu0avHHfr5x6iCkpL0U"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "    1\t# Copyright (C) 2009-2020 the sqlparse authors and contributors\n    2\t# <see AUTHORS file>\n    3\t#\n    4\t# This module is part of python-sqlparse and is released under\n    5\t# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n    6\t\n    7\t\"\"\"Module that contains the command line app.\n    8\t\n    9\tWhy does this file exist, and why not put this in __main__?\n   10\t  You might be tempted to import things from __main__ later, but that will\n   11\t  cause problems: the code will get executed twice:\n   12\t  - When you run `python -m sqlparse` python will execute\n   13\t    ``__main__.py`` as a script. That means there won't be any\n   14\t    ``sqlparse.__main__`` in ``sys.modules``.\n   15\t  - When you import __main__ it will get executed again (as a module) because\n   16\t    there's no ``sqlparse.__main__`` in ``sys.modules``.\n   17\t  Also see (1) from http://click.pocoo.org/5/setuptools/#setuptools-integration\n   18\t\"\"\"\n   19\t\n   20\timport argparse\n   21\timport sys\n   22\tfrom io import TextIOWrapper\n   23\t\n   24\timport sqlparse\n   25\tfrom sqlparse.exceptions import SQLParseError\n   26\t\n   27\t\n   28\t# TODO: Add CLI Tests\n   29\t# TODO: Simplify formatter by using argparse `type` arguments\n   30\tdef create_parser():\n   31\t    _CASE_CHOICES = ['upper', 'lower', 'capitalize']\n   32\t\n   33\t    parser = argparse.ArgumentParser(\n   34\t        prog='sqlformat',\n   35\t        description='Format FILE according to OPTIONS. Use \"-\" as FILE '\n   36\t                    'to read from stdin.',\n   37\t        usage='%(prog)s [OPTIONS] FILE [FILE ...]',\n   38\t    )\n   39\t\n   40\t    parser.add_argument(\n   41\t        'filename',\n   42\t        nargs='+',\n   43\t        help='file(s) to format (use \"-\" for stdin)')\n   44\t\n   45\t    parser.add_argument(\n   46\t        '-o', '--outfile',\n   47\t        dest='outfile',\n   48\t        metavar='FILE',\n   49\t        help='write output to FILE (defaults to stdout)')\n   50\t\n   51\t    parser.add_argument(\n   52\t        '--in-place',\n   53\t        dest='inplace',\n   54\t        action='store_true',\n   55\t        default=False,\n   56\t        help='format files in-place (overwrite existing files)')\n   57\t\n   58\t    parser.add_argument(\n   59\t        '--version',\n   60\t        action='version',\n   61\t        version=sqlparse.__version__)\n   62\t\n   63\t    group = parser.add_argument_group('Formatting Options')\n   64\t\n   65\t    group.add_argument(\n   66\t        '-k', '--keywords',\n   67\t        metavar='CHOICE',\n   68\t        dest='keyword_case',\n   69\t        choices=_CASE_CHOICES,\n   70\t        help='change case of keywords, CHOICE is one of {}'.format(\n   71\t            ', '.join(f'\"{x}\"' for x in _CASE_CHOICES)))\n   72\t\n   73\t    group.add_argument(\n   74\t        '-i', '--identifiers',\n   75\t        metavar='CHOICE',\n   76\t        dest='identifier_case',\n   77\t        choices=_CASE_CHOICES,\n   78\t        help='change case of identifiers, CHOICE is one of {}'.format(\n   79\t            ', '.join(f'\"{x}\"' for x in _CASE_CHOICES)))\n   80\t\n   81\t    group.add_argument(\n   82\t        '-l', '--language',\n   83\t        metavar='LANG',\n   84\t        dest='output_format',\n   85\t        choices=['python', 'php'],\n   86\t        help='output a snippet in programming language LANG, '\n   87\t             'choices are \"python\", \"php\"')\n   88\t\n   89\t    group.add_argument(\n   90\t        '--strip-comments',\n   91\t        dest='strip_comments',\n   92\t        action='store_true',\n   93\t        default=False,\n   94\t        help='remove comments')\n   95\t\n   96\t    group.add_argument(\n   97\t        '-r', '--reindent',\n   98\t        dest='reindent',\n   99\t        action='store_true',\n  100\t        default=False,\n  101\t        help='reindent statements')\n  102\t\n  103\t    group.add_argument(\n  104\t        '--indent_width',\n  105\t        dest='indent_width',\n  106\t        default=2,\n  107\t        type=int,\n  108\t        help='indentation width (defaults to 2 spaces)')\n  109\t\n  110\t    group.add_argument(\n  111\t        '--indent_afte"
+  },
+  {
+   "turn": 3,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"/work/tests/test_cli.py\"}"
+     },
+     "id": "Pm5DTY7SiKe1ZGFHjIRYS3cvRlzx0raa"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "    1\timport subprocess\n    2\timport sys\n    3\t\n    4\timport pytest\n    5\t\n    6\timport sqlparse\n    7\t\n    8\t\n    9\tdef test_cli_main_empty():\n   10\t    with pytest.raises(SystemExit):\n   11\t        sqlparse.cli.main([])\n   12\t\n   13\t\n   14\tdef test_parser_empty():\n   15\t    with pytest.raises(SystemExit):\n   16\t        parser = sqlparse.cli.create_parser()\n   17\t        parser.parse_args([])\n   18\t\n   19\t\n   20\tdef test_main_help():\n   21\t    # Call with the --help option as a basic sanity check.\n   22\t    with pytest.raises(SystemExit) as exinfo:\n   23\t        sqlparse.cli.main([\"--help\", ])\n   24\t    assert exinfo.value.code == 0\n   25\t\n   26\t\n   27\tdef test_valid_args(filepath):\n   28\t    # test doesn't abort\n   29\t    path = filepath('function.sql')\n   30\t    assert sqlparse.cli.main([path, '-r']) is not None\n   31\t\n   32\t\n   33\tdef test_invalid_choice(filepath):\n   34\t    path = filepath('function.sql')\n   35\t    with pytest.raises(SystemExit):\n   36\t        sqlparse.cli.main([path, '-l', 'Spanish'])\n   37\t\n   38\t\n   39\tdef test_invalid_args(filepath, capsys):\n   40\t    path = filepath('function.sql')\n   41\t    sqlparse.cli.main([path, '-r', '--indent_width', '0'])\n   42\t    _, err = capsys.readouterr()\n   43\t    assert err == (\"[ERROR] Invalid options: indent_width requires \"\n   44\t                   \"a positive integer\\n\")\n   45\t\n   46\t\n   47\tdef test_invalid_infile(filepath, capsys):\n   48\t    path = filepath('missing.sql')\n   49\t    sqlparse.cli.main([path, '-r'])\n   50\t    _, err = capsys.readouterr()\n   51\t    assert err[:22] == \"[ERROR] Failed to read\"\n   52\t\n   53\t\n   54\tdef test_invalid_outfile(filepath, capsys):\n   55\t    path = filepath('function.sql')\n   56\t    outpath = filepath('/missing/function.sql')\n   57\t    sqlparse.cli.main([path, '-r', '-o', outpath])\n   58\t    _, err = capsys.readouterr()\n   59\t    assert err[:22] == \"[ERROR] Failed to open\"\n   60\t\n   61\t\n   62\tdef test_stdout(filepath, load_file, capsys):\n   63\t    path = filepath('begintag.sql')\n   64\t    expected = load_file('begintag.sql')\n   65\t    sqlparse.cli.main([path])\n   66\t    out, _ = capsys.readouterr()\n   67\t    assert out == expected\n   68\t\n   69\t\n   70\tdef test_script():\n   71\t    # Call with the --help option as a basic sanity check.\n   72\t    cmd = [sys.executable, '-m', 'sqlparse.cli', '--help']\n   73\t    assert subprocess.call(cmd) == 0\n   74\t\n   75\t\n   76\t@pytest.mark.parametrize('fpath, encoding', (\n   77\t    ('encoding_utf8.sql', 'utf-8'),\n   78\t    ('encoding_gbk.sql', 'gbk'),\n   79\t))\n   80\tdef test_encoding_stdout(fpath, encoding, filepath, load_file, capfd):\n   81\t    path = filepath(fpath)\n   82\t    expected = load_file(fpath, encoding)\n   83\t    sqlparse.cli.main([path, '--encoding', encoding])\n   84\t    out, _ = capfd.readouterr()\n   85\t    assert out == expected\n   86\t\n   87\t\n   88\t@pytest.mark.parametrize('fpath, encoding', (\n   89\t    ('encoding_utf8.sql', 'utf-8'),\n   90\t    ('encoding_gbk.sql', 'gbk'),\n   91\t))\n   92\tdef test_encoding_output_file(fpath, encoding, filepath, load_file, tmpdir):\n   93\t    in_path = filepath(fpath)\n   94\t    expected = load_file(fpath, encoding)\n   95\t    out_path = tmpdir.dirname + '/encoding_out.sql'\n   96\t    sqlparse.cli.main([in_path, '--encoding', encoding, '-o', out_path])\n   97\t    out = load_file(out_path, encoding)\n   98\t    assert out == expected\n   99\t\n  100\t\n  101\t@pytest.mark.parametrize('fpath, encoding', (\n  102\t    ('encoding_utf8.sql', 'utf-8'),\n  103\t    ('encoding_gbk.sql', 'gbk'),\n  104\t))\n  105\tdef test_encoding_stdin(fpath, encoding, filepath, load_file, capfd):\n  106\t    path = filepath(fpath)\n  107\t    expected = load_file(fpath, encoding)\n  108\t    old_stdin = sys.stdin\n  109\t    with open(path) as f:\n  110\t        sys.stdin = f\n  111\t        sqlparse.cli.main(['-', '--encoding', encoding])\n  112\t    sys.stdin = old_stdin\n  113\t    out, _ = capfd.readouterr()\n  114\t    assert out == expected\n  115\t\n  116\t\n  117\tdef test_encoding(filepath, capsys):\n  118\t    "
+  },
+  {
+   "turn": 4,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -rn \\\"max_grouping_depth\\\\|recursion\\\\|MAX\\\" /work/sqlparse/engine/grouping.py /work/sqlparse/engine/tokenizer.py /work/sqlparse/exceptions.py 2>/dev/null | head; grep -rn \\\"grouping\\\" /work/sqlparse/formatter.py | head\"}"
+     },
+     "id": "8R1ty4mvUUezBMticgve9sEXtnAtc7o1"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "/work/sqlparse/engine/grouping.py:13:# Maximum recursion depth for grouping operations to prevent DoS attacks\n/work/sqlparse/engine/grouping.py:15:MAX_GROUPING_DEPTH = 100\n/work/sqlparse/engine/grouping.py:20:MAX_GROUPING_TOKENS = 10000\n/work/sqlparse/engine/grouping.py:33:    if MAX_GROUPING_DEPTH is not None and depth > MAX_GROUPING_DEPTH:\n/work/sqlparse/engine/grouping.py:35:            f\"Maximum grouping depth exceeded ({MAX_GROUPING_DEPTH}).\"\n/work/sqlparse/engine/grouping.py:39:    if MAX_GROUPING_TOKENS is not None \\\n/work/sqlparse/engine/grouping.py:40:       and len(tlist.tokens) > MAX_GROUPING_TOKENS:\n/work/sqlparse/engine/grouping.py:42:            f\"Maximum number of tokens exceeded ({MAX_GROUPING_TOKENS}).\"\n/work/sqlparse/engine/grouping.py:61:            # should check for all open/close tokens at once to avoid recursion\n/work/sqlparse/engine/grouping.py:504:    if MAX_GROUPING_DEPTH is not None and depth > MAX_GROUPING_DEPTH:\n158:        stack.enable_grouping()\n161:    # After grouping\n163:        stack.enable_grouping()\n167:        stack.enable_grouping()\n171:        stack.enable_grouping()\n183:        stack.enable_grouping()\n188:        stack.enable_grouping()\n\n[exit code 0]"
+  },
+  {
+   "turn": 5,
+   "content": "Now I understand the bug: `_process_file` opens the output stream in `'w'` mode *before* formatting, so a formatting `SQLParseError` leaves a truncated/empty file. Let me fix it.",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -c \\\"\\nimport sqlparse\\ntry:\\n    sqlparse.format('SELECT ('*200 + ')'*200, reindent=True)\\nexcept Exception as e:\\n    print(type(e), e)\\n\\\"\"}"
+     },
+     "id": "QP37uqg4Y7rcEarKzX6ANwjtt9NWjNUc"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "<class 'sqlparse.exceptions.SQLParseError'> Maximum grouping depth exceeded (100).\n\n[exit code 0]"
+  },
+  {
+   "turn": 6,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"/work/sqlparse/cli.py\",\"old_str\":\"    # Determine output destination\\n    close_stream = False\\n    if args.inplace:\\n        try:\\n            stream = open(filename, 'w', encoding=args.encoding)\\n            close_stream = True\\n        except OSError as e:\\n            return _error(f'Failed to open {filename}: {e}')\\n    elif args.outfile:\\n        try:\\n            stream = open(args.outfile, 'w', encoding=args.encoding)\\n            close_stream = True\\n        except OSError as e:\\n            return _error(f'Failed to open {args.outfile}: {e}')\\n    else:\\n        stream = sys.stdout\\n\\n    # Format the SQL\\n    formatter_opts = vars(args)\\n    try:\\n        formatter_opts = sqlparse.formatter.validate_options(formatter_opts)\\n    except SQLParseError as e:\\n        return _error(f'Invalid options: {e}')\\n\\n    s = sqlparse.format(data, **formatter_opts)\\n    stream.write(s)\",\"new_str\":\"    # Format the SQL before opening any output file, so that a formatting\\n    # error does not truncate the target file.\\n    formatter_opts = vars(args)\\n    try:\\n        formatter_opts = sqlparse.formatter.validate_options(formatter_opts)\\n        s = sqlparse.format(data, **formatter_opts)\\n    except SQLParseError as e:\\n        return _error(f'Failed to format {filename}: {e}')\\n\\n    # Determine output destination\\n    if args.inplace:\\n        stream_name = filename\\n    elif args.outfile:\\n        stream_name = args.outfile\\n    else:\\n        stream_name = None\\n\\n    if stream_name is None:\\n        stream = sys.stdout\\n        close_stream = False\\n    else:\\n        try:\\n            stream = open(stream_name, 'w', encoding=args.encoding)\\n            close_stream = True\\n        except OSError as e:\\n            return _error(f'Failed to open {stream_name}: {e}')\\n\\n    stream.write(s)\"}"
+     },
+     "id": "8RKyMu5r55KU6YBzj3yws7E0G9EM981G"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited /work/sqlparse/cli.py"
+  },
+  {
+   "turn": 7,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"/work/sqlparse/cli.py\",\"old_str\":\"    except SQLParseError as e:\\n        return _error(f'Failed to format {filename}: {e}')\",\"new_str\":\"    except SQLParseError as e:\\n        return _error(f'Failed to format: {e}')\"}"
+     },
+     "id": "6vQlr3wNZ2brgy7x5ArfcWIRaN0e4IC3"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited /work/sqlparse/cli.py"
+  },
+  {
+   "turn": 8,
+   "content": "Now verify the fixed file and test:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"/work/sqlparse/cli.py\",\"offset\":172,\"limit\":55}"
+     },
+     "id": "SJzf1v5KAFPxPhkf9c49T2hYZYppfxGO"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "  172\tdef _process_file(filename, args):\n  173\t    \"\"\"Process a single file with the given formatting options.\n  174\t\n  175\t    Returns 0 on success, 1 on error.\n  176\t    \"\"\"\n  177\t    # Check for incompatible option combinations first\n  178\t    if filename == '-' and args.inplace:\n  179\t        return _error('Cannot use --in-place with stdin')\n  180\t\n  181\t    # Read input\n  182\t    if filename == '-':  # read from stdin\n  183\t        wrapper = TextIOWrapper(sys.stdin.buffer, encoding=args.encoding)\n  184\t        try:\n  185\t            data = wrapper.read()\n  186\t        finally:\n  187\t            wrapper.detach()\n  188\t    else:\n  189\t        try:\n  190\t            with open(filename, encoding=args.encoding) as f:\n  191\t                data = ''.join(f.readlines())\n  192\t        except OSError as e:\n  193\t            return _error(f'Failed to read {filename}: {e}')\n  194\t\n  195\t    # Format the SQL before opening any output file, so that a formatting\n  196\t    # error does not truncate the target file.\n  197\t    formatter_opts = vars(args)\n  198\t    try:\n  199\t        formatter_opts = sqlparse.formatter.validate_options(formatter_opts)\n  200\t        s = sqlparse.format(data, **formatter_opts)\n  201\t    except SQLParseError as e:\n  202\t        return _error(f'Failed to format: {e}')\n  203\t\n  204\t    # Determine output destination\n  205\t    if args.inplace:\n  206\t        stream_name = filename\n  207\t    elif args.outfile:\n  208\t        stream_name = args.outfile\n  209\t    else:\n  210\t        stream_name = None\n  211\t\n  212\t    if stream_name is None:\n  213\t        stream = sys.stdout\n  214\t        close_stream = False\n  215\t    else:\n  216\t        try:\n  217\t            stream = open(stream_name, 'w', encoding=args.encoding)\n  218\t            close_stream = True\n  219\t        except OSError as e:\n  220\t            return _error(f'Failed to open {stream_name}: {e}')\n  221\t\n  222\t    stream.write(s)\n  223\t    stream.flush()\n  224\t    if close_stream:\n  225\t        stream.close()\n  226\t    return 0\n[22 more lines]"
+  },
+  {
+   "turn": 9,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/test_cli.py -q\"}"
+     },
+     "id": "7Lmo6Dm9w6NdeTo7WydoJx1fb2AOyxZg"
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python - <<'EOF'\\nimport io, sys, tempfile, os\\nimport sqlparse.cli\\n\\nbad = \\\"SELECT (\\\" * 200 + \\\")\\\" * 200\\n\\n# --in-place\\nwith tempfile.TemporaryDirectory() as d:\\n    p = os.path.join(d, \\\"big.sql\\\")\\n    with open(p, \\\"w\\\") as f:\\n        f.write(bad)\\n    err = io.StringIO()\\n    old = sys.stderr\\n    sys.stderr = err\\n    rc = sqlparse.cli.main([p, \\\"--in-place\\\", \\\"--reindent\\\"])\\n    sys.stderr = old\\n    content = open(p).read()\\n    print(\\\"in-place rc:\\\", rc)\\n    print(\\\"stderr:\\\", err.getvalue())\\n    assert rc == 1\\n    assert err.getvalue().startswith(\\\"[ERROR] Failed to format\\\")\\n    assert content == bad, \\\"input file was modified!\\\"\\n\\n# -o with existing output\\nwith tempfile.TemporaryDirectory() as d:\\n    inp = os.path.join(d, \\\"in.sql\\\")\\n    outp = os.path.join(d, \\\"out.sql\\\")\\n    with open(inp, \\\"w\\\") as f:\\n        f.write(bad)\\n    with open(outp, \\\"w\\\") as f:\\n        f.write(\\\"ORIGINAL\\\")\\n    err = io.StringIO()\\n    old = sys.stderr\\n    sys.stderr = err\\n    rc = sqlparse.cli.main([inp, \\\"--reindent\\\", \\\"-o\\\", outp])\\n    sys.stderr = old\\n    content = open(outp).read()\\n    print(\\\"-o rc:\\\", rc)\\n    print(\\\"stderr:\\\", err.getvalue())\\n    assert rc == 1\\n    assert err.getvalue().startswith(\\\"[ERROR] Failed to format\\\")\\n    assert content == \\\"ORIGINAL\\\", \\\"output file was truncated!\\\"\\n\\n# success still works\\nwith tempfile.TemporaryDirectory() as d:\\n    p = os.path.join(d, \\\"ok.sql\\\")\\n    with open(p, \\\"w\\\") as f:\\n        f.write(\\\"select   *   from   foo\\\")\\n    rc = sqlparse.cli.main([p, \\\"--in-place\\\", \\\"--keywords\\\", \\\"upper\\\"])\\n    assert rc == 0\\n    assert \\\"SELECT\\\" in open(p).read()\\n    print(\\\"success path OK\\\")\\nEOF\"}"
+     },
+     "id": "dpHICGfn6uI46LxQmscwNgTdcVQOnssV"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": ".....F.................                                                  [100%]\n=================================== FAILURES ===================================\n______________________________ test_invalid_args _______________________________\n\nfilepath = <function filepath.<locals>.make_filepath at 0x7fa5fd26b8a0>\ncapsys = <_pytest.capture.CaptureFixture object at 0x7fa5fd36a660>\n\n    def test_invalid_args(filepath, capsys):\n        path = filepath('function.sql')\n        sqlparse.cli.main([path, '-r', '--indent_width', '0'])\n        _, err = capsys.readouterr()\n>       assert err == (\"[ERROR] Invalid options: indent_width requires \"\n                       \"a positive integer\\n\")\nE       AssertionError: assert '[ERROR] Fail...ive integer\\n' == '[ERROR] Inva...ive integer\\n'\nE         \nE         - [ERROR] Invalid options: indent_width requires a positive integer\nE         ?         ^^^  ^   ^ ----\nE         + [ERROR] Failed to format: indent_width requires a positive integer\nE         ?         ^ + ^  + ^^^^^^\n\ntests/test_cli.py:43: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_cli.py::test_invalid_args - AssertionError: assert '[ERROR]...\n1 failed, 22 passed in 0.09s\n\n[exit code 1]"
+  },
+  {
+   "tool": "bash",
+   "result": "in-place rc: 1\nstderr: [ERROR] Failed to format: Maximum grouping depth exceeded (100).\n\n-o rc: 1\nstderr: [ERROR] Failed to format: Maximum grouping depth exceeded (100).\n\nsuccess path OK\n\n[exit code 0]"
+  },
+  {
+   "turn": 10,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"/work/sqlparse/cli.py\",\"old_str\":\"    formatter_opts = vars(args)\\n    try:\\n        formatter_opts = sqlparse.formatter.validate_options(formatter_opts)\\n        s = sqlparse.format(data, **formatter_opts)\\n    except SQLParseError as e:\\n        return _error(f'Failed to format: {e}')\",\"new_str\":\"    formatter_opts = vars(args)\\n    try:\\n        formatter_opts = sqlparse.formatter.validate_options(formatter_opts)\\n    except SQLParseError as e:\\n        return _error(f'Invalid options: {e}')\\n\\n    try:\\n        s = sqlparse.format(data, **formatter_opts)\\n    except SQLParseError as e:\\n        return _error(f'Failed to format: {e}')\"}"
+     },
+     "id": "3yTSxkpu3lb1Qvg5OrgLhroAP1Z42yui"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited /work/sqlparse/cli.py"
+  },
+  {
+   "turn": 11,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/test_cli.py -q\"}"
+     },
+     "id": "fzv39eE4eouTx7bdhPzpyTIHpyinAS4x"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": ".......................                                                  [100%]\n23 passed in 0.10s\n\n[exit code 0]"
+  },
+  {
+   "turn": 12,
+   "content": "Now let me add a regression test for this bug and run the broader test suite:",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"path\":\"/work/tests/test_cli.py\",\"old_str\":\"def test_cli_error_handling_continues(tmpdir, capsys):\",\"new_str\":\"def test_cli_inplace_format_error_keeps_input(tmpdir, capsys):\\n    \\\"\\\"\\\"A formatting error must not truncate the input file with --in-place.\\\"\\\"\\\"\\n    test_file = tmpdir.join(\\\"big.sql\\\")\\n    data = \\\"SELECT (\\\" * 200 + \\\")\\\" * 200  # exceeds the grouping depth limit\\n    test_file.write(data)\\n\\n    result = sqlparse.cli.main([str(test_file), '--in-place', '--reindent'])\\n\\n    assert result == 1\\n    assert test_file.read() == data\\n    _, err = capsys.readouterr()\\n    assert err.startswith(\\\"[ERROR] Failed to format\\\")\\n\\n\\ndef test_cli_outfile_format_error_keeps_output(tmpdir, capsys):\\n    \\\"\\\"\\\"A formatting error must not truncate an existing -o target file.\\\"\\\"\\\"\\n    in_file = tmpdir.join(\\\"in.sql\\\")\\n    in_file.write(\\\"SELECT (\\\" * 200 + \\\")\\\" * 200)\\n    out_file = tmpdir.join(\\\"out.sql\\\")\\n    out_file.write(\\\"ORIGINAL\\\")\\n\\n    result = sqlparse.cli.main([str(in_file), '--reindent', '-o', str(out_file)])\\n\\n    assert result == 1\\n    assert out_file.read() == \\\"ORIGINAL\\\"\\n    _, err = capsys.readouterr()\\n    assert err.startswith(\\\"[ERROR] Failed to format\\\")\\n\\n\\ndef test_cli_error_handling_continues(tmpdir, capsys):\"}"
+     },
+     "id": "GEKD007GjmOz28paJGlEF4Bx6TtWKt4T"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "edit_file",
+   "result": "edited /work/tests/test_cli.py"
+  },
+  {
+   "turn": 13,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python -m pytest tests/ -q 2>&1 | tail -5\"}"
+     },
+     "id": "wiWJArwVMhOK5jlJWX4Wk86eReb4ir3Y"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "........................................................................ [ 69%]\n...........X............................................................ [ 83%]\n........................................................................ [ 97%]\n............                                                             [100%]\n513 passed, 2 xfailed, 1 xpassed in 0.89s\n\n[exit code 0]"
+  },
+  {
+   "turn": 14,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "finish",
+      "arguments": "{\"status\":\"done\",\"summary\":\"Fixed `sqlparse/cli.py:_process_file` so the output file is no longer opened (and thus truncated) before the SQL is formatted. The input is now read, options validated (still reporting `[ERROR] Invalid options: ...` as before), and `sqlparse.format()` runs to completion *before* the output stream is opened. A `SQLParseError` during formatting is caught and reported via `_error(f'Failed to format: {e}')` (stderr, starts with `[ERROR] Failed to format`), and `main()` returns 1. Since the target is only opened after formatting succeeds, `--in-place` keeps the input contents and `-o` keeps an existing output file's contents on failure; successful runs behave as before. Verified: all 23 pre-existing CLI tests plus the full suite (513 passed) succeed, and I added two regression tests (`test_cli_inplace_format_error_keeps_input`, `test_cli_outfile_format_error_keeps_output`) that reproduce the reported scenario with a query exceeding the grouping depth limit \u2014 both confirm the target file is untouched and the error message/exit code are correct.\"}"
+     },
+     "id": "jmj2GVm7SckcJEIgiU2S7t6ysd9QGmB3"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "finish",
+   "result": "ok"
+  }
+ ]
+}

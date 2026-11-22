@@ -752,6 +752,85 @@ def main():
                  "tau": round(a["tau"], 2) if a["tau"] else None} for a in agg.values()]
         measurements["spec"].append({"path": f, "model": f.split("/")[1], "rows": rows})
 
+    # context-depth sweeps (throughput-test.py --depth ... --json): one JSON line per run, mean per depth.
+    # The matching depth-throughput.txt is deliberately not named throughput*.txt: parse_throughput would
+    # average every depth into one number. needle-deep.txt / semantic-deep.txt beside it give recall.
+    measurements["depthsweep"] = []
+    for e in tree:
+        f = e["p"]
+        if not (f.startswith("benchmarks/") and f.endswith("/depth-throughput.jsonl")):
+            continue
+        folder = str(Path(f).parent)
+        by = {}
+        for line in (ROOT / f).read_text(errors="replace").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                by.setdefault(r["depth"], []).append(r)
+        pts = []
+        for d, rs in sorted(by.items()):
+            dn, da = sum(r.get("draft_n") or 0 for r in rs), sum(r.get("draft_n_accepted") or 0 for r in rs)
+            pts.append({"depth": round(mean([r["prompt_n"] for r in rs])),
+                        "tg": round(mean([r["predicted_per_second"] for r in rs]), 2),
+                        "pp": round(mean([r["prompt_per_second"] for r in rs]), 1),
+                        "draft": round(100 * da / dn, 1) if dn else None, "runs": len(rs)})
+        txt = ROOT / folder / "depth-throughput.txt"
+        head = txt.read_text(errors="replace").splitlines()[0] if txt.exists() else ""
+        hm = re.match(r"#\s*\S+:?\s+(\S+\.gguf)\s+(.*?)\s+llama\.cpp\s+(\S+)\s+(\S+)", head)
+        recall = []  # every needle-deep*.txt / semantic-deep*.txt (one per context size), shallowest first
+        for kind in ("needle", "semantic"):
+            for p in sorted((ROOT / folder).glob(f"{kind}-deep*.txt")):
+                m = re.search(r"recall (\d+)/(\d+) at ~(\d+) tokens", p.read_text(errors="replace"))
+                if m:
+                    recall.append({"kind": kind, "pass": int(m.group(1)), "total": int(m.group(2)),
+                                   "tokens": int(m.group(3)), "path": f"{folder}/{p.name}"})
+        recall.sort(key=lambda r: (r["kind"], r["tokens"]))
+        measurements["depthsweep"].append({
+            "path": f, "txt": f"{folder}/depth-throughput.txt", "model": folder.split("/", 1)[1],
+            "gguf": hm.group(1) if hm else None, "flags": hm.group(2) if hm else None,
+            "build": hm.group(3) if hm else None, "date": hm.group(4)[:10] if hm else None,
+            "pts": pts, "recall": recall})
+
+    # agent-eval (benchmarks/agent-eval/agent_eval.py): one JSON line per run, per label
+    measurements["agent"] = []
+    for e in tree:
+        f = e["p"]
+        m = re.match(r"benchmarks/agent-eval/results/([^/]+)/results\.jsonl$", f)
+        if not m or m.group(1).startswith("pilot"):
+            continue
+        runs = [json.loads(l) for l in (ROOT / f).read_text(errors="replace").splitlines() if l.strip()]
+        if not runs:
+            continue
+        summ = ROOT / Path(f).parent / "summary.txt"
+        head = {}
+        for l in (summ.read_text(errors="replace").splitlines() if summ.exists() else []):
+            hm = re.match(r"#\s*(model|host|date|repeats)\s*:\s*(.*)", l)
+            if hm:
+                head[hm.group(1)] = hm.group(2).strip()
+        tasks = {}
+        for r in runs:
+            t = tasks.setdefault(r["task"], {"n": 0, "pass": 0, "fc": 0, "turns": [], "limit": 0})
+            t["n"] += 1; t["pass"] += bool(r["pass"]); t["fc"] += bool(r["false_claim"])
+            t["turns"].append(r["turns"]); t["limit"] += r["end"] == "turn limit"
+        for t in tasks.values():
+            t["turns"] = round(mean(t["turns"]), 1)
+        tdir = ROOT / "benchmarks/agent-eval/tasks"
+        kinds = {}
+        for tid in tasks:
+            toml = tdir / tid / "task.toml"
+            km = re.search(r'^upstream\s*=\s*"https://github.com/([^"]+)"', toml.read_text(), re.M) if toml.exists() else None
+            kinds[tid] = km.group(1).split("/")[-1] if km else "synthetic"
+        repeats = int(head.get("repeats") or max(r.get("repeat", 1) for r in runs))
+        measurements["agent"].append({
+            "label": m.group(1), "path": f, "summary": f"benchmarks/agent-eval/results/{m.group(1)}/summary.txt",
+            "preset": head.get("model"), "build": (head.get("host") or "").split()[-1] if head.get("host") else None,
+            "date": (head.get("date") or "")[:10], "repeats": repeats,
+            "runs": len(runs), "pass": sum(bool(r["pass"]) for r in runs),
+            "claimed": sum(bool(r["claimed"]) for r in runs), "fc": sum(bool(r["false_claim"]) for r in runs),
+            "limit": sum(r["end"] == "turn limit" for r in runs), "bad": sum(r.get("bad_calls", 0) for r in runs),
+            "turns": round(mean([r["turns"] for r in runs]), 1), "wall": round(mean([r["wall_s"] for r in runs])),
+            "tokens": round(mean([r["completion_tokens"] for r in runs])),
+            "tasks": tasks, "kinds": kinds, "keys": [[r["task"], r.get("repeat", 1), bool(r["pass"])] for r in runs]})
+
     # engine A/Bs (engine-ab.py): one JSON line per request, medians per arm
     ENGINE_AB_ARMS = {"llama-q6": "llama.cpp Q6, 2 cards", "llama-q6-mtp": "llama.cpp Q6 + MTP, 2 cards",
                       "llama-q4-mtp": "llama.cpp Q4 + MTP, 2 cards", "strata-q4": "Strata Q4 + MTP, R9700",
@@ -882,7 +961,8 @@ def main():
           f"cdn={len(measurements['cdn'])} tools={len(measurements['tools'])} fit={len(measurements['fit'])} "
           f"spec={sum(len(x['rows']) for x in measurements['spec'])} "
           f"engineab={sum(len(x['arms']) for x in measurements['engineab'])} "
-          f"arc={len(measurements['arc'])} rpc={len(measurements['rpc'])} "
+          f"arc={len(measurements['arc'])} rpc={len(measurements['rpc'])} depth={len(measurements['depthsweep'])} "
+          f"agent={sum(x['runs'] for x in measurements['agent'])} "
           f"size={total/1e6:.1f}MB", file=sys.stderr)
 
 
