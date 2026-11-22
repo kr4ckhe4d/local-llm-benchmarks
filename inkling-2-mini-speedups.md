@@ -84,8 +84,9 @@ K and V projections 1,088 rows instead of 1,024 made generation faster, not slow
 `mul_mat_vec_f` launches one block per row; adding one or more idle blocks that return immediately removed the
 penalty (1,024 rows 17.2 to 7.9 us, 512 rows 14.5 to 4.9 us, 2,304 rows 23.9 to 14.7 us). The quantized
 `mul_mat_vec_q` and the `MUL_MAT_ID` launches showed no such effect. The patch pads by two blocks on RDNA4 only,
-the one generation measured. It should matter to any BF16/F16/F32 model on these cards, including the router's
-Gemma 4 12B BF16, which was not benchmarked.
+the one generation measured. It should matter to any BF16/F16/F32 model on these cards. On the router's Gemma 4
+12B BF16 it gives +1.9% generation (23.19 to 23.64 tok/s, llama-bench tg128 without MTP), with identical output
+([below](#rebased-onto-upstream-and-in-the-router-2026-11-22)).
 
 ## Is the output the same?
 
@@ -128,10 +129,33 @@ returned a `merge_intervals` that passed its own asserts.
 - A first single-block depth-mix kernel with one reduction per state and query: barely faster than the six
   kernels it replaced (+0.5 tok/s). Rewritten as one pass for all dot products and the norm, it gave +2.3.
 
+## Rebased onto upstream, and in the router (2026-11-22)
+
+PR #32704 landed upstream as `690b87d88`. The branch was rebased onto upstream `b05204927` without conflicts
+(`git range-diff`: all 16 commits unchanged) and is `5d307fdc7` in the fork. Before the router's build took it,
+the rebased branch was compared with plain upstream `b05204927` on the router's other models: KLD against the
+upstream build's logits at batch 512 (16 chunks) and batch 1 (4 chunks, the one-token path the fusions run on),
+and llama-bench ([rebased-b05204927.txt](benchmarks/inkling-2-mini-UD-Q8_K_XL/speedups/rebased-b05204927.txt)):
+
+| model | KLD, batch 512 / 1 | same top token | tg128, upstream → branch | pp512 |
+|---|---:|---:|---:|---:|
+| Inkling-2-Mini UD-Q8_K_XL (R9700) | 0.0021 / 0.0018 | 97.7% / 98.2% | 31.0 → **53.9** | 815 → 853 |
+| Qwen3.8-27B UD-Q6_K (both cards) | 0 / 0 | 100% / 100% | 24.13 → 24.14 | 943 → 944 |
+| Gemma 4 12B BF16 (R9700) | 0 / 0 | 100% / 100% | 23.19 → 23.64 | 418 → 418 |
+
+Qwen3.8 and Gemma compute the same perplexity on both builds to the fourth decimal (7.3932 and 672.3365 at batch
+512), so the branch changes nothing they output; Gemma's 1.9% is the matvec grid padding. Inkling's KLD repeats
+the original measurement to the sixth decimal. `test-backend-ops` on every changed op passes on the rebased
+branch except the same `MUL_MAT` F16 case, which fails identically on plain upstream.
+
+The router (`~/llama.cpp`, local branch `router` = upstream + these commits, plus the local thinking patch) now
+builds from it: Inkling's presets generate at 50 tok/s through the server, against 29.5 on plain upstream.
+
 ## Caveats and what is left
 
 - Only this card and these two backends were measured. No CUDA/NVIDIA, no Metal, no full-model CPU run.
-- The branch sits on PR #32704, which mainline still needs for these GGUFs and which is unmerged.
+- The branch was built on PR #32704, which mainline needs for these GGUFs; it was merged on 2026-11-22 and the
+  branch now sits on upstream `b05204927` (see above).
 - The code-quality run at reasoning effort 0.9 that this session set out to finish was stopped for this work and
   is still incomplete (see [code-quality-thinking.txt](benchmarks/inkling-2-mini-UD-Q8_K_XL/code-quality-thinking.txt)).
 - About 2,100 kernels per token remain. The candidates left are each worth 1 to 2%: K/V norm + cache write,

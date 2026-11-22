@@ -1,0 +1,66 @@
+# inkling2-speedups rebased onto upstream b05204927 (2026-11-22): main build vs speedups build
+# main    : ~/llama.cpp b05204927 (upstream, includes #32704 = 690b87d88) + local thinking patch
+# speedups: inkling2-speedups 5d307fdc7 = b05204927 + the same 16 commits (git range-diff: all '=')
+# ROCm 7.2.4, R9700 = ROCm1; Qwen3.8 on both cards (default layer split)
+# KLD: llama-perplexity, wiki.test.raw, -c 512 -b 512, -fa on -lm dio; base logits from the main build at the
+#      same -ub; batch 512 = 16 chunks, batch 1 (-ub 1, the one-token path the fusions run on) = 4 chunks
+# speed: llama-bench -p 512 -n 128 -r 3 -fa 1 -lm dio (no MTP)
+
+inkling      ub=512  Mean KLD: 0.002085 ± 0.000101 | Maximum KLD: 0.232401 | Same top p: 97.696 ± 0.235 % | Mean PPL(Q)/PPL(base) : 1.002871 ± 0.001304
+inkling      ub=1    Mean KLD: 0.001830 ± 0.000130 | Maximum KLD: 0.070890 | Same top p: 98.235 ± 0.412 % | Mean PPL(Q)/PPL(base) : 0.997494 ± 0.002427
+qwen38-q6    ub=512  Mean KLD: 0.000000 ± 0.000000 | Maximum KLD: 0.000052 | Same top p: 100.000 ± 0.000 % | Mean PPL(Q)/PPL(base) : 1.000441 ± 0.000327
+qwen38-q6    ub=1    Mean KLD: -0.000000 ± 0.000000 | Maximum KLD: 0.000053 | Same top p: 100.000 ± 0.000 % | Mean PPL(Q)/PPL(base) : 1.001223 ± 0.001225
+gemma4-bf16  ub=512  Mean KLD: 0.000000 ± 0.000000 | Maximum KLD: 0.000064 | Same top p: 100.000 ± 0.000 % | Mean PPL(Q)/PPL(base) : 1.171766 ± 0.016351
+gemma4-bf16  ub=1    Mean KLD: 0.000000 ± 0.000000 | Maximum KLD: 0.000054 | Same top p: 100.000 ± 0.000 % | Mean PPL(Q)/PPL(base) : 1.180665 ± 0.034744
+
+## perplexity each build measured itself (the PPL(Q)/PPL(base) column above compares against the base read back
+## from llama.cpp's compressed stored logits, lossy for unlikely tokens: it puts Gemma's base 15% low. KLD and
+## top-1 weight the likely tokens, where the stored logits are accurate)
+inkling      ub=512  main 8.1905 +/- 0.33044     speedups 8.204152 ± 0.331198
+inkling      ub=1    main 6.5693 +/- 0.51679     speedups 6.542674 ± 0.514699
+qwen38-q6    ub=512  main 7.3932 +/- 0.29097     speedups 7.393202 ± 0.290969
+qwen38-q6    ub=1    main 5.8248 +/- 0.45624     speedups 5.824817 ± 0.456242
+gemma4-bf16  ub=512  main 672.3365 +/- 58.20775  speedups 672.336481 ± 58.207755
+gemma4-bf16  ub=1    main 387.5344 +/- 68.23909  speedups 387.534389 ± 68.239089
+
+## inkling, llama-bench
+| model                          |       size |     params | backend    | ngl |  fa | dev          |         lm |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | --: | ------------ | ---------: | --------------: | -------------------: |
+MAIN  | inkling2_loop ?B BF16          |  21.29 GiB |    26.07 B | ROCm       |  -1 |   1 | ROCm1        |        dio |           pp512 |        815.13 ± 2.12 |
+MAIN  | inkling2_loop ?B BF16          |  21.29 GiB |    26.07 B | ROCm       |  -1 |   1 | ROCm1        |        dio |           tg128 |         30.96 ± 0.13 |
+SPEED | inkling2_loop ?B BF16          |  21.29 GiB |    26.07 B | ROCm       |  -1 |   1 | ROCm1        |        dio |           pp512 |        852.63 ± 2.15 |
+SPEED | inkling2_loop ?B BF16          |  21.29 GiB |    26.07 B | ROCm       |  -1 |   1 | ROCm1        |        dio |           tg128 |         53.92 ± 0.29 |
+
+## qwen38-q6, llama-bench
+| model                          |       size |     params | backend    | ngl |  fa |         lm |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | --: | ---------: | --------------: | -------------------: |
+MAIN  | qwen35 27B Q6_K                |  20.46 GiB |    27.32 B | ROCm       |  -1 |   1 |        dio |           pp512 |        942.87 ± 4.96 |
+MAIN  | qwen35 27B Q6_K                |  20.46 GiB |    27.32 B | ROCm       |  -1 |   1 |        dio |           tg128 |         24.13 ± 0.01 |
+SPEED | qwen35 27B Q6_K                |  20.46 GiB |    27.32 B | ROCm       |  -1 |   1 |        dio |           pp512 |        943.77 ± 4.05 |
+SPEED | qwen35 27B Q6_K                |  20.46 GiB |    27.32 B | ROCm       |  -1 |   1 |        dio |           tg128 |         24.14 ± 0.01 |
+
+## gemma4-bf16, llama-bench
+| model                          |       size |     params | backend    | ngl |  fa | dev          |         lm |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | --: | ------------ | ---------: | --------------: | -------------------: |
+MAIN  | gemma4 ?B BF16                 |  22.18 GiB |    11.91 B | ROCm       |  -1 |   1 | ROCm1        |        dio |           pp512 |        417.77 ± 0.56 |
+MAIN  | gemma4 ?B BF16                 |  22.18 GiB |    11.91 B | ROCm       |  -1 |   1 | ROCm1        |        dio |           tg128 |         23.19 ± 0.00 |
+SPEED | gemma4 ?B BF16                 |  22.18 GiB |    11.91 B | ROCm       |  -1 |   1 | ROCm1        |        dio |           pp512 |        418.28 ± 0.41 |
+SPEED | gemma4 ?B BF16                 |  22.18 GiB |    11.91 B | ROCm       |  -1 |   1 | ROCm1        |        dio |           tg128 |         23.64 ± 0.00 |
+
+## test-backend-ops, speedups build, ROCm1 against CPU
+REL_BIAS             4/4 tests passed
+MUL_L2_NORM          8/8 tests passed
+CTRL_MIX             6/6 tests passed
+DEPTH_MIX            13/13 tests passed
+SSM_CONV_STEP        9/9 tests passed
+MUL_MAT_SAME_SRC1    12/12 tests passed
+SSM_CONV_RES_SCALE   8/8 tests passed
+SOFTCAP              3/3 tests passed
+TANH_MUL             39/39 tests passed
+TOPK_MOE             694/694 tests passed
+SSM_CONV             75/75 tests passed
+MUL_MAT_ID           1077/1077 tests passed
+MUL_MAT              2723/2724 tests passed
+  the MUL_MAT failure: [MUL_MAT] ERR = 0.004298325 > 0.000500000   MUL_MAT(type_a=f16,type_b=f32,m=16,n=2105344,k=32,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0,m_v=0,pad=0,offset_a=0): FAIL
+Backend ROCm1: FAIL
+  fails the same way on the main build b05204927 (ERR 0.00427), as it did on 2a28df0f9: not from these commits
