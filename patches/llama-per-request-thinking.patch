@@ -39,12 +39,12 @@ index 1724a6702..a84d4c873 100644
      }
  
 diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
-index eb5781e74..5d7fedb54 100644
+index 8d4c022e9..1290e6ddb 100644
 --- a/tools/server/server-common.cpp
 +++ b/tools/server/server-common.cpp
-@@ -1645,12 +1645,16 @@ json oaicompat_chat_params_parse(
-             inputs.enable_thinking = false;
-             inputs.chat_template_kwargs.erase("reasoning_effort");
+@@ -1651,11 +1651,15 @@ json oaicompat_chat_params_parse(
+                 inputs.chat_template_kwargs.erase("reasoning_effort");
+             }
          } else if (!reasoning_effort.empty()) {
 +            // LOCAL PATCH: "minimal" (Pi, OpenAI) is not a level chat templates know; Qwen3.8's
 +            // raises "Unexpected reasoning effort minimal" (HTTP 500). Template gets "low"; the
@@ -53,7 +53,6 @@ index eb5781e74..5d7fedb54 100644
              const auto rejected = caps.at("reasoning_effort_rejected").get<std::vector<std::string>>();
 -            if (std::find(rejected.begin(), rejected.end(), reasoning_effort) != rejected.end()) {
 +            if (std::find(rejected.begin(), rejected.end(), tmpl_effort) != rejected.end()) {
-                 const auto levels = caps.at("reasoning_effort_levels").get<std::vector<std::string>>();
                  throw std::invalid_argument("reasoning_effort \"" + reasoning_effort + "\" is not supported by the chat template, supported levels: " + string_join(levels, ", "));
              }
 -            inputs.chat_template_kwargs["reasoning_effort"] = json(reasoning_effort).dump();
@@ -61,7 +60,7 @@ index eb5781e74..5d7fedb54 100644
          }
      }
  
-@@ -1668,7 +1672,22 @@ json oaicompat_chat_params_parse(
+@@ -1673,10 +1677,33 @@ json oaicompat_chat_params_parse(
          int reasoning_budget = json_value(body, "reasoning_budget_tokens",
                                 json_value(body, "thinking_budget_tokens", -1));
          if (reasoning_budget == -1) {
@@ -85,3 +84,14 @@ index eb5781e74..5d7fedb54 100644
          }
  
          if (!out_session.thinking_end_tags().empty()) {
++            // LOCAL PATCH: Inkling closes a thinking block with the generic <|end_message|>. Forcing
++            // it at budget 0 makes the model open another thinking block, without end. Its template
++            // already says "Thinking effort level: 0" for none/off, where it thinks ~40 tokens and
++            // answers, so give it room instead of forcing.
++            if (reasoning_budget == 0 && out_session.thinking_end_tags().size() == 1 &&
++                out_session.thinking_end_tags()[0] == "<|end_message|>") {
++                reasoning_budget = 1024;
++            }
+             llama_params["reasoning_budget_tokens"] = reasoning_budget;
+             llama_params["reasoning_budget_start_tag"] = out_session.thinking_start_tag();
+             llama_params["reasoning_budget_end_tags"] = out_session.thinking_end_tags();
