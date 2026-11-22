@@ -151,6 +151,83 @@ branch except the same `MUL_MAT` F16 case, which fails identically on plain upst
 The router (`~/llama.cpp`, local branch `router` = upstream + these commits, plus the local thinking patch) now
 builds from it: Inkling's presets generate at 50 tok/s through the server, against 29.5 on plain upstream.
 
+## As the context grows (2026-11-22)
+
+Through llama-server with the `inkling-2-mini-q8-128k` preset's flags: 128K context, `-ub 128`, R9700 only, F16
+KV, effort 0, temperature 0, 700 generated tokens, prompt cache off, one run per depth. "Before" is the router's
+build with the 16 commits above
+([depth-throughput-before-batch-mask.txt](benchmarks/inkling-2-mini-UD-Q8_K_XL/depth-throughput-before-batch-mask.txt));
+"after" adds the two commits described below, `2f352b444` and `41c5acbe5`
+([depth-throughput.txt](benchmarks/inkling-2-mini-UD-Q8_K_XL/depth-throughput.txt)):
+
+| context | prompt reading, before | after | | generation, before | after |
+|---:|---:|---:|---:|---:|---:|
+| empty | | | | 53.6 tok/s | 53.5 |
+| 16K | 414 tok/s | 523 | 1.26x | 49.6 | 49.7 |
+| 32K | 345 | 502 | 1.45x | 46.4 | 46.7 |
+| 64K | 258 | 462 | 1.79x | 41.4 | 41.9 |
+| 111K | 190 | 414 | 2.18x | 35.8 | 36.4 |
+
+Prompt reading is the average over the whole fill: a 111K prompt now takes 4.5 minutes instead of 9.8.
+
+Generation keeps 68% of its empty-context speed at 111K (Huihui-Qwen3.8-27B lost 44% by 120K, see
+[huihui-qwen3.8-27b.md](huihui-qwen3.8-27b.md)): 20 of Inkling's 24 layers attend over a 1,024-token window. The
+other 4 run full attention and, with the loop, 8 times per token. Each position costs those passes 4 KB of F16 K
+and V, so every 1K of context adds 32 MB of reads per token, 0.05 ms at 640 GB/s; measured, it adds 0.083 ms. The
+part that grows with the context runs at about 60% of the card's bandwidth.
+
+Inkling does use flash attention, but its relative-position bias reaches it as a per-head mask, built for every
+query token, head and cached position. At 128K that mask's tensors are what does not fit with `-ub 512` (12.9 GB),
+so the 128K preset runs `-ub 128`.
+
+### Where the time goes
+
+`test-backend-ops perf` with Inkling's full-attention shape (24 query heads over 8 K/V heads, head size 128) at
+111,616 cached positions, per call; Inkling runs 8 such calls per token
+([long-context-tests.txt](benchmarks/inkling-2-mini-UD-Q8_K_XL/long-context-tests.txt)):
+
+| | shared mask, F16 K/V | per-head mask, F16 (Inkling) | shared, q8_0 | per-head, q8_0 |
+|---|---:|---:|---:|---:|
+| 1 token (generation) | 735 us | 972 us | 627 us | 622 us |
+| 128 tokens (one prompt ubatch) | 6.9 ms | 16.2 ms | 8.9 ms | 18.2 ms |
+
+- **Generation:** attention is most of what context costs: 8 x 972 us = 7.8 ms of the 9.3 ms per token added by
+  111K. With a shared mask the F16 kernel reads K and V at about 620 GB/s; the per-head mask costs 32%.
+- **Prompt reading:** attention was only about 12% of a 128-token ubatch at 111K (8 x 16 ms of roughly 1.1 s).
+  Most of the rest was building the per-head mask for the batch: the relative-position table gathered by distance,
+  transposed to `[n_kv, tokens, heads]`, added to the causal mask in F32 and cast to F16. Timed alone in
+  `test-backend-ops` those ops looked cheap (9.9 ms per pass at 111K); in the model they made the difference
+  between 190 and 414 tok/s.
+
+### The prompt-time mask as one kernel, and a HIP crash
+
+`2f352b444` runs `GET_ROWS -> RESHAPE -> PERMUTE -> CONT -> ADD(mask) -> CPY(F16)` as one kernel, as the one-token
+fusion already did for generation: each thread reads its distance and mask value once and writes all 24 heads in
+F16; the gathered, transposed and summed F32 tensors are never written. The output is bit-identical: KLD 0 against
+the previous build on Inkling's prompt path (`-c 8192 -ub 128`), on Qwen3.8-27B and on Gemma 4 12B, and the new
+`test-backend-ops` case `REL_BIAS_BATCH` passes against the CPU. The unused tensors are still allocated, so 128K
+still needs `-ub 128`.
+
+With HIP graphs on, that build crashed llama-server on the 112K prompt at the same ubatch every time, 36,874
+tokens in: a null write inside `libamdhip64`, in `hipGraphExecUpdate`. The previous build had run the same prompt
+twice, and with `GGML_CUDA_DISABLE_GRAPHS=1` it completed. The fusion was never refused before the crash, and
+rebuilding a chunk's executable when its node count changed did not help (it never changed). `41c5acbe5` stops
+capturing graphs on HIP for batches with more than one query token. That costs nothing measurable (llama-bench
+pp512 Inkling 907.8 -> 908.0 tok/s, Qwen3.8-27B 950.4 -> 949.4), and one-token graphs, where they matter, are kept.
+
+### Two quick tries that did not pay
+
+- **q8_0 K/V cache:** KLD 0.0030 against F16 K/V (97.8% same top token). Generation -2.9% empty, +0.8% at 32K,
+  +6.8% at 112K (38.2 tok/s); prompt reading unchanged; the 128k preset then loads at `-ub 256` (29.4 GiB), not
+  `-ub 512`. Not adopted: it is slower at the context lengths most chats use.
+- **DSpark drafter** (unsloth's `dspark-Inkling-2-Mini-Q8_0.gguf`, `--spec-type draft-dspark`): does not load in
+  mainline, which sizes `markov_w1` by the unpadded vocabulary (200,058) where the file has the padded 201,024.
+  Unsloth's notes also say it taps the looped layers, which their own llama.cpp build carries.
+
+What is left for long contexts is the per-head mask itself: reading the bias inside the flash-attention kernel
+(the table holds 1,025 values per head and is constant past 1,024 positions) would give attention its shared-mask
+speed (32% faster in generation, 2.4x in a prompt ubatch at 111K) and free the memory that keeps 128K at `-ub 128`.
+
 ## Caveats and what is left
 
 - Only this card and these two backends were measured. No CUDA/NVIDIA, no Metal, no full-model CPU run.

@@ -46,7 +46,7 @@ in the linked files.
 | [turboquant.md](turboquant.md) | TurboQuant 2-4 bit KV-cache quantization |
 | [instella-moe.md](instella-moe.md) | AMD Instella-MoE-16B-A3B |
 | [nemotron-3.5-lightning-30B.md](nemotron-3.5-lightning-30B.md) | Nemotron 3.5 Lightning 30B-A3B `Q8_0`: the repo's fastest generation and cheapest 128K, spent on 28K reasoning tokens a task |
-| [inkling-2-mini-speedups.md](inkling-2-mini-speedups.md) | Inkling-2-Mini 31 to 54 tok/s on the R9700: fewer kernels per token, CUDA/HIP fusions, and an RDNA4 matvec grid fix |
+| [inkling-2-mini-speedups.md](inkling-2-mini-speedups.md) | Inkling-2-Mini 31 to 54 tok/s on the R9700: fewer kernels per token, CUDA/HIP fusions, and an RDNA4 matvec grid fix; long prompts read 2.2x faster at 111K (190 to 414 tok/s) with the per-head attention mask built by one kernel, and a HIP graph crash fixed |
 | [huihui-qwen3.8-27b.md](huihui-qwen3.8-27b.md) | Huihui-Qwen3.8-27B-abliterated UD-Q6_K_XL against stock Qwen3.8 Q6 from 0 to 120K context (2.5-3.6% slower generation, 8-13% faster prefill), then Huihui alone to 261K: 20.9 tok/s and recall 5/5 at 240K |
 | [agent-eval.md](agent-eval.md) | Agentic coding eval: 21 tasks (10 synthetic repos, 11 real bug fixes from click, tomlkit, sqlparse and Python-Markdown), sandboxed tool loop, hidden tests, ×3. Huihui-Qwen3.8-27B and stock Qwen3.8-27B tie at 42/63; false claims 6 vs 4 |
 | [handover.md](handover.md) | Working notes, including the KLD-vs-BF16 quant study |
