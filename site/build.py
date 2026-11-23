@@ -66,8 +66,9 @@ PROJECTS = [
                          "docs/phase3_findings.md", "docs/architecture.md", "docs/environment.md",
                          "docs/roadmap.md", "requirements.md", "gpt-review.md"]),
     },
-    {   # a fork of Strata; only oss/ (the gpt-oss engine) is this research, the rest is upstream
-        "id": "strataoss", "name": "Strata-oss", "root": HOME / "code/Strata-oss", "prefix": "strata-oss/",
+    {   # a fork of Strata; only oss/ (the gpt-oss engine) is this research, the rest is upstream.
+        # A finished experiment: cloned for the site only, outside ~/code so it is not mistaken for ~/code/Strata.
+        "id": "strataoss", "name": "Strata-oss", "root": HOME / ".local/share/research-site/Strata-oss", "prefix": "strata-oss/",
         "repo": "kr4ckhe4d/Strata-oss", "branch": "main", "untracked": False, "subdir": "oss",
         "title": "strata-oss: gpt-oss-120b on a normal PC",
         "blurb": "A gpt-oss (120b/20b) engine on Strata's mechanism: hot experts in VRAM across two cards, "
@@ -834,7 +835,11 @@ def main():
     # engine A/Bs (engine-ab.py): one JSON line per request, medians per arm
     ENGINE_AB_ARMS = {"llama-q6": "llama.cpp Q6, 2 cards", "llama-q6-mtp": "llama.cpp Q6 + MTP, 2 cards",
                       "llama-q4-mtp": "llama.cpp Q4 + MTP, 2 cards", "strata-q4": "Strata Q4 + MTP, R9700",
-                      "strata-q6": "Strata Q6, R9700"}
+                      "strata-q6": "Strata Q6, R9700",
+                      # engine-ab-inkling (2026-11-23): Inkling-2-Mini, R9700 alone, 128K
+                      "llama-q8": "llama.cpp Q8", "llama-q8-branch": "llama.cpp Q8, branch, 7 commits (-ub 512)", "strata-q8-nodraft": "Strata Q8",
+                      "strata-q8-dspark": "Strata Q8 + DSpark", "strata-sq20-nodraft": "Strata SQ-20",
+                      "strata-sq20-dspark": "Strata SQ-20 + DSpark"}
     measurements["engineab"] = []
     for e in tree:
         f = e["p"]
