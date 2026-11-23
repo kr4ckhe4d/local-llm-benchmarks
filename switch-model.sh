@@ -409,7 +409,13 @@ for m in json.load(sys.stdin)["data"]:
 STRATA_DIR="$HOME/code/Strata"
 # IQ3_XXS needs STRATA_RESIDENT_HEADROOM_GIB=12 in its config, or it OOM-kills the
 # desktop on this 30 GB box (strata.md). STRATA_RUN overrides the script.
-STRATA_RUN="${STRATA_RUN:-$STRATA_DIR/run-iq3_xxs.sh}"
+# Strata 0.2.20 moved the engine, configs and run scripts into terminal/; the
+# root path is the pre-0.2.20 layout.
+if [[ -x "$STRATA_DIR/terminal/run-iq3_xxs.sh" ]]; then
+  STRATA_RUN="${STRATA_RUN:-$STRATA_DIR/terminal/run-iq3_xxs.sh}"
+else
+  STRATA_RUN="${STRATA_RUN:-$STRATA_DIR/run-iq3_xxs.sh}"
+fi
 STRATA_PORT=8095
 
 strata_up() {

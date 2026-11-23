@@ -77,3 +77,21 @@ Order: both, R9700, both again; the third run was interrupted once and redone.
   its 69% of cached expert pairs suggests.
 * The repeat moved +3% (93.9 -> 96.9), more than this box's usual 0.3%, but
   well inside the gap.
+
+## Strata 0.2.20 (engine 0.1.66), same production config (2026-11-23)
+
+`SWEEP_OUT=results-0.2.20.json python3 sweep.py prod-0.2.20`: the production config as it is (pipeline-windows 2,
+stage trim, split 33, headroom 12), same prompts and method, after the update from 0.1.43-era 13eedf55. Log:
+`/mnt/fast/strata-exp/tuning/prod-0.2.20.log`.
+
+| | prefill tok/s (29,409) | decode tok/s | code (3) | prose (3) |
+|---|---|---|---|---|
+| 2026-10-12, pw2 + trim | 1,653 | **94.8** | 130 / 143 / 125 | 76 / 73 / 78 |
+| 2026-11-23, 0.2.20, same config | **2,641 (+60%)** | 79.5 (-16%) | 103 / 112 / 99 | 75 / 58 / 63 |
+
+* **Prompt reading +60%**: a Claude-Code-sized first turn now reads in 11 s instead of 18 s.
+* **Generation -16%**, back to the old untuned defaults (80.7): code -20%, prose -1% to -21%. Not the config: the
+  pipeline and the split are applied as before, the cards hold 22,324 expert pairs (22,969 before) with the same
+  98.8-99.9% hit rate, and drafts are accepted as often (326 of 399 against 331 of 408 on the first code prompt).
+  The old engine logged a "100% VRAM resident: zero-doorbell graph" decode path; 0.2.20 never does. Not yet
+  checked whether `--pipeline-windows 2` still pays on this engine.

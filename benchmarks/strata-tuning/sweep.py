@@ -17,6 +17,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 STRATA = Path.home() / "code/Strata"
+if (STRATA / "terminal/serve/server.py").exists():   # Strata 0.2.20 moved the server, configs and .venv here
+    STRATA = STRATA / "terminal"
 BASE_CFG = STRATA / "strata-iq3_xxs.json"
 WORK = Path("/mnt/fast/strata-exp/tuning")
 PORT = 8097
@@ -48,6 +50,7 @@ def arm_config(name, args=(), env=None, split=None, replace=None):
 
 ARMS = {
     "base":         {},
+    "prod-0.2.20":  {},   # 2026-11-23: the production config as it is (already pw2 + trim, split 33), new engine
     "adapt-async":  {"args": ["--adapt-async", "1"]},
     "pipeline-w2":  {"args": ["--pipeline-windows", "2"]},
     "split-own":    {"env": {"STRATA_SPLIT_OWN": "1"}},
@@ -148,7 +151,7 @@ def run_arm(name, spec):
 if __name__ == "__main__":
     WORK.mkdir(parents=True, exist_ok=True)
     names = sys.argv[1:] or list(ARMS)
-    out_path = HERE / "results.json"
+    out_path = HERE / os.environ.get("SWEEP_OUT", "results.json")
     results = json.loads(out_path.read_text()) if out_path.exists() else {}
     for n in names:
         try:
