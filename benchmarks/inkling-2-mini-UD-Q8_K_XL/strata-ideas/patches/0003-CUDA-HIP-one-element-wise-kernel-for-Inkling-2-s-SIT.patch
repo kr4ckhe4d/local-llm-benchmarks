@@ -1,0 +1,272 @@
+From 53d82ffb795046d1ba50b552e311cac2bd4c7164 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Mon, 23 Nov 2026 11:04:20 +0800
+Subject: [PATCH 03/10] CUDA/HIP: one element-wise kernel for Inkling 2's SITU
+ expert activation
+
+situ(g, u) = (tanh(g/beta)*beta * sigmoid(g)) * (tanh(u/lb)*lb) ran as four
+kernels after every gate_up product (softcap, sigmoid*mul, softcap, mul),
+each reading and writing the 8 x 1152 activations of a token. The nine nodes
+now match as one kernel that reads g and u straight from the two strided
+halves of the gate_up output. It uses the expressions of the kernels it
+replaces, in their order, so the output is bit-identical, for one token and
+for prompt batches alike.
+
+R9700 Inkling-2-Mini UD-Q8_K_XL: 1,876 -> 1,732 kernels per generated token;
+tg128 56.1 -> 57.3 tok/s (+2.1%). KLD against the previous commit,
+wiki.test.raw -c 512, -ub 512 and -ub 1: 0. New test-backend-ops case SITU
+(one token, a 37-token batch, an odd shape).
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu |  11 +++
+ ggml/src/ggml-cuda/situ.cu      | 122 ++++++++++++++++++++++++++++++++
+ ggml/src/ggml-cuda/situ.cuh     |   8 +++
+ tests/test-backend-ops.cpp      |  46 ++++++++++++
+ 4 files changed, 187 insertions(+)
+ create mode 100644 ggml/src/ggml-cuda/situ.cu
+ create mode 100644 ggml/src/ggml-cuda/situ.cuh
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 919ce24fe..e6a148bec 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -54,6 +54,7 @@
+ #include "ggml-cuda/depth-mix.cuh"
+ #include "ggml-cuda/ctrl-mix.cuh"
+ #include "ggml-cuda/attn-prep.cuh"
++#include "ggml-cuda/situ.cuh"
+ #include "ggml-cuda/softmax.cuh"
+ #include "ggml-cuda/ssm-conv.cuh"
+ #include "ggml-cuda/ssm-scan.cuh"
+@@ -5475,6 +5476,14 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         return 3;
+     }
+ 
++    if (node->op == GGML_OP_SCALE) {
++        const int last = ggml_cuda_match_situ(cgraph, i);
++        if (last > 0) {
++            ggml_cuda_op_situ(*cuda_ctx, cgraph, i, last);
++            return last - i;
++        }
++    }
++
+     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_SCALE, GGML_OP_UNARY, GGML_OP_SCALE }, { GGML_UNARY_OP_TANH })) {
+         ggml_cuda_op_softcap(*cuda_ctx, cgraph->nodes[i + 2], node);
+         return 2;
+@@ -6002,6 +6011,8 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
+                     }
+                 } else if (op == GGML_OP_GET_ROWS) {
+                     last = ggml_cuda_match_rel_bias_batch(cgraph, i, false);
++                } else if (op == GGML_OP_SCALE) {
++                    last = ggml_cuda_match_situ(cgraph, i, false);
+                 }
+                 if (last > i) {
+                     add_alloc_deps(i, last);
+diff --git a/ggml/src/ggml-cuda/situ.cu b/ggml/src/ggml-cuda/situ.cu
+new file mode 100644
+index 000000000..c5976cecd
+--- /dev/null
++++ b/ggml/src/ggml-cuda/situ.cu
+@@ -0,0 +1,122 @@
++#include "situ.cuh"
++#include "ctrl-mix.cuh"
++
++namespace {
++
++bool is_view(const ggml_tensor * t) {
++    return t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE || t->op == GGML_OP_PERMUTE || t->op == GGML_OP_TRANSPOSE;
++}
++
++bool is_unary(const ggml_tensor * t, ggml_unary_op op) {
++    return t->op == GGML_OP_UNARY && ggml_get_unary_op(t) == op;
++}
++
++bool is_scale(const ggml_tensor * t) {
++    return t->op == GGML_OP_SCALE && ggml_get_op_params_f32(t, 1) == 0.0f;
++}
++
++// the 9 compute nodes of the pattern, views skipped
++bool match_nodes(const ggml_cgraph * cgraph, int i, int idx[9]) {
++    int n = 0;
++    for (int k = i; k < cgraph->n_nodes && n < 9; ++k) {
++        const ggml_tensor * t = cgraph->nodes[k];
++        if (is_view(t) && n > 0) {
++            continue;
++        }
++        if (!(t->flags & GGML_TENSOR_FLAG_COMPUTE)) {
++            return false;
++        }
++        idx[n++] = k;
++    }
++    if (n < 9) {
++        return false;
++    }
++    const ggml_tensor * t[9];
++    for (int k = 0; k < 9; ++k) {
++        t[k] = cgraph->nodes[idx[k]];
++    }
++    const ggml_tensor * g = t[0]->src[0];
++    const ggml_tensor * u = t[5]->src[0];
++    if (!is_scale(t[0]) || !is_unary(t[1], GGML_UNARY_OP_TANH) || !is_scale(t[2]) ||
++            !is_unary(t[3], GGML_UNARY_OP_SIGMOID) || t[4]->op != GGML_OP_MUL ||
++            !is_scale(t[5]) || !is_unary(t[6], GGML_UNARY_OP_TANH) || !is_scale(t[7]) || t[8]->op != GGML_OP_MUL) {
++        return false;
++    }
++    if (t[1]->src[0] != t[0] || t[2]->src[0] != t[1] || t[3]->src[0] != g ||
++            !((t[4]->src[0] == t[2] && t[4]->src[1] == t[3]) || (t[4]->src[0] == t[3] && t[4]->src[1] == t[2])) ||
++            t[6]->src[0] != t[5] || t[7]->src[0] != t[6] ||
++            !((t[8]->src[0] == t[4] && t[8]->src[1] == t[7]) || (t[8]->src[0] == t[7] && t[8]->src[1] == t[4]))) {
++        return false;
++    }
++    // F32 throughout, g and u of one shape with a unit element stride, the computed tensors contiguous
++    if (g->type != GGML_TYPE_F32 || u->type != GGML_TYPE_F32 || g->nb[0] != sizeof(float) || u->nb[0] != sizeof(float) ||
++            !ggml_are_same_shape(g, u) || g->ne[3] != 1) {
++        return false;
++    }
++    for (int k = 0; k < 9; ++k) {
++        if (t[k]->type != GGML_TYPE_F32 || !ggml_is_contiguous(t[k]) || !ggml_are_same_shape(t[k], g)) {
++            return false;
++        }
++    }
++    // everything but the last node is read inside the pattern only
++    for (int k = 0; k < 8; ++k) {
++        if (ggml_node_get_use_count(cgraph, idx[k]) != 1 || (t[k]->flags & GGML_TENSOR_FLAG_OUTPUT)) {
++            return false;
++        }
++    }
++    return true;
++}
++
++__global__ void situ_f32(const float * __restrict__ g, const float * __restrict__ u, float * __restrict__ dst,
++        const int64_t k, const int ne0, const int ne1, const int64_t g1, const int64_t g2, const int64_t u1, const int64_t u2,
++        const float gs, const float gc, const float us, const float uc) {
++    const int64_t i = (int64_t) blockDim.x*blockIdx.x + threadIdx.x;
++    if (i >= k) {
++        return;
++    }
++    const int     i0 = (int) (i % ne0);
++    const int64_t r  = i / ne0;
++    const int     i1 = (int) (r % ne1);
++    const int64_t i2 = r / ne1;
++
++    // the expressions of the softcap, unary and binary kernels this replaces, in their order
++    const float gv  = g[i2*g2 + i1*g1 + i0];
++    const float uv  = u[i2*u2 + i1*u1 + i0];
++    const float act = tanhf(gs * gv) * gc;
++    const float sig = 1.0f / (1.0f + expf(-gv));
++    const float up  = tanhf(us * uv) * uc;
++    dst[i] = (act * sig) * up;
++}
++
++} // namespace
++
++int ggml_cuda_match_situ(const ggml_cgraph * cgraph, int i, bool check_memory) {
++    int idx[9];
++    if (!match_nodes(cgraph, i, idx)) {
++        return -1;
++    }
++    // element-wise, but the inputs are strided: the output must not overlap them at all
++    const ggml_tensor * out = cgraph->nodes[idx[8]];
++    if (check_memory && (ggml_cuda_fusion_overlap(out, cgraph->nodes[idx[0]]->src[0]) ||
++                         ggml_cuda_fusion_overlap(out, cgraph->nodes[idx[5]]->src[0]))) {
++        return -1;
++    }
++    return idx[8];
++}
++
++void ggml_cuda_op_situ(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last) {
++    int idx[9];
++    GGML_ASSERT(match_nodes(cgraph, i, idx) && idx[8] == last);
++
++    const ggml_tensor * g   = cgraph->nodes[idx[0]]->src[0];
++    const ggml_tensor * u   = cgraph->nodes[idx[5]]->src[0];
++    ggml_tensor       * dst = cgraph->nodes[idx[8]];
++
++    const int64_t k = ggml_nelements(dst);
++    constexpr int block_size = 256;
++    situ_f32<<<(k + block_size - 1)/block_size, block_size, 0, ctx.stream()>>>(
++        (const float *) g->data, (const float *) u->data, (float *) dst->data, k, (int) g->ne[0], (int) g->ne[1],
++        g->nb[1]/sizeof(float), g->nb[2]/sizeof(float), u->nb[1]/sizeof(float), u->nb[2]/sizeof(float),
++        ggml_get_op_params_f32(cgraph->nodes[idx[0]], 0), ggml_get_op_params_f32(cgraph->nodes[idx[2]], 0),
++        ggml_get_op_params_f32(cgraph->nodes[idx[5]], 0), ggml_get_op_params_f32(cgraph->nodes[idx[7]], 0));
++}
+diff --git a/ggml/src/ggml-cuda/situ.cuh b/ggml/src/ggml-cuda/situ.cuh
+new file mode 100644
+index 000000000..e16536ec2
+--- /dev/null
++++ b/ggml/src/ggml-cuda/situ.cuh
+@@ -0,0 +1,8 @@
++#include "common.cuh"
++
++// The SITU activation of Inkling 2's experts as one element-wise kernel:
++//   SCALE(g) -> TANH -> SCALE, SIGMOID(g), MUL, SCALE(u) -> TANH -> SCALE, MUL
++//   = (tanh(g/beta)*beta * sigmoid(g)) * (tanh(u/lb)*lb)
++// g and u may be strided views (the halves of a fused gate_up product). Returns the index of the last MUL, or -1.
++int  ggml_cuda_match_situ(const ggml_cgraph * cgraph, int i, bool check_memory = true);
++void ggml_cuda_op_situ(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last);
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 9237e94a7..e79321684 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -5365,6 +5365,49 @@ struct test_attn_prep : public test_case {
+     }
+ };
+ 
++// Inkling 2 SITU on the two halves of a fused gate_up product (fused by CUDA into one element-wise kernel):
++// (tanh(g/beta)*beta * sigmoid(g)) * (tanh(u/lb)*lb)
++struct test_situ : public test_case {
++    const int64_t n_ff;
++    const int64_t n_used;
++    const int64_t n_tokens;
++
++    std::string op_desc(ggml_tensor * t) override {
++        GGML_UNUSED(t);
++        return "SITU";
++    }
++
++    bool run_whole_graph() override { return true; }
++
++    std::string vars() override {
++        return VARS_TO_STR3(n_ff, n_used, n_tokens);
++    }
++
++    test_situ(int64_t n_ff = 1152, int64_t n_used = 8, int64_t n_tokens = 1) : n_ff(n_ff), n_used(n_used), n_tokens(n_tokens) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        const float beta = 4.0f, lb = 25.0f;
++        ggml_tensor * gu = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 2*n_ff, n_used, n_tokens);
++        ggml_tensor * g  = ggml_view_3d(ctx, gu, n_ff, n_used, n_tokens, gu->nb[1], gu->nb[2], 0);
++        ggml_tensor * u  = ggml_view_3d(ctx, gu, n_ff, n_used, n_tokens, gu->nb[1], gu->nb[2], n_ff*ggml_element_size(gu));
++
++        ggml_tensor * act = ggml_scale(ctx, ggml_tanh(ctx, ggml_scale(ctx, g, 1.0f/beta)), beta);
++        act = ggml_mul(ctx, act, ggml_sigmoid(ctx, g));
++        u = ggml_scale(ctx, ggml_tanh(ctx, ggml_scale(ctx, u, 1.0f/lb)), lb);
++        ggml_tensor * out = ggml_mul(ctx, act, u);
++        ggml_set_name(out, "out");
++        return out;
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        for (ggml_tensor * x = ggml_get_first_tensor(ctx); x != NULL; x = ggml_get_next_tensor(ctx, x)) {
++            if (x->op == GGML_OP_NONE) {
++                init_tensor_uniform(x, -40.0f, 40.0f);
++            }
++        }
++    }
++};
++
+ // MUL(x, w) -> L2_NORM [-> SCALE] (Inkling 2 clipped Q and R, fused by CUDA)
+ struct test_mul_l2_norm : public test_case {
+     const std::array<int64_t, 4> ne;
+@@ -12602,6 +12645,9 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     test_cases.emplace_back(new test_rel_bias_op(5, 101, 300, 3, 2));
+     test_cases.emplace_back(new test_attn_prep(false));
+     test_cases.emplace_back(new test_attn_prep(true));
++    test_cases.emplace_back(new test_situ(1152, 8, 1));
++    test_cases.emplace_back(new test_situ(1152, 8, 37));
++    test_cases.emplace_back(new test_situ(100, 3, 5));
+ 
+     // per-channel scale, L2 norm with a clip threshold as eps, optional rescale (Inkling 2 Q and R)
+     for (bool with_scale : { false, true }) {
+-- 
+2.56.1
+

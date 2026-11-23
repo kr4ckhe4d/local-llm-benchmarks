@@ -1,0 +1,118 @@
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index f015a78b1..aba2f9304 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -5540,6 +5540,62 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+     return 0;
+ }
+ 
++// ---- LOCAL (not for upstream): per-launch timing for one-token graphs, GGML_CUDA_NODE_PROF=1 with
++// GGML_CUDA_DISABLE_GRAPHS=1. Each launch (a fused group counts once) is bracketed by two events; times are
++// summed per label (op, or first..last op of a fusion, plus the tensor name without its layer suffix) and
++// printed every 32 one-token graphs.
++#include <map>
++#include <string>
++#if defined(GGML_USE_HIP)
++#ifndef cudaEventCreate
++#define cudaEventCreate hipEventCreate
++#endif
++#ifndef cudaEventElapsedTime
++#define cudaEventElapsedTime hipEventElapsedTime
++#endif
++#endif
++struct ggml_cuda_node_prof {
++    bool on = getenv("GGML_CUDA_NODE_PROF") != nullptr;
++    std::vector<cudaEvent_t> ev;
++    std::vector<std::string> lab;
++    std::map<std::string, std::pair<double, long>> acc;
++    int n_tok = 0;
++    static std::string base(const char * n) {
++        std::string s(n);
++        size_t d = s.rfind('-');
++        if (d != std::string::npos && d + 1 < s.size() && isdigit((unsigned char) s[d + 1])) s = s.substr(0, d);
++        size_t sp = s.find(" (");
++        if (sp != std::string::npos) s = s.substr(0, sp);
++        return s;
++    }
++    void mark(cudaStream_t st, const std::string & l) {
++        if (ev.size() <= lab.size() * 2 + 1) { for (int i = 0; i < 4096; ++i) { cudaEvent_t e; CUDA_CHECK(cudaEventCreate(&e)); ev.push_back(e); } }
++        CUDA_CHECK(cudaEventRecord(ev[lab.size() * 2], st));
++        lab.push_back(l);
++    }
++    void end(cudaStream_t st) { CUDA_CHECK(cudaEventRecord(ev[lab.size() * 2 - 1], st)); }
++    void flush(bool one_token) {
++        if (lab.empty()) return;
++        CUDA_CHECK(cudaEventSynchronize(ev[lab.size() * 2 - 1]));
++        if (one_token) {
++            for (size_t i = 0; i < lab.size(); ++i) {
++                float ms = 0; CUDA_CHECK(cudaEventElapsedTime(&ms, ev[2 * i], ev[2 * i + 1]));
++                auto & a = acc[lab[i]]; a.first += ms; a.second += 1;
++            }
++            if (++n_tok % 32 == 0) {
++                std::vector<std::pair<std::string, std::pair<double, long>>> v(acc.begin(), acc.end());
++                std::sort(v.begin(), v.end(), [](auto & x, auto & y) { return x.second.first > y.second.first; });
++                double tot = 0; long cnt = 0; for (auto & x : v) { tot += x.second.first; cnt += x.second.second; }
++                fprintf(stderr, "[NODE-PROF] %d tokens: %.3f ms/token in %.1f launches/token\n", n_tok, tot / n_tok, (double) cnt / n_tok);
++                for (auto & x : v) fprintf(stderr, "[NODE-PROF] %8.3f ms %7.1f launches  %s\n", x.second.first / n_tok, (double) x.second.second / n_tok, x.first.c_str());
++                acc.clear(); n_tok = 0;
++            }
++        }
++        lab.clear();
++    }
++};
++static ggml_cuda_node_prof g_node_prof;
++
+ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, const bool use_cuda_graph, const bool cuda_graph_update_required, const void * graph_key) {
+     bool graph_evaluated_or_captured = false;
+ 
+@@ -5696,9 +5752,27 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
+                     continue;
+                 }
+ 
++                const bool np_on = g_node_prof.on && !use_cuda_graph;
++                auto np_name = [](const ggml_tensor * t) {
++                    std::string b = ggml_cuda_node_prof::base(t->name);
++                    if (b.rfind("node_", 0) == 0 || b == "norm") {
++                        char buf[96];
++                        snprintf(buf, sizeof(buf), "[%lld,%lld]<-[%lld,%lld]", (long long) t->ne[0], (long long) t->ne[1],
++                                 t->src[0] ? (long long) t->src[0]->ne[0] : 0LL, t->src[0] ? (long long) t->src[0]->ne[1] : 0LL);
++                        return b == "norm" ? b + buf : std::string(buf);
++                    }
++                    return b;
++                };
++                if (np_on) g_node_prof.mark(cuda_ctx->stream(), std::string(ggml_op_name(node->op)) + " " + np_name(node));
+                 int nodes_to_skip = ggml_cuda_try_fuse(cuda_ctx, cgraph, i);
+ 
+                 if (nodes_to_skip != 0) {
++                    if (np_on) {
++                        const ggml_tensor * last = cgraph->nodes[i + nodes_to_skip];
++                        g_node_prof.lab.back() = std::string("FUSED ") + ggml_op_name(node->op) + ".." + ggml_op_name(last->op) + " " +
++                            np_name(node) + ".." + np_name(last);
++                        g_node_prof.end(cuda_ctx->stream());
++                    }
+ #ifdef GGML_CUDA_DEBUG
+                     const int last_fused = i + nodes_to_skip;
+                     GGML_LOG_INFO("nodes_fused: %d, first: %s (%s), last: %s (%s)\n",
+@@ -5730,6 +5804,7 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
+                     GGML_LOG_ERROR("%s: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
+                 }
+                 GGML_ASSERT(ok);
++                if (np_on) g_node_prof.end(cuda_ctx->stream());
+ 
+                 if (!is_concurrent_event_active) {
+                     try_launch_concurrent_event(node);
+@@ -5737,6 +5812,14 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
+             }
+         }
+ 
++        if (g_node_prof.on && !use_cuda_graph) {
++            bool one_tok = false;
++            for (int j = cgraph->n_nodes - 1; j >= 0; --j) {
++                if (strcmp(cgraph->nodes[j]->name, "result_output") == 0) { one_tok = cgraph->nodes[j]->ne[1] == 1; break; }
++            }
++            g_node_prof.flush(one_tok || (getenv("GGML_CUDA_NODE_PROF")[0] == '2'));
++        }
++
+ #ifdef USE_CUDA_GRAPH
+         if (use_cuda_graph && cuda_graph_update_required) { // End CUDA graph capture
+             ggml_cuda_graph_launch_chunk(cuda_ctx, graph, n_chunks++);

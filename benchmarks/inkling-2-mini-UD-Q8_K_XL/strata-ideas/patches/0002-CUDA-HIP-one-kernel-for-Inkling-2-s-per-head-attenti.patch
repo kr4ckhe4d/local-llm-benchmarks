@@ -1,0 +1,592 @@
+From 96260a3e5987e4189e9267f0f2a52004353f7c01 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Mon, 23 Nov 2026 11:01:16 +0800
+Subject: [PATCH 02/10] CUDA/HIP: one kernel for Inkling 2's per-head attention
+ prep of one token
+
+Between the attention projections and flash attention a generated token ran
+six kernels per layer pass, each a few vectors of 16-128 values: Q * w ->
+L2 clip, K L2 clip, V RMS norm, SET_ROWS of K and of V into the cache, R * w
+-> L2 clip -> scale, and in the full-attention layers Q * tau and R * tau.
+They now run as one kernel with a warp per head row (24 Q, 8 K, 8 V, 24 R),
+which writes K and V straight into the F16 cache rows the SET_ROWS name (the
+row index read on the device, so it captures in a graph). The reductions
+follow the unfused kernels exactly, including the four-consecutive-values
+order of the vectorized rms_norm, so the output is bit-identical.
+
+The F32 K and V results are not written when nothing but the SET_ROWS reads
+them: unfused they die before R is computed, so the allocator may give R
+their memory, and a kernel writing all three at once would race. Outputs
+that are written are also checked against each other (fusion refused on
+overlap), besides against every input. tau is now expanded at the start of
+the graph, so none of its nodes land inside the first full-attention layer's
+pattern.
+
+R9700 Inkling-2-Mini UD-Q8_K_XL: 2,138 -> 1,876 kernels per generated token
+(all 48 layer passes fuse); tg128 53.9 -> 56.1 tok/s (+4.0%). KLD against
+the previous commit, wiki.test.raw -c 512, -ub 512 and -ub 1: 0, 100% same
+top token. New test-backend-ops case ATTN_PREP, with and without tau.
+---
+ ggml/src/ggml-cuda/attn-prep.cu  | 375 +++++++++++++++++++++++++++++++
+ ggml/src/ggml-cuda/attn-prep.cuh |  12 +
+ ggml/src/ggml-cuda/ggml-cuda.cu  |  14 +-
+ src/models/inkling2.cpp          |   2 +
+ tests/test-backend-ops.cpp       |  82 +++++++
+ 5 files changed, 484 insertions(+), 1 deletion(-)
+ create mode 100644 ggml/src/ggml-cuda/attn-prep.cu
+ create mode 100644 ggml/src/ggml-cuda/attn-prep.cuh
+
+diff --git a/ggml/src/ggml-cuda/attn-prep.cu b/ggml/src/ggml-cuda/attn-prep.cu
+new file mode 100644
+index 000000000..efaac4c1e
+--- /dev/null
++++ b/ggml/src/ggml-cuda/attn-prep.cu
+@@ -0,0 +1,375 @@
++#include "attn-prep.cuh"
++#include "ctrl-mix.cuh"
++
++namespace {
++
++struct attn_prep_nodes {
++    int q_mul = -1, q_l2 = -1, q_tau = -1;
++    int k_l2  = -1, v_rms = -1, k_set = -1, v_set = -1;
++    int r_mul = -1, r_l2 = -1, r_scale = -1, r_tau = -1;
++    int last  = -1;
++};
++
++struct attn_prep_params {
++    const float * q; const float * wq; float * qo;
++    const float * k; float * ko; char * kc; int64_t kc_s1; const void * k_idx; bool k_idx64;
++    const float * v; float * vo; char * vc; int64_t vc_s1; const void * v_idx; bool v_idx64;
++    const float * r; const float * wr; float * ro;
++    const float * tau_q; const float * tau_r;
++    float eps_q, eps_k, eps_v, eps_r, scale_r;
++    int nq, nk, nv, nr;
++    int dq, dk, dv, dr;
++};
++
++bool is_view(const ggml_tensor * t) {
++    return t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE || t->op == GGML_OP_PERMUTE || t->op == GGML_OP_TRANSPOSE;
++}
++
++// t, or the tensor t is a chain of views of
++const ggml_tensor * view_root(const ggml_tensor * t) {
++    while (t && is_view(t)) {
++        t = t->src[0];
++    }
++    return t;
++}
++
++bool f32_rows(const ggml_tensor * t, int64_t d) {
++    return t->type == GGML_TYPE_F32 && ggml_is_contiguous(t) && t->ne[0] == d;
++}
++
++// a one-element F32 per-token factor (tau)
++bool is_scalar_factor(const ggml_tensor * t) {
++    return t->type == GGML_TYPE_F32 && ggml_nelements(t) == 1;
++}
++
++// one token, one row index, a contiguous F16 destination row as wide as the stored tensor
++bool set_rows_ok(const ggml_tensor * set, const ggml_tensor * norm) {
++    const ggml_tensor * src = set->src[0];
++    const ggml_tensor * idx = set->src[1];
++    return view_root(src) == norm && ggml_is_contiguous(src) && ggml_nelements(src) == ggml_nelements(norm) &&
++        src->ne[0] == set->ne[0] && ggml_nrows(src) == 1 &&
++        set->type == GGML_TYPE_F16 && set->nb[0] == sizeof(half) &&
++        (idx->type == GGML_TYPE_I64 || idx->type == GGML_TYPE_I32) && ggml_nelements(idx) == 1;
++}
++
++// the index of node t in [i, last], or -1
++int node_index(const ggml_cgraph * cgraph, int i, int last, const ggml_tensor * t) {
++    for (int k = i; k <= last; ++k) {
++        if (cgraph->nodes[k] == t) {
++            return k;
++        }
++    }
++    return -1;
++}
++
++// norm (node k) reaches nothing but the SET_ROWS set, through views that nothing else reads: its F32 result need not
++// be written at all
++bool only_stored(const ggml_cgraph * cgraph, int i, int last, int k, const ggml_tensor * set) {
++    const ggml_tensor * norm = cgraph->nodes[k];
++    if (norm->flags & GGML_TENSOR_FLAG_OUTPUT) {
++        return false;
++    }
++    for (const ggml_tensor * t = set->src[0]; ; t = t->src[0]) {
++        const int kt = node_index(cgraph, i, last, t);
++        if (kt < 0 || ggml_node_get_use_count(cgraph, kt) != 1 || (t->flags & GGML_TENSOR_FLAG_OUTPUT)) {
++            return false;
++        }
++        if (t == norm) {
++            return true;
++        }
++    }
++}
++
++bool intermediate(const ggml_cgraph * cgraph, int k) {
++    const ggml_tensor * t = cgraph->nodes[k];
++    return ggml_node_get_use_count(cgraph, k) == 1 && !(t->flags & GGML_TENSOR_FLAG_OUTPUT);
++}
++
++bool match(const ggml_cgraph * cgraph, int i, attn_prep_nodes & m) {
++    // the compute nodes from i on, views skipped
++    int idx[11];
++    int n = 0;
++    for (int k = i; k < cgraph->n_nodes && n < 11; ++k) {
++        const ggml_tensor * t = cgraph->nodes[k];
++        if (is_view(t) && n > 0) {
++            continue;
++        }
++        if (!(t->flags & GGML_TENSOR_FLAG_COMPUTE)) {
++            return false;
++        }
++        idx[n++] = k;
++    }
++    auto node = [&](int j) -> const ggml_tensor * { return j < n ? cgraph->nodes[idx[j]] : nullptr; };
++    auto op_is = [&](int j, ggml_op op) { const ggml_tensor * t = node(j); return t && t->op == op; };
++
++    int j = 0;
++    // Q: MUL -> L2_NORM [-> MUL tau]
++    if (!op_is(j, GGML_OP_MUL) || !op_is(j + 1, GGML_OP_L2_NORM) || node(j + 1)->src[0] != node(j)) {
++        return false;
++    }
++    m.q_mul = idx[j]; m.q_l2 = idx[j + 1]; j += 2;
++    if (op_is(j, GGML_OP_MUL) && node(j)->src[0] == cgraph->nodes[m.q_l2] && is_scalar_factor(node(j)->src[1])) {
++        m.q_tau = idx[j++];
++    }
++    // K: L2_NORM, V: RMS_NORM
++    if (!op_is(j, GGML_OP_L2_NORM) || !op_is(j + 1, GGML_OP_RMS_NORM)) {
++        return false;
++    }
++    m.k_l2 = idx[j]; m.v_rms = idx[j + 1]; j += 2;
++    // SET_ROWS K, SET_ROWS V
++    if (!op_is(j, GGML_OP_SET_ROWS) || !op_is(j + 1, GGML_OP_SET_ROWS) ||
++            !set_rows_ok(node(j), cgraph->nodes[m.k_l2]) || !set_rows_ok(node(j + 1), cgraph->nodes[m.v_rms])) {
++        return false;
++    }
++    m.k_set = idx[j]; m.v_set = idx[j + 1]; j += 2;
++    // R: MUL -> L2_NORM -> SCALE [-> MUL tau]
++    if (!op_is(j, GGML_OP_MUL) || !op_is(j + 1, GGML_OP_L2_NORM) || !op_is(j + 2, GGML_OP_SCALE) ||
++            node(j + 1)->src[0] != node(j) || node(j + 2)->src[0] != node(j + 1) ||
++            ggml_get_op_params_f32(node(j + 2), 1) != 0.0f) {
++        return false;
++    }
++    m.r_mul = idx[j]; m.r_l2 = idx[j + 1]; m.r_scale = idx[j + 2]; j += 3;
++    if (op_is(j, GGML_OP_MUL) && node(j)->src[0] == cgraph->nodes[m.r_scale] && is_scalar_factor(node(j)->src[1])) {
++        m.r_tau = idx[j++];
++    }
++    if ((m.q_tau < 0) != (m.r_tau < 0)) {
++        return false;
++    }
++    m.last = idx[j - 1];
++
++    // shapes: Q and R with a weight of their own shape, K and V rows of the head size, everything F32 and contiguous
++    const ggml_tensor * qm = cgraph->nodes[m.q_mul];
++    const ggml_tensor * rm = cgraph->nodes[m.r_mul];
++    const ggml_tensor * kn = cgraph->nodes[m.k_l2];
++    const ggml_tensor * vn = cgraph->nodes[m.v_rms];
++    for (const ggml_tensor * t : { qm, (const ggml_tensor *) qm->src[0], (const ggml_tensor *) qm->src[1],
++                                   (const ggml_tensor *) cgraph->nodes[m.q_l2] }) {
++        if (!f32_rows(t, qm->ne[0]) || !ggml_are_same_shape(t, qm)) {
++            return false;
++        }
++    }
++    for (const ggml_tensor * t : { rm, (const ggml_tensor *) rm->src[0], (const ggml_tensor *) rm->src[1],
++                                   (const ggml_tensor *) cgraph->nodes[m.r_l2], (const ggml_tensor *) cgraph->nodes[m.r_scale] }) {
++        if (!f32_rows(t, rm->ne[0]) || !ggml_are_same_shape(t, rm)) {
++            return false;
++        }
++    }
++    for (const ggml_tensor * t : { kn, (const ggml_tensor *) kn->src[0], vn, (const ggml_tensor *) vn->src[0] }) {
++        if (!f32_rows(t, kn->ne[0])) {
++            return false;
++        }
++    }
++    if (!ggml_are_same_shape(kn, kn->src[0]) || !ggml_are_same_shape(vn, vn->src[0]) || !ggml_are_same_shape(kn, vn) ||
++            ggml_nrows(qm) > 1024 || ggml_nrows(rm) > 1024 || ggml_nrows(kn) > 1024) {
++        return false;
++    }
++    for (int t : { m.q_tau, m.r_tau }) {
++        const ggml_tensor * ref = t == m.q_tau ? qm : rm;
++        if (t >= 0 && (!f32_rows(cgraph->nodes[t], ref->ne[0]) || !ggml_are_same_shape(cgraph->nodes[t], ref))) {
++            return false;
++        }
++    }
++    // the steps inside a chain are read by the next step only
++    for (int t : { m.q_mul, m.r_mul, m.r_l2 }) {
++        if (!intermediate(cgraph, t)) {
++            return false;
++        }
++    }
++    if ((m.q_tau >= 0 && !intermediate(cgraph, m.q_l2)) || (m.r_tau >= 0 && !intermediate(cgraph, m.r_scale))) {
++        return false;
++    }
++    return true;
++}
++
++// the cache row a SET_ROWS writes, read on the device (the index is a graph input)
++__device__ __forceinline__ half * cache_row(char * base, const int64_t s1, const void * idx, const bool idx64) {
++    const int64_t r = idx64 ? *(const int64_t *) idx : (int64_t) *(const int32_t *) idx;
++    return (half *) (base + r*s1);
++}
++
++__global__ void attn_prep_f32(const attn_prep_params p) {
++    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
++    const int lane = threadIdx.x;
++    int row = blockIdx.x;
++
++    if (row < p.nq) {
++        const float * x = p.q  + (int64_t) row*p.dq;
++        const float * w = p.wq + (int64_t) row*p.dq;
++        float sum = 0.0f;
++        for (int c = lane; c < p.dq; c += warp_size) {
++            const float v = x[c]*w[c];
++            sum += v*v;
++        }
++        sum = warp_reduce_sum<warp_size>(sum);
++        const float s = rsqrtf(fmaxf(sum, p.eps_q*p.eps_q));
++        float * d = p.qo + (int64_t) row*p.dq;
++        for (int c = lane; c < p.dq; c += warp_size) {
++            const float o = s*(x[c]*w[c]);
++            d[c] = p.tau_q ? o*p.tau_q[0] : o;
++        }
++        return;
++    }
++    row -= p.nq;
++    if (row < p.nk) {
++        const float * x = p.k + (int64_t) row*p.dk;
++        float sum = 0.0f;
++        for (int c = lane; c < p.dk; c += warp_size) {
++            sum += x[c]*x[c];
++        }
++        sum = warp_reduce_sum<warp_size>(sum);
++        const float s = rsqrtf(fmaxf(sum, p.eps_k*p.eps_k));
++        float * d  = p.ko + (int64_t) row*p.dk;
++        half  * dc = cache_row(p.kc, p.kc_s1, p.k_idx, p.k_idx64) + (int64_t) row*p.dk;
++        for (int c = lane; c < p.dk; c += warp_size) {
++            const float o = s*x[c];
++            if (p.ko) {
++                d[c] = o;
++            }
++            dc[c] = __float2half(o);
++        }
++        return;
++    }
++    row -= p.nk;
++    if (row < p.nv) {
++        const float * x = p.v + (int64_t) row*p.dv;
++        float sum = 0.0f;
++        if (p.dv % 4 == 0 && p.dv/4 <= warp_size) {
++            // the summation order of the vectorized rms_norm kernel (four consecutive values per lane), so that the
++            // result is bit-identical to the unfused op
++            if (lane < p.dv/4) {
++                const float4 x4 = ((const float4 *) x)[lane];
++                sum = x4.x*x4.x + x4.y*x4.y + x4.z*x4.z + x4.w*x4.w;
++            }
++        } else {
++            for (int c = lane; c < p.dv; c += warp_size) {
++                sum += x[c]*x[c];
++            }
++        }
++        sum = warp_reduce_sum<warp_size>(sum);
++        const float s = rsqrtf(sum/p.dv + p.eps_v);
++        float * d  = p.vo + (int64_t) row*p.dv;
++        half  * dc = cache_row(p.vc, p.vc_s1, p.v_idx, p.v_idx64) + (int64_t) row*p.dv;
++        for (int c = lane; c < p.dv; c += warp_size) {
++            const float o = s*x[c];
++            if (p.vo) {
++                d[c] = o;
++            }
++            dc[c] = __float2half(o);
++        }
++        return;
++    }
++    row -= p.nv;
++    if (row < p.nr) {
++        const float * x = p.r  + (int64_t) row*p.dr;
++        const float * w = p.wr + (int64_t) row*p.dr;
++        float sum = 0.0f;
++        for (int c = lane; c < p.dr; c += warp_size) {
++            const float v = x[c]*w[c];
++            sum += v*v;
++        }
++        sum = warp_reduce_sum<warp_size>(sum);
++        const float s = rsqrtf(fmaxf(sum, p.eps_r*p.eps_r));
++        float * d = p.ro + (int64_t) row*p.dr;
++        for (int c = lane; c < p.dr; c += warp_size) {
++            const float o = (s*(x[c]*w[c]))*p.scale_r;
++            d[c] = p.tau_r ? o*p.tau_r[0] : o;
++        }
++    }
++}
++
++} // namespace
++
++int ggml_cuda_match_attn_prep(const ggml_cgraph * cgraph, int i, bool check_memory) {
++    attn_prep_nodes m;
++    if (!match(cgraph, i, m)) {
++        return -1;
++    }
++    if (check_memory) {
++        const ggml_tensor * qm = cgraph->nodes[m.q_mul];
++        const ggml_tensor * rm = cgraph->nodes[m.r_mul];
++        const ggml_tensor * kn = cgraph->nodes[m.k_l2];
++        const ggml_tensor * vn = cgraph->nodes[m.v_rms];
++        const ggml_tensor * qo = cgraph->nodes[m.q_tau >= 0 ? m.q_tau : m.q_l2];
++        const ggml_tensor * ro = cgraph->nodes[m.r_tau >= 0 ? m.r_tau : m.r_scale];
++        const ggml_tensor * ks = cgraph->nodes[m.k_set];
++        const ggml_tensor * vs = cgraph->nodes[m.v_set];
++        const ggml_tensor * ins[] = { qm->src[0], qm->src[1], rm->src[0], rm->src[1], kn->src[0], vn->src[0],
++                                      ks->src[1], vs->src[1],
++                                      m.q_tau >= 0 ? (const ggml_tensor *) cgraph->nodes[m.q_tau]->src[1] : nullptr,
++                                      m.r_tau >= 0 ? (const ggml_tensor *) cgraph->nodes[m.r_tau]->src[1] : nullptr };
++        // each output row is written by the warp that read its own inputs: an output may be exactly its own
++        // element-wise input, never anything else that is read
++        const ggml_tensor * own[][3] = { { qo, qm->src[0], qm->src[1] }, { ro, rm->src[0], rm->src[1] },
++                                         { kn, kn->src[0], nullptr }, { vn, vn->src[0], nullptr } };
++        for (auto & o : own) {
++            for (const ggml_tensor * in : ins) {
++                if (!in) {
++                    continue;
++                }
++                const bool mine = in == o[1] || in == o[2];
++                if (mine ? !ggml_cuda_fusion_elementwise_ok(o[0], in) : ggml_cuda_fusion_overlap(o[0], in)) {
++                    return -1;
++                }
++            }
++        }
++        // the outputs are written at the same time by different warps: the ones written must not overlap each other
++        // (the allocator may give R the memory K and V die in, since unfused those die before R is computed)
++        {
++            const bool k_out = !only_stored(cgraph, i, m.last, m.k_l2, ks);
++            const bool v_out = !only_stored(cgraph, i, m.last, m.v_rms, vs);
++            const ggml_tensor * outs[] = { qo, ro, k_out ? kn : nullptr, v_out ? vn : nullptr, ks, vs };
++            for (int a = 0; a < 6; ++a) {
++                for (int b = a + 1; b < 6; ++b) {
++                    if (outs[a] && outs[b] && ggml_cuda_fusion_overlap(outs[a], outs[b])) {
++                        return -1;
++                    }
++                }
++            }
++        }
++        // the cache rows: whole cache views, which must not overlap anything read here
++        for (const ggml_tensor * c : { ks, vs }) {
++            for (const ggml_tensor * in : ins) {
++                if (in && ggml_cuda_fusion_overlap(c, in)) {
++                    return -1;
++                }
++            }
++        }
++    }
++    return m.last;
++}
++
++void ggml_cuda_op_attn_prep(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last) {
++    attn_prep_nodes m;
++    GGML_ASSERT(match(cgraph, i, m) && m.last == last);
++
++    const ggml_tensor * qm = cgraph->nodes[m.q_mul];
++    const ggml_tensor * rm = cgraph->nodes[m.r_mul];
++    ggml_tensor       * kn = cgraph->nodes[m.k_l2];
++    ggml_tensor       * vn = cgraph->nodes[m.v_rms];
++    ggml_tensor       * qo = cgraph->nodes[m.q_tau >= 0 ? m.q_tau : m.q_l2];
++    ggml_tensor       * ro = cgraph->nodes[m.r_tau >= 0 ? m.r_tau : m.r_scale];
++    const ggml_tensor * ks = cgraph->nodes[m.k_set];
++    const ggml_tensor * vs = cgraph->nodes[m.v_set];
++
++    attn_prep_params p;
++    p.q = (const float *) qm->src[0]->data; p.wq = (const float *) qm->src[1]->data; p.qo = (float *) qo->data;
++    p.k = (const float *) kn->src[0]->data; p.ko = only_stored(cgraph, i, last, m.k_l2, ks) ? nullptr : (float *) kn->data;
++    p.v = (const float *) vn->src[0]->data; p.vo = only_stored(cgraph, i, last, m.v_rms, vs) ? nullptr : (float *) vn->data;
++    p.r = (const float *) rm->src[0]->data; p.wr = (const float *) rm->src[1]->data; p.ro = (float *) ro->data;
++    p.tau_q = m.q_tau >= 0 ? (const float *) cgraph->nodes[m.q_tau]->src[1]->data : nullptr;
++    p.tau_r = m.r_tau >= 0 ? (const float *) cgraph->nodes[m.r_tau]->src[1]->data : nullptr;
++    p.eps_q   = ggml_get_op_params_f32(cgraph->nodes[m.q_l2], 0);
++    p.eps_k   = ggml_get_op_params_f32(kn, 0);
++    p.eps_v   = ggml_get_op_params_f32(vn, 0);
++    p.eps_r   = ggml_get_op_params_f32(cgraph->nodes[m.r_l2], 0);
++    p.scale_r = ggml_get_op_params_f32(cgraph->nodes[m.r_scale], 0);
++    p.dq = (int) qm->ne[0]; p.nq = (int) ggml_nrows(qm);
++    p.dk = (int) kn->ne[0]; p.nk = (int) ggml_nrows(kn);
++    p.dv = (int) vn->ne[0]; p.nv = (int) ggml_nrows(vn);
++    p.dr = (int) rm->ne[0]; p.nr = (int) ggml_nrows(rm);
++    p.kc = (char *) ks->data; p.kc_s1 = ks->nb[1]; p.k_idx = ks->src[1]->data; p.k_idx64 = ks->src[1]->type == GGML_TYPE_I64;
++    p.vc = (char *) vs->data; p.vc_s1 = vs->nb[1]; p.v_idx = vs->src[1]->data; p.v_idx64 = vs->src[1]->type == GGML_TYPE_I64;
++
++    const int warp_size = ggml_cuda_info().devices[ctx.device].warp_size;
++    attn_prep_f32<<<p.nq + p.nk + p.nv + p.nr, warp_size, 0, ctx.stream()>>>(p);
++}
+diff --git a/ggml/src/ggml-cuda/attn-prep.cuh b/ggml/src/ggml-cuda/attn-prep.cuh
+new file mode 100644
+index 000000000..244387bc4
+--- /dev/null
++++ b/ggml/src/ggml-cuda/attn-prep.cuh
+@@ -0,0 +1,12 @@
++#include "common.cuh"
++
++// Inkling 2, one token: the per-head norms between the attention projections and flash attention as one kernel,
++// a warp per head row,
++//   MUL(q, wq) -> L2_NORM [-> MUL(., tau)]                          clipped Q
++//   L2_NORM(k)                                                     clipped K
++//   RMS_NORM(v)                                                    normalized V
++//   SET_ROWS(cache_k, K, idx), SET_ROWS(cache_v, V, idx)           both stored in the KV cache (F16)
++//   MUL(r, wr) -> L2_NORM -> SCALE [-> MUL(., tau)]                clipped R
++// in this graph order (views may sit between them). Returns the index of the last node, or -1.
++int  ggml_cuda_match_attn_prep(const ggml_cgraph * cgraph, int i, bool check_memory = true);
++void ggml_cuda_op_attn_prep(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last);
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index d1962b10f..919ce24fe 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -53,6 +53,7 @@
+ #include "ggml-cuda/softcap.cuh"
+ #include "ggml-cuda/depth-mix.cuh"
+ #include "ggml-cuda/ctrl-mix.cuh"
++#include "ggml-cuda/attn-prep.cuh"
+ #include "ggml-cuda/softmax.cuh"
+ #include "ggml-cuda/ssm-conv.cuh"
+ #include "ggml-cuda/ssm-scan.cuh"
+@@ -5479,6 +5480,14 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         return 2;
+     }
+ 
++    if (node->op == GGML_OP_MUL) {
++        const int last = ggml_cuda_match_attn_prep(cgraph, i);
++        if (last > 0) {
++            ggml_cuda_op_attn_prep(*cuda_ctx, cgraph, i, last);
++            return last - i;
++        }
++    }
++
+     if (node->op == GGML_OP_MUL) {
+         const int last = ggml_cuda_match_mul_l2_norm(cgraph, i);
+         if (last > 0) {
+@@ -5982,7 +5991,10 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
+                 } else if (op == GGML_OP_RMS_NORM) {
+                     last = ggml_cuda_match_depth_mix(cgraph, i, false) ? i + 6 : -1;
+                 } else if (op == GGML_OP_MUL) {
+-                    last = ggml_cuda_match_mul_l2_norm(cgraph, i, false);
++                    last = ggml_cuda_match_attn_prep(cgraph, i, false);
++                    if (last < 0) {
++                        last = ggml_cuda_match_mul_l2_norm(cgraph, i, false);
++                    }
+                 } else if (op == GGML_OP_MUL_MAT) {
+                     last = ggml_cuda_match_rel_bias(cgraph, i, false);
+                     if (last < 0) {
+diff --git a/src/models/inkling2.cpp b/src/models/inkling2.cpp
+index 8fe3effca..50bfc9f10 100644
+--- a/src/models/inkling2.cpp
++++ b/src/models/inkling2.cpp
+@@ -338,6 +338,8 @@ ggml_tensor * llama_model_inkling2::graph::build_inputs() {
+     tau = ggml_scale_bias(ctx0, ggml_cast(ctx0, inp_pos, GGML_TYPE_F32), 1.0f, 1.0f);
+     tau = ggml_log(ctx0, ggml_clamp(ctx0, ggml_scale(ctx0, tau, 1.0f/hparams.n_log_scale_floor), 1.0f, INFINITY));
+     tau = ggml_reshape_3d(ctx0, ggml_scale_bias(ctx0, tau, hparams.f_log_scale_alpha, 1.0f), 1, 1, n_tokens);
++    // computed first, so that nothing of it lands between the per-head ops of the first full-attention layer
++    ggml_build_forward_expand(gf, tau);
+ 
+     ggml_tensor * cur = build_inp_embd(model.tok_embd);
+ 
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 072a92bbb..9237e94a7 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -5285,6 +5285,86 @@ struct test_rel_bias_op : public test_case {
+     }
+ };
+ 
++// Inkling 2 one-token attention prep (fused by CUDA into one kernel): clipped Q [* tau], clipped K and RMS-normed V
++// stored in F16 caches, clipped and scaled R [* tau], in the graph order of the model
++struct test_attn_prep : public test_case {
++    const bool    tau;
++    const int64_t n_cells;
++
++    std::string op_desc(ggml_tensor * t) override {
++        GGML_UNUSED(t);
++        return "ATTN_PREP";
++    }
++
++    bool run_whole_graph() override { return true; }
++
++    double max_nmse_err() override {
++        return 1e-6;
++    }
++
++    std::string vars() override {
++        return VARS_TO_STR2(tau, n_cells);
++    }
++
++    test_attn_prep(bool tau = false, int64_t n_cells = 16) : tau(tau), n_cells(n_cells) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        const int64_t d = 128, n_head = 24, n_kv_head = 8, n_rel = 16;
++        const float   thr = 22.627417f, thr_r = 8.0f;
++        ggml_tensor * q   = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d, n_head, 1);
++        ggml_tensor * wq  = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d, n_head, 1);
++        ggml_tensor * k   = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d, n_kv_head, 1);
++        ggml_tensor * v   = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d, n_kv_head, 1);
++        ggml_tensor * r   = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_rel, n_head, 1);
++        ggml_tensor * wr  = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_rel, n_head, 1);
++        ggml_tensor * t   = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, 1, 1);
++        ggml_tensor * kc  = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, d*n_kv_head, n_cells);
++        ggml_tensor * vc  = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, d*n_kv_head, n_cells);
++        ggml_tensor * idx = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, 1);
++        ggml_set_name(t, "tau");
++        ggml_set_name(idx, "idx");
++
++        ggml_tensor * Q = ggml_l2_norm(ctx, ggml_mul(ctx, q, wq), thr);
++        if (tau) {
++            Q = ggml_mul(ctx, Q, t);
++        }
++        ggml_tensor * K  = ggml_l2_norm(ctx, k, thr);
++        ggml_tensor * V  = ggml_rms_norm(ctx, v, 1e-6f);
++        ggml_tensor * sk = ggml_set_rows(ctx, kc, ggml_reshape_2d(ctx, K, d*n_kv_head, 1), idx);
++        ggml_tensor * sv = ggml_set_rows(ctx, vc, ggml_reshape_2d(ctx, V, d*n_kv_head, 1), idx);
++        ggml_tensor * R  = ggml_scale(ctx, ggml_l2_norm(ctx, ggml_mul(ctx, r, wr), thr_r), thr_r);
++        if (tau) {
++            R = ggml_mul(ctx, R, t);
++        }
++        if (gf) {
++            for (ggml_tensor * x : { Q, K, V, sk, sv, R }) {
++                ggml_build_forward_expand(gf, x);
++            }
++        }
++        // everything that leaves the pattern, in one F32 vector
++        ggml_tensor * out = ggml_concat(ctx, ggml_reshape_1d(ctx, Q, ggml_nelements(Q)), ggml_reshape_1d(ctx, R, ggml_nelements(R)), 0);
++        out = ggml_concat(ctx, out, ggml_reshape_1d(ctx, ggml_cast(ctx, sk, GGML_TYPE_F32), ggml_nelements(sk)), 0);
++        out = ggml_concat(ctx, out, ggml_reshape_1d(ctx, ggml_cast(ctx, sv, GGML_TYPE_F32), ggml_nelements(sv)), 0);
++        ggml_set_name(out, "out");
++        return out;
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        std::mt19937 rng(7);
++        for (ggml_tensor * x = ggml_get_first_tensor(ctx); x != NULL; x = ggml_get_next_tensor(ctx, x)) {
++            if (strcmp(x->name, "idx") == 0) {
++                const int64_t row = std::uniform_int_distribution<int64_t>(0, n_cells - 1)(rng);
++                ggml_backend_tensor_set(x, &row, 0, sizeof(row));
++            } else if (strcmp(x->name, "tau") == 0) {
++                const float tv = 1.37f;
++                ggml_backend_tensor_set(x, &tv, 0, sizeof(tv));
++            } else if (x->op == GGML_OP_NONE) {
++                init_tensor_uniform(x, -4.0f, 4.0f);
++            }
++        }
++    }
++};
++
+ // MUL(x, w) -> L2_NORM [-> SCALE] (Inkling 2 clipped Q and R, fused by CUDA)
+ struct test_mul_l2_norm : public test_case {
+     const std::array<int64_t, 4> ne;
+@@ -12520,6 +12600,8 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     test_cases.emplace_back(new test_rel_bias_op(24, 1025, 300, 5));
+     test_cases.emplace_back(new test_rel_bias_op(24, 1025, 4096, 64));
+     test_cases.emplace_back(new test_rel_bias_op(5, 101, 300, 3, 2));
++    test_cases.emplace_back(new test_attn_prep(false));
++    test_cases.emplace_back(new test_attn_prep(true));
+ 
+     // per-channel scale, L2 norm with a clip threshold as eps, optional rescale (Inkling 2 Q and R)
+     for (bool with_scale : { false, true }) {
+-- 
+2.56.1
+

@@ -1,0 +1,368 @@
+From fcdb87dc6f05ec64cdc96ffb7e697d95a486ffab Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Mon, 23 Nov 2026 12:57:06 +0800
+Subject: [PATCH 09/10] CUDA/HIP: Inkling 2's attention output projection and
+ its conv step as one kernel
+
+The attention output projection (a BF16 product on one F32 vector) was
+followed by the one-token conv step on its result (the step's new column and
+its residual) and, now inside that step, the layer residual. A block per
+output row now computes the row with mul_mat_vec_f's arithmetic (its block
+size, reduction order and the two idle RDNA4 blocks for a multiple of 256
+rows), then that channel's conv step, state store and residual, so the
+output is bit-identical.
+
+R9700 Inkling-2-Mini UD-Q8_K_XL: 1,281 -> 1,233 kernels per generated token;
+tg128 61.0 -> 62.1 tok/s. KLD against the previous commit, wiki.test.raw
+-c 512, -ub 512 and -ub 1: 0. test-backend-ops SSM_CONV_STEP gains cases
+with a 3072 x 2304 BF16 product as the step's input.
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu |  83 ++++++++++++++++-
+ ggml/src/ggml-cuda/wo-conv.cu   | 159 ++++++++++++++++++++++++++++++++
+ ggml/src/ggml-cuda/wo-conv.cuh  |  10 ++
+ tests/test-backend-ops.cpp      |  15 ++-
+ 4 files changed, 263 insertions(+), 4 deletions(-)
+ create mode 100644 ggml/src/ggml-cuda/wo-conv.cu
+ create mode 100644 ggml/src/ggml-cuda/wo-conv.cuh
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 5434f419b..03bb49f54 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -56,6 +56,7 @@
+ #include "ggml-cuda/attn-prep.cuh"
+ #include "ggml-cuda/situ.cuh"
+ #include "ggml-cuda/ctrl-batch.cuh"
++#include "ggml-cuda/wo-conv.cuh"
+ #include "ggml-cuda/softmax.cuh"
+ #include "ggml-cuda/ssm-conv.cuh"
+ #include "ggml-cuda/ssm-scan.cuh"
+@@ -4698,6 +4699,70 @@ static int ggml_cuda_match_moe_conv_step(const ggml_cgraph * cgraph, int i, ggml
+     return end;
+ }
+ 
++// one token: a BF16 MUL_MAT on one F32 vector (Inkling 2's attention output projection) whose result goes only into the
++// one-token conv step right after it, as its new column and residual, optionally with the residual ADD after the step.
++// Returns the index of the last node, or -1; k receives the step's CONCAT and step_last its SCALE.
++static int ggml_cuda_match_wo_conv(const ggml_cgraph * cgraph, int i, int & k, int & step_last, bool check_memory = true) {
++    const ggml_tensor * mm = cgraph->nodes[i];
++    const ggml_tensor * x  = mm->src[0];
++    const ggml_tensor * y  = mm->src[1];
++    if (mm->op != GGML_OP_MUL_MAT || x->type != GGML_TYPE_BF16 || !ggml_is_contiguous(x) || x->ne[2] != 1 || x->ne[3] != 1 ||
++            x->ne[0] % 2 != 0 || y->type != GGML_TYPE_F32 || !ggml_is_contiguous(y) || ggml_nrows(y) != 1 ||
++            mm->type != GGML_TYPE_F32 || !ggml_is_contiguous(mm) || ggml_nrows(mm) != 1 ||
++            (mm->flags & GGML_TENSOR_FLAG_OUTPUT) || !(mm->flags & GGML_TENSOR_FLAG_COMPUTE)) {
++        return -1;
++    }
++    k = i + 1;
++    while (k < cgraph->n_nodes && (cgraph->nodes[k]->op == GGML_OP_RESHAPE || cgraph->nodes[k]->op == GGML_OP_TRANSPOSE ||
++                                   cgraph->nodes[k]->op == GGML_OP_VIEW || cgraph->nodes[k]->op == GGML_OP_PERMUTE)) {
++        ++k;
++    }
++    if (k >= cgraph->n_nodes || cgraph->nodes[k]->op != GGML_OP_CONCAT) {
++        return -1;
++    }
++    step_last = ggml_cuda_match_ssm_conv_step(cgraph, k, false);
++    if (step_last < 0) {
++        return -1;
++    }
++    const ggml_tensor * concat = cgraph->nodes[k];
++    const ggml_tensor * conv   = cgraph->nodes[k + 4];
++    const ggml_tensor * add    = cgraph->nodes[k + 6];
++    const ggml_tensor * cx     = concat->src[1];
++    const ggml_tensor * res    = add->src[0]->op == GGML_OP_RESHAPE && add->src[0]->src[0] == conv ? add->src[1] : add->src[0];
++    if (cx->data != mm->data || cx->nb[1] != sizeof(float) || res->data != mm->data || !ggml_is_contiguous(res) ||
++            ggml_nelements(res) != ggml_nelements(mm) || conv->src[1]->ne[1] != mm->ne[0]) {
++        return -1;
++    }
++    int last = step_last;
++    const int last2 = ggml_cuda_match_ssm_conv_step_residual(cgraph, k, step_last, false);
++    if (last2 > 0) {
++        last = last2;
++    }
++    if (check_memory) {
++        const ggml_tensor * out  = cgraph->nodes[last];
++        const ggml_tensor * cell = cgraph->nodes[k + 3]->src[1];
++        const ggml_tensor * ins[] = { x, y, concat->src[0], conv->src[1] };
++        for (const ggml_tensor * o : { (const ggml_tensor *) mm, cell, out }) {
++            for (const ggml_tensor * in : ins) {
++                if (ggml_cuda_fusion_overlap(o, in)) {
++                    return -1;
++                }
++            }
++        }
++        if (ggml_cuda_fusion_overlap(cell, mm) || ggml_cuda_fusion_overlap(cell, out) || !ggml_cuda_fusion_elementwise_ok(out, mm)) {
++            return -1;
++        }
++        if (last2 > 0) {
++            const ggml_tensor * add2 = cgraph->nodes[last2];
++            const ggml_tensor * res2 = add2->src[0] == cgraph->nodes[step_last] ? add2->src[1] : add2->src[0];
++            if (!ggml_cuda_fusion_elementwise_ok(out, res2) || ggml_cuda_fusion_overlap(mm, res2) || ggml_cuda_fusion_overlap(cell, res2)) {
++                return -1;
++            }
++        }
++    }
++    return last;
++}
++
+ // the number of consecutive MUL_MAT nodes from i, at most 4, that one mmvf launch can compute: one F32 vector, the
+ // same src1, 2D contiguous src0 of one type and row length, and no node reading another's result
+ static int ggml_cuda_mul_mat_vec_f_group(const ggml_cgraph * cgraph, int i) {
+@@ -5679,6 +5744,18 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         }
+     }
+ 
++    if (node->op == GGML_OP_MUL_MAT) {
++        int k = -1, step_last = -1;
++        const int last = ggml_cuda_match_wo_conv(cgraph, i, k, step_last);
++        if (last > 0) {
++            ggml_tensor * add2 = last > step_last ? cgraph->nodes[last] : nullptr;
++            ggml_cuda_op_wo_conv(*cuda_ctx, node, cgraph->nodes[k]->src[0], cgraph->nodes[k + 4]->src[1],
++                ggml_get_op_params_f32(cgraph->nodes[step_last], 0), cgraph->nodes[k + 3]->src[1], cgraph->nodes[step_last],
++                add2 ? (add2->src[0] == cgraph->nodes[step_last] ? add2->src[1] : add2->src[0]) : nullptr, add2);
++            return last - i;
++        }
++    }
++
+     if (node->op == GGML_OP_MUL_MAT) {
+         const int last = ggml_cuda_match_ctrl_mix(cgraph, i);
+         if (last > 0) {
+@@ -6159,7 +6236,11 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
+                         last = ggml_cuda_match_mul_l2_norm(cgraph, i, false);
+                     }
+                 } else if (op == GGML_OP_MUL_MAT) {
+-                    last = ggml_cuda_match_rel_bias(cgraph, i, false);
++                    int wk = -1, ws = -1;
++                    last = ggml_cuda_match_wo_conv(cgraph, i, wk, ws, false);
++                    if (last < 0) {
++                        last = ggml_cuda_match_rel_bias(cgraph, i, false);
++                    }
+                     if (last < 0) {
+                         last = ggml_cuda_match_ctrl_mix(cgraph, i, false);
+                     }
+diff --git a/ggml/src/ggml-cuda/wo-conv.cu b/ggml/src/ggml-cuda/wo-conv.cu
+new file mode 100644
+index 000000000..7c284ac0e
+--- /dev/null
++++ b/ggml/src/ggml-cuda/wo-conv.cu
+@@ -0,0 +1,159 @@
++#include "wo-conv.cuh"
++#include "convert.cuh"
++
++namespace {
++
++// the block size mul_mat_vec_f picks for ncols
++int mmvf_block_size(int64_t ncols, int warp_size, int cc) {
++    int64_t best = warp_size;
++    int64_t niter_best = (ncols + 2*warp_size - 1)/(2*warp_size);
++    int64_t max_bs = 256;
++    if (cc > GGML_CUDA_CC_OFFSET_AMD && cc < GGML_CUDA_CC_RDNA1) {
++        max_bs = 128;
++    }
++    for (int64_t bs = 2*warp_size; bs <= max_bs; bs += warp_size) {
++        const int64_t niter = (ncols + 2*bs - 1)/(2*bs);
++        if (niter < niter_best) {
++            niter_best = niter;
++            best = bs;
++        }
++    }
++    return (int) best;
++}
++
++struct wo_conv_params {
++    const nv_bfloat16 * x; int64_t x_s1; const float * y; int ncols2; int nrows;
++    float * mm_dst;
++    const float * past; int64_t past_s1; const float * w; int64_t w_s1; float scale;
++    float * state; float * dst; const float * res2; float * dst2;
++};
++
++template <int block_size, int d_conv>
++__global__ void wo_conv_f32(const wo_conv_params p) {
++    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
++    const int row = blockIdx.x;
++    if (row >= p.nrows) {
++        return; // the idle blocks of the RDNA4 grid padding
++    }
++    const int tid = threadIdx.x;
++
++    // mul_mat_vec_f, one BF16 row and one F32 vector (the HIP path)
++    const int    * x2 = (const int *) (p.x + row*p.x_s1);
++    const float2 * y2 = (const float2 *) p.y;
++
++    __shared__ float buf_iw[warp_size];
++    if (block_size > warp_size) {
++        if (tid < warp_size) {
++            buf_iw[tid] = 0.0f;
++        }
++        __syncthreads();
++    }
++    float sumf = 0.0f;
++    for (int col2 = tid; col2 < p.ncols2; col2 += block_size) {
++        const int    tmpx = x2[col2];
++        const float2 tmpy = y2[col2];
++        const float tmpx0 = ggml_cuda_cast<float>(reinterpret_cast<const nv_bfloat16 *>(&tmpx)[0]);
++        const float tmpx1 = ggml_cuda_cast<float>(reinterpret_cast<const nv_bfloat16 *>(&tmpx)[1]);
++        ggml_cuda_mad(sumf, tmpx0, tmpy.x);
++        ggml_cuda_mad(sumf, tmpx1, tmpy.y);
++    }
++    sumf = warp_reduce_sum<warp_size>(sumf);
++    if (block_size > warp_size) {
++        buf_iw[tid/warp_size] = sumf;
++        __syncthreads();
++        if (tid < warp_size) {
++            sumf = buf_iw[tid];
++            sumf = warp_reduce_sum<warp_size>(sumf);
++        }
++    }
++    if (tid != 0) {
++        return;
++    }
++
++    // ssm_conv_step_f32 for this channel, the product as its new column and its residual
++    const int   c = row;
++    const float m = sumf;
++    p.mm_dst[c] = m;
++
++    float win[d_conv];
++#pragma unroll
++    for (int k = 0; k < d_conv - 1; ++k) {
++        win[k] = p.past[c*p.past_s1 + k];
++    }
++    win[d_conv - 1] = m;
++
++    float s = 0.0f;
++#pragma unroll
++    for (int k = 0; k < d_conv; ++k) {
++        s += win[k] * p.w[c*p.w_s1 + k];
++    }
++    const float out = (s + m) * p.scale;
++
++#pragma unroll
++    for (int k = 0; k < d_conv - 1; ++k) {
++        p.state[c*(d_conv - 1) + k] = win[k + 1];
++    }
++    if (p.dst2) {
++        p.dst2[c] = p.res2[c] + out;
++    } else {
++        p.dst[c] = out;
++    }
++}
++
++template <int block_size>
++void launch_bs(const wo_conv_params & p, int d_conv, dim3 grid, cudaStream_t stream) {
++    switch (d_conv) {
++        case 2: wo_conv_f32<block_size, 2><<<grid, block_size, 0, stream>>>(p); break;
++        case 3: wo_conv_f32<block_size, 3><<<grid, block_size, 0, stream>>>(p); break;
++        case 4: wo_conv_f32<block_size, 4><<<grid, block_size, 0, stream>>>(p); break;
++        default: GGML_ABORT("wo_conv: conv width %d", d_conv);
++    }
++}
++
++} // namespace
++
++void ggml_cuda_op_wo_conv(ggml_backend_cuda_context & ctx, const ggml_tensor * mm,
++        const ggml_tensor * past, const ggml_tensor * conv_w, float conv_scale, ggml_tensor * state_cell,
++        ggml_tensor * dst, const ggml_tensor * res2, ggml_tensor * dst2) {
++    const ggml_tensor * x = mm->src[0];
++    const ggml_tensor * y = mm->src[1];
++
++    wo_conv_params p;
++    p.x       = (const nv_bfloat16 *) x->data;
++    p.x_s1    = x->nb[1]/ggml_type_size(x->type);
++    p.y       = (const float *) y->data;
++    p.ncols2  = (int) (x->ne[0]/2);
++    p.nrows   = (int) x->ne[1];
++    p.mm_dst  = (float *) mm->data;
++    p.past    = (const float *) past->data;
++    p.past_s1 = past->nb[1]/sizeof(float);
++    p.w       = (const float *) conv_w->data;
++    p.w_s1    = conv_w->nb[1]/sizeof(float);
++    p.scale   = conv_scale;
++    p.state   = (float *) state_cell->data;
++    p.dst     = (float *) dst->data;
++    p.res2    = dst2 ? (const float *) res2->data : nullptr;
++    p.dst2    = dst2 ? (float *) dst2->data : nullptr;
++
++    const int dev = ctx.device;
++    const int cc  = ggml_cuda_info().devices[dev].cc;
++    const int bs  = mmvf_block_size(x->ne[0], ggml_cuda_info().devices[dev].warp_size, cc);
++    dim3 grid(p.nrows);
++    // mul_mat_vec_f's RDNA4 padding: a grid of a multiple of 256 blocks runs about twice as slow without it
++    if (p.nrows % 256 == 0 && GGML_CUDA_CC_IS_RDNA4(cc)) {
++        grid.x += 2;
++    }
++    const int d_conv = (int) conv_w->ne[0];
++    cudaStream_t stream = ctx.stream();
++    switch (bs) {
++        case  32: launch_bs< 32>(p, d_conv, grid, stream); break;
++        case  64: launch_bs< 64>(p, d_conv, grid, stream); break;
++        case  96: launch_bs< 96>(p, d_conv, grid, stream); break;
++        case 128: launch_bs<128>(p, d_conv, grid, stream); break;
++        case 160: launch_bs<160>(p, d_conv, grid, stream); break;
++        case 192: launch_bs<192>(p, d_conv, grid, stream); break;
++        case 224: launch_bs<224>(p, d_conv, grid, stream); break;
++        case 256: launch_bs<256>(p, d_conv, grid, stream); break;
++        default: GGML_ABORT("wo_conv: block size %d", bs);
++    }
++}
+diff --git a/ggml/src/ggml-cuda/wo-conv.cuh b/ggml/src/ggml-cuda/wo-conv.cuh
+new file mode 100644
+index 000000000..7efbae55b
+--- /dev/null
++++ b/ggml/src/ggml-cuda/wo-conv.cuh
+@@ -0,0 +1,10 @@
++#include "common.cuh"
++
++// Inkling 2, one token: the attention output projection (a BF16 MUL_MAT on one F32 vector) followed by the one-token
++// conv step on its result (the step's new column and its residual), optionally with the layer residual ADD after the
++// step, as one kernel: a block per output row with the arithmetic of mul_mat_vec_f (same block size, same reduction,
++// the same two idle blocks on RDNA4), then that row's conv step. The matcher lives in ggml-cuda.cu beside the conv-step
++// matchers it builds on.
++void ggml_cuda_op_wo_conv(ggml_backend_cuda_context & ctx, const ggml_tensor * mm,
++        const ggml_tensor * past, const ggml_tensor * conv_w, float conv_scale, ggml_tensor * state_cell,
++        ggml_tensor * dst, const ggml_tensor * res2, ggml_tensor * dst2);
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index b0a177b78..ab6f92efa 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -5643,6 +5643,7 @@ struct test_ssm_conv_step : public test_case {
+     const int64_t ch_offs; // channel offset of the history view in a wider history
+     const bool residual;   // a residual ADD after the step (Inkling 2 layer residual), fused into the step by CUDA
+     const int  n_moe;      // > 0: the step's input is a weighted sum of n_moe expert outputs, fused in as well
++    const int64_t wo_k;    // > 0: the step's input is a BF16 product on a wo_k vector, fused in as well
+ 
+     std::string op_desc(ggml_tensor * t) override {
+         GGML_UNUSED(t);
+@@ -5652,11 +5653,15 @@ struct test_ssm_conv_step : public test_case {
+     bool run_whole_graph() override { return true; }
+ 
+     std::string vars() override {
+-        return VARS_TO_STR5(n_conv, nc, ch_offs, residual, n_moe);
++        return VARS_TO_STR6(n_conv, nc, ch_offs, residual, n_moe, wo_k);
+     }
+ 
+-    test_ssm_conv_step(int64_t n_conv, int64_t nc, int64_t ch_offs, bool residual = false, int n_moe = 0)
+-        : n_conv(n_conv), nc(nc), ch_offs(ch_offs), residual(residual), n_moe(n_moe) {}
++    double max_nmse_err() override {
++        return wo_k > 0 ? 5e-4 : 1e-7; // a BF16 product: the CPU rounds its activations to BF16, the GPU does not
++    }
++
++    test_ssm_conv_step(int64_t n_conv, int64_t nc, int64_t ch_offs, bool residual = false, int n_moe = 0, int64_t wo_k = 0)
++        : n_conv(n_conv), nc(nc), ch_offs(ch_offs), residual(residual), n_moe(n_moe), wo_k(wo_k) {}
+ 
+     ggml_tensor * build_graph(ggml_context * ctx) override {
+         ggml_tensor * hist  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_conv - 1, nc + 2*ch_offs);
+@@ -5684,6 +5689,10 @@ struct test_ssm_conv_step : public test_case {
+                     ggml_build_forward_expand(gf, cur);
+                 }
+             }
++        } else if (wo_k > 0) {
++            ggml_tensor * wo = ggml_new_tensor_2d(ctx, GGML_TYPE_BF16, wo_k, nc);
++            ggml_tensor * v  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, wo_k, 1);
++            cur = ggml_mul_mat(ctx, wo, v);
+         } else {
+             cur = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nc, 1);
+         }
+-- 
+2.56.1
+

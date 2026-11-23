@@ -1,0 +1,280 @@
+From 56659080308f257b95769402424ab13fb5eb3c36 Mon Sep 17 00:00:00 2001
+From: Nipuna H Herath <nipunaherath@hotmail.com>
+Date: Mon, 23 Nov 2026 12:09:03 +0800
+Subject: [PATCH 06/10] CUDA/HIP: the RMS norm after an Inkling 2 depth mix
+ inside the mix kernel
+
+The one-token depth mix (attention over the stored block outputs) is one
+1024-thread block. When the next node is RMS_NORM [-> MUL(w)] of its output
+(the attention and FFN input norms of the passes without loop controllers,
+and the controllers' rms_norm(cur) in the looped ones), the same block now
+does it after a barrier: each thread re-reads its float4 of the mixed vector
+and repeats the vectorized rms_norm kernel (1024 threads, the same
+block_reduce), so the result is bit-identical. It fuses only for one query
+and a width rms_norm runs that way (513-1024 float4s), with the same 16-byte
+alignment checks.
+
+R9700 Inkling-2-Mini UD-Q8_K_XL: 1,412 -> 1,329 kernels per generated token;
+tg128 59.9 -> 60.6 tok/s (+1.1%). KLD against the previous commit,
+wiki.test.raw -c 512, -ub 512 and -ub 1: 0. test-backend-ops DEPTH_MIX
+gains norm and norm*w cases.
+---
+ ggml/src/ggml-cuda/depth-mix.cu  | 115 ++++++++++++++++++++++++++++++-
+ ggml/src/ggml-cuda/depth-mix.cuh |   8 ++-
+ ggml/src/ggml-cuda/ggml-cuda.cu  |  13 +++-
+ tests/test-backend-ops.cpp       |  18 ++++-
+ 4 files changed, 147 insertions(+), 7 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/depth-mix.cu b/ggml/src/ggml-cuda/depth-mix.cu
+index ddcc597a0..e7c86047f 100644
+--- a/ggml/src/ggml-cuda/depth-mix.cu
++++ b/ggml/src/ggml-cuda/depth-mix.cu
+@@ -8,7 +8,8 @@ template <int block_size>
+ static __global__ void depth_mix_f32(
+         const float * __restrict__ blocks, const int64_t blocks_s1, const int n_blocks,
+         const float * __restrict__ cur, const float * __restrict__ query, const int64_t query_s1, const int nq,
+-        const float eps, const float scale, float * __restrict__ dst, const int64_t dst_s1, const int ne) {
++        const float eps, const float scale, float * __restrict__ dst, const int64_t dst_s1, const int ne,
++        float * dst2, const float * w2, const float eps2) {
+     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+     constexpr int n_warps   = block_size/warp_size;
+     constexpr int max_vals  = 1 + DEPTH_MIX_MAX_STATES*DEPTH_MIX_MAX_QUERIES;
+@@ -112,6 +113,34 @@ static __global__ void depth_mix_f32(
+             }
+         }
+     }
++
++    // the RMS_NORM [-> MUL] that follows (one query): the vectorized rms_norm kernel with 1024 threads, one float4
++    // per thread and its block_reduce, so the result is bit-identical (the host checks that rms_norm would take
++    // exactly that path)
++    if (dst2) {
++        __syncthreads();
++        __shared__ float s_sum[32];
++        const int n4 = ne/4;
++        float4 xv = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
++        float tmp = 0.0f;
++        if (tid < n4) {
++            xv = ((const float4 *) dst)[tid];
++            tmp += xv.x*xv.x + xv.y*xv.y + xv.z*xv.z + xv.w*xv.w;
++        }
++        tmp = block_reduce<block_reduce_method::SUM, block_size>(tmp, s_sum);
++        const float sc = rsqrtf(tmp / ne + eps2);
++        if (tid < n4) {
++            float4 r = make_float4(sc*xv.x, sc*xv.y, sc*xv.z, sc*xv.w);
++            if (w2) {
++                const float4 m = ((const float4 *) w2)[tid];
++                r.x *= m.x;
++                r.y *= m.y;
++                r.z *= m.z;
++                r.w *= m.w;
++            }
++            ((float4 *) dst2)[tid] = r;
++        }
++    }
+ }
+ 
+ bool ggml_cuda_match_depth_mix(const ggml_cgraph * cgraph, int i, bool check_memory) {
+@@ -178,7 +207,87 @@ bool ggml_cuda_match_depth_mix(const ggml_cgraph * cgraph, int i, bool check_mem
+     return true;
+ }
+ 
+-void ggml_cuda_op_depth_mix(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i) {
++static bool depth_mix_is_view(const ggml_tensor * t) {
++    return t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE || t->op == GGML_OP_PERMUTE || t->op == GGML_OP_TRANSPOSE;
++}
++
++static bool depth_mix_aligned(const ggml_tensor * t) {
++    return ((uintptr_t) t->data) % 16 == 0;
++}
++
++int ggml_cuda_match_depth_mix_norm(const ggml_cgraph * cgraph, int i, bool check_memory) {
++    if (!ggml_cuda_match_depth_mix(cgraph, i, check_memory)) {
++        return -1;
++    }
++    const ggml_tensor * m2 = cgraph->nodes[i + 6];
++    const int64_t ne = m2->ne[0];
++    // one query, and a width for which rms_norm runs its vectorized 1024-thread kernel (513..1024 float4s)
++    if (m2->ne[1] != 1 || ne % 4 != 0 || ne/4 <= 512 || ne/4 > 1024) {
++        return -1;
++    }
++    int k = i + 7;
++    while (k < cgraph->n_nodes && depth_mix_is_view(cgraph->nodes[k])) {
++        ++k;
++    }
++    if (k >= cgraph->n_nodes) {
++        return -1;
++    }
++    const ggml_tensor * rn = cgraph->nodes[k];
++    const ggml_tensor * v  = rn->src[0];
++    while (v && v != m2 && depth_mix_is_view(v)) {
++        v = v->src[0];
++    }
++    if (rn->op != GGML_OP_RMS_NORM || v != m2 || rn->src[0]->data != m2->data || rn->src[0]->type != GGML_TYPE_F32 ||
++            !ggml_is_contiguous(rn->src[0]) || ggml_nelements(rn->src[0]) != ne || rn->src[0]->ne[0] != ne ||
++            rn->type != GGML_TYPE_F32 || !ggml_is_contiguous(rn) || !(rn->flags & GGML_TENSOR_FLAG_COMPUTE)) {
++        return -1;
++    }
++    int last = k;
++    int k2 = k + 1;
++    while (k2 < cgraph->n_nodes && depth_mix_is_view(cgraph->nodes[k2])) {
++        ++k2;
++    }
++    if (k2 < cgraph->n_nodes) {
++        const ggml_tensor * mul = cgraph->nodes[k2];
++        if (mul->op == GGML_OP_MUL && mul->src[0] == rn && mul->src[1]->type == GGML_TYPE_F32 &&
++                ggml_is_contiguous(mul->src[1]) && ggml_nelements(mul->src[1]) == ne && mul->src[1]->ne[0] == ne &&
++                mul->type == GGML_TYPE_F32 && ggml_is_contiguous(mul) && ggml_are_same_shape(mul, rn) &&
++                depth_mix_aligned(mul->src[1]) && ggml_node_get_use_count(cgraph, k) == 1 &&
++                !(rn->flags & GGML_TENSOR_FLAG_OUTPUT) && (mul->flags & GGML_TENSOR_FLAG_COMPUTE)) {
++            last = k2;
++        }
++    }
++    const ggml_tensor * out = cgraph->nodes[last];
++    if (!depth_mix_aligned(m2) || !depth_mix_aligned(out)) {
++        return -1;
++    }
++    if (check_memory) {
++        const ggml_tensor * norm  = cgraph->nodes[i];
++        const ggml_tensor * cs    = cgraph->nodes[i + 3];
++        const ggml_tensor * m1    = cgraph->nodes[i + 4];
++        // written after a barrier, each thread at the float4 it read: only the mix output (or the weight) may be
++        // exactly the same memory
++        for (const ggml_tensor * src : { (const ggml_tensor *) cs->src[0], (const ggml_tensor *) m1->src[1],
++                                         (const ggml_tensor *) norm->src[0] }) {
++            if (ggml_cuda_fusion_overlap(out, src)) {
++                return -1;
++            }
++        }
++        if (!ggml_cuda_fusion_elementwise_ok(out, m2) || (last != k && !ggml_cuda_fusion_elementwise_ok(out, cgraph->nodes[last]->src[1]))) {
++            return -1;
++        }
++    }
++    return last;
++}
++
++void ggml_cuda_op_depth_mix_norm(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last) {
++    const ggml_tensor * out = cgraph->nodes[last];
++    const ggml_tensor * rn  = out->op == GGML_OP_MUL ? out->src[0] : out;
++    ggml_cuda_op_depth_mix(ctx, cgraph, i, (float *) out->data, out->op == GGML_OP_MUL ? (const float *) out->src[1]->data : nullptr,
++                           ggml_get_op_params_f32(rn, 0));
++}
++
++void ggml_cuda_op_depth_mix(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, float * dst2, const float * w2, float eps2) {
+     const ggml_tensor * norm   = cgraph->nodes[i];
+     const ggml_tensor * cs     = cgraph->nodes[i + 3];
+     const ggml_tensor * m1     = cgraph->nodes[i + 4];
+@@ -196,5 +305,5 @@ void ggml_cuda_op_depth_mix(ggml_backend_cuda_context & ctx, const ggml_cgraph *
+     depth_mix_f32<block_size><<<1, block_size, 0, ctx.stream()>>>(
+         (const float *) blocks->data, blocks->nb[1]/sizeof(float), (int) blocks->ne[1],
+         (const float *) cur->data, (const float *) query->data, query->nb[1]/sizeof(float), (int) query->ne[1],
+-        eps, scale, (float *) m2->data, m2->nb[1]/sizeof(float), ne);
++        eps, scale, (float *) m2->data, m2->nb[1]/sizeof(float), ne, dst2, w2, eps2);
+ }
+diff --git a/ggml/src/ggml-cuda/depth-mix.cuh b/ggml/src/ggml-cuda/depth-mix.cuh
+index a341e4f46..b6e840cd3 100644
+--- a/ggml/src/ggml-cuda/depth-mix.cuh
++++ b/ggml/src/ggml-cuda/depth-mix.cuh
+@@ -7,4 +7,10 @@
+ // RMS_NORM(cur) -> TRANSPOSE -> CONCAT(blocks_t, cur_t) -> CONCAT(blocks, cur) -> MUL_MAT(states, query) -> SOFT_MAX
+ // -> MUL_MAT(states_t, scores). Returns true and runs it as one kernel when node i starts that pattern.
+ bool ggml_cuda_match_depth_mix(const ggml_cgraph * cgraph, int i, bool check_memory = true);
+-void ggml_cuda_op_depth_mix(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i);
++void ggml_cuda_op_depth_mix(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i,
++                            float * dst2 = nullptr, const float * w2 = nullptr, float eps2 = 0.0f);
++
++// the depth mix (one query) followed by RMS_NORM [-> MUL(w)] of its output, the norm done by the same kernel with the
++// arithmetic of the vectorized rms_norm. Returns the index of the last node, or -1.
++int  ggml_cuda_match_depth_mix_norm(const ggml_cgraph * cgraph, int i, bool check_memory = true);
++void ggml_cuda_op_depth_mix_norm(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i, int last);
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index cf51107c2..f948552d2 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -5543,6 +5543,14 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         }
+     }
+ 
++    if (node->op == GGML_OP_RMS_NORM) {
++        const int last = ggml_cuda_match_depth_mix_norm(cgraph, i);
++        if (last > 0) {
++            ggml_cuda_op_depth_mix_norm(*cuda_ctx, cgraph, i, last);
++            return last - i;
++        }
++    }
++
+     if (node->op == GGML_OP_RMS_NORM && ggml_cuda_match_depth_mix(cgraph, i)) {
+         ggml_cuda_op_depth_mix(*cuda_ctx, cgraph, i);
+         return 6;
+@@ -6058,7 +6066,10 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
+                         }
+                     }
+                 } else if (op == GGML_OP_RMS_NORM) {
+-                    last = ggml_cuda_match_depth_mix(cgraph, i, false) ? i + 6 : -1;
++                    last = ggml_cuda_match_depth_mix_norm(cgraph, i, false);
++                    if (last < 0) {
++                        last = ggml_cuda_match_depth_mix(cgraph, i, false) ? i + 6 : -1;
++                    }
+                 } else if (op == GGML_OP_MUL) {
+                     last = ggml_cuda_match_attn_prep(cgraph, i, false);
+                     if (last < 0) {
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 6487fd47a..f68c67e73 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -5563,6 +5563,7 @@ struct test_depth_mix : public test_case {
+     const int64_t ne;
+     const int64_t n_blocks;
+     const int64_t nq;
++    const int norm; // 0: none, 1: RMS_NORM of the output, 2: RMS_NORM * w (fused into the mix by CUDA, one query)
+ 
+     std::string op_desc(ggml_tensor * t) override {
+         GGML_UNUSED(t);
+@@ -5576,10 +5577,10 @@ struct test_depth_mix : public test_case {
+     }
+ 
+     std::string vars() override {
+-        return VARS_TO_STR3(ne, n_blocks, nq);
++        return VARS_TO_STR4(ne, n_blocks, nq, norm);
+     }
+ 
+-    test_depth_mix(int64_t ne, int64_t n_blocks, int64_t nq) : ne(ne), n_blocks(n_blocks), nq(nq) {}
++    test_depth_mix(int64_t ne, int64_t n_blocks, int64_t nq, int norm = 0) : ne(ne), n_blocks(n_blocks), nq(nq), norm(norm) {}
+ 
+     ggml_tensor * build_graph(ggml_context * ctx) override {
+         ggml_tensor * blocks_s = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, ne, n_blocks, 1);
+@@ -5599,6 +5600,13 @@ struct test_depth_mix : public test_case {
+         scores = ggml_soft_max_ext(ctx, scores, nullptr, 1.0f/sqrtf(ne), 0.0f);
+ 
+         ggml_tensor * out = ggml_mul_mat(ctx, states_t, scores);
++        if (norm) {
++            out = ggml_rms_norm(ctx, ggml_view_2d(ctx, out, ne, 1, out->nb[1], 0), 1e-6f);
++            if (norm == 2) {
++                ggml_tensor * w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, ne);
++                out = ggml_mul(ctx, out, w);
++            }
++        }
+         ggml_set_name(out, "out");
+         return out;
+     }
+@@ -12745,12 +12753,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+     test_cases.emplace_back(new test_depth_mix(1000, 3, 2));
++    for (int n_blocks : { 1, 3 }) {
++        test_cases.emplace_back(new test_depth_mix(2304, n_blocks, 1, 1));
++        test_cases.emplace_back(new test_depth_mix(2304, n_blocks, 1, 2));
++    }
+ 
+     // one token of a short convolution with its state (Inkling 2)
+     for (int64_t n_conv : {2, 3, 4}) {
+         test_cases.emplace_back(new test_ssm_conv_step(n_conv, 1024, 0));
+         test_cases.emplace_back(new test_ssm_conv_step(n_conv, 2304, 1024));
+         test_cases.emplace_back(new test_ssm_conv_step(n_conv, 384, 7));
++        test_cases.emplace_back(new test_ssm_conv_step(n_conv, 2304, 0, true));
++        test_cases.emplace_back(new test_ssm_conv_step(n_conv, 384, 7, true));
+     }
+ 
+     // matrix-vector products on one vector, in one launch (Inkling 2 Q/gate/R/sink, K/V, loop controllers)
+-- 
+2.56.1
+
