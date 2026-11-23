@@ -282,3 +282,30 @@ against 78. Strata Q6 does not load here: its experts do not fit the R9700,
 and the RAM copy it falls back to swapped 27 GB on the 31 GB box. Strata
 only drafts when the request turns penalties off (`presence_penalty: 0`);
 otherwise the model card's 1.5 applies and it decodes at 122 tok/s.
+
+## Inkling-2-Mini against llama.cpp — 2026-11-23
+
+Strata 0.2.20 (engine 0.1.66, its own `strata-inkling` engine) against the router's llama.cpp db75ce3dc
+(upstream + inkling2-speedups), the same Unsloth UD-Q8_K_XL GGUF, R9700 alone, 128K context, client-timed
+([benchmarks/raw/engine-ab-inkling](benchmarks/raw/engine-ab-inkling/README.md)):
+
+| tok/s | Empty context (code / prose / explain) | 33K prefill / decode | 125K prefill / decode |
+|---|---|---|---|
+| llama.cpp Q8 | 53.1 / 53.2 / 53.3 | 510 / 46.6 | 407 / **34.8** |
+| **Strata Q8** | **67.8 / 68.5 / 67.8** | **643 / 54.6** | **541** / 34.2 |
+| Strata Q8 + DSpark | 86.4 / 62.4 / 66.9 | 641 / 33.7 | 540 / 14.7 |
+| Strata SQ-20 (deleted) | 69.5 / 69.7 / 69.5 | 648 / 55.7 | 544 / 34.6 |
+
+Strata is 17-33% faster everywhere but 125K decode, where the two meet. DSpark pays only on code and costs
+more than half the decode speed at 125K. SQ-20 runs like the Q8 GGUF.
+
+**But Strata's answers are worse:** it starts every tool-less reply with `<|message_model|><|content_text|>`, so
+Inkling never gets its short think at effort 0. On llama.cpp, same file and temperature 1.0, that prefill alone
+took refusals of a harmless story prompt from 0 of 10 to 6 of 10 (Strata itself: 7 of 12). Strata also ignores
+`temperature: 0`. Setup: `terminal/strata-inkling-2-mini-ud-q8_k_xl.json` (DSpark, `--dspark` added by hand) and
+`-nodraft.json`, port 8097; not wired into `switch-model.sh`.
+
+Seven of Strata's ideas tried in llama.cpp the same day (branch `inkling2-strata-ideas`, now the router's build,
+[details](inkling-strata-vs-llama.md#tried-on-a-branch)): llama-bench generation 54.0 -> 62.1 tok/s; through the server
+53.2 -> 59.8, a 33K prompt 510 -> 716 (Strata 643), 125K 407 -> 532 / 34.8 -> 37.8 (Strata 541 / 34.2); output
+bit-identical.

@@ -3,7 +3,7 @@
 other server), timed on the client so both engines are measured the same way.
 
   python3 engine-ab.py --url http://127.0.0.1:8099 --label NAME --out results.jsonl \
-      [--key KEY] [--docs DIR] [--gen-reps 3] [--depths 32000,120000] [--depth-reps 2]
+      [--key KEY] [--docs DIR] [--gen-reps 3] [--depths 32000,120000] [--depth-reps 2] [--body-extra JSON]
 
 Per request: time to first streamed token (prefill), then decode rate over the
 rest = (output tokens - 1) / (t_last - t_first). Output tokens are counted with
@@ -36,6 +36,9 @@ def ntok(text, gguf):
     return len(json.loads(line))
 
 
+BODY_EXTRA = {}  # --body-extra: merged into every request, e.g. Inkling's thinking switch
+
+
 def stream(url, key, messages, max_tokens):
     body = {"model": "x", "messages": messages, "max_tokens": max_tokens, "temperature": 0.0,
             # penalties sent as off: Strata fills what a request leaves out from the model card (Qwen3.6:
@@ -43,6 +46,7 @@ def stream(url, key, messages, max_tokens):
             "presence_penalty": 0.0, "frequency_penalty": 0.0, "repetition_penalty": 1.0,
             "stream": True, "stream_options": {"include_usage": True}, "cache_prompt": False,
             "chat_template_kwargs": {"enable_thinking": False}}
+    body.update(BODY_EXTRA)
     h = {"Content-Type": "application/json"}
     if key:
         h["Authorization"] = "Bearer " + key
@@ -78,7 +82,11 @@ def main():
     ap.add_argument("--gguf", required=True); ap.add_argument("--docs", default="")
     ap.add_argument("--gen-reps", type=int, default=3); ap.add_argument("--gen-max", type=int, default=1024)
     ap.add_argument("--depths", default=""); ap.add_argument("--depth-reps", type=int, default=2)
+    ap.add_argument("--body-extra", default="", help="JSON merged into each request body; it replaces keys, so "
+                    "'{\"chat_template_kwargs\": {\"reasoning_effort\": 0}}' swaps Qwen's thinking switch for Inkling's")
     a = ap.parse_args()
+    if a.body_extra:
+        BODY_EXTRA.update(json.loads(a.body_extra))
     out = open(a.out, "a")
 
     def record(kind, name, rep, prompt_tokens, res):
