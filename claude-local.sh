@@ -18,7 +18,7 @@ set -uo pipefail
 ROUTER="${ROUTER:-http://CachyPC.local:8090}"
 # Qwen3.8-27B Q6 since 2026-10-12, when Gemma 4 26B was removed: as good as Q8
 # under Claude Code and 12% faster. Text-only, so Read on images is denied
-# below; gemma4-31B-q6-vision-128k is the preset that reads screenshots. See
+# below; gemma4-12B-bf16-vision-256k is the preset that reads screenshots. See
 # claude-harness.md, "Choosing a model".
 DEFAULT_MODEL="${CLAUDE_LOCAL_MODEL:-qwen3.8-27B-q6-128k}"
 
