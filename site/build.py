@@ -26,7 +26,7 @@ ASSETS = SITE / "assets"
 
 TEXT_EXT = {".txt", ".log", ".py", ".sh", ".json", ".jsonl", ".md", ".ini", ".c", ".template",
             ".jinja", ".csv", ".tsv", ".diff", ".patch", ".yaml", ".yml", ".toml", ".lock", "",
-            ".cpp", ".hpp", ".h", ".hip", ".cu", ".cmake", ".bat", ".html", ".js", ".css"}
+            ".cpp", ".hpp", ".h", ".hip", ".cu", ".cmake", ".bat", ".html", ".js", ".css", ".ts", ".mjs"}
 IMG_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
 TOP_LEVEL_EXT = {".sh", ".py", ".ini", ".template", ".jinja"}
 MAX_TEXT = 4_000_000
@@ -105,6 +105,53 @@ def project_files(proj):
     files = [p for p in files if not p.startswith("site/") and "__pycache__" not in p]
     tracked = set(p for p in git(proj, "ls-files", "-z", "--cached").split("\0") if p)
     return files, tracked
+
+
+# ---------------------------------------------------------------- live demos
+# Browser apps served as-is under dist/demo/<id>/, exported from a fixed commit of their own repo so the
+# page shows exactly what the write-up describes. Only the files the app imports are copied (three.js is
+# vendored there at 17 MB; the scene needs ~2.5 MB of it).
+DEMOS = [
+    {"id": "pagoda", "root": HOME / "code/pi-test", "commit": "eb20112", "repo": "kr4ckhe4d/qwen3.8-27B-q8-pagoda",
+     "entry": ["index.html", "src/main.js"],
+     "imports": {"three": "vendor/three/build/three.module.js", "three/addons/": "vendor/three/examples/jsm/"},
+     "stats": "benchmarks/pi-pagoda/run-stats.json"},
+]
+IMPORT_RE = re.compile(r"""(?:\bimport|\bexport)\s[^'"]*?\sfrom\s*['"]([^'"]+)['"]|\bimport\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)""")
+
+
+def export_demo(demo):
+    """Copy a demo's entry files plus everything they import (transitively) into dist/demo/<id>/."""
+    out = DIST / "demo" / demo["id"]
+    show = lambda path: subprocess.run(["git", "show", f"{demo['commit']}:{path}"], cwd=demo["root"],
+                                       capture_output=True, check=True).stdout
+    todo, seen = list(demo["entry"]), set()
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        data = show(path)
+        (out / path).parent.mkdir(parents=True, exist_ok=True)
+        (out / path).write_bytes(data)
+        if not path.endswith(".js"):
+            continue
+        for m in IMPORT_RE.finditer(data.decode("utf-8", "replace")):
+            spec = next(g for g in m.groups() if g)
+            if spec in demo["imports"]:
+                target = demo["imports"][spec]
+            elif any(spec.startswith(k) for k in demo["imports"] if k.endswith("/")):
+                k = next(k for k in demo["imports"] if k.endswith("/") and spec.startswith(k))
+                target = demo["imports"][k] + spec[len(k):]
+            elif spec.startswith("."):
+                target = os.path.normpath(os.path.join(os.path.dirname(path), spec))
+            else:
+                continue  # bare specifier with no mapping: the browser would fail too
+            todo.append(target)
+    size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
+    stats = json.loads((ROOT / demo["stats"]).read_text()) if (ROOT / demo["stats"]).exists() else None
+    return {"id": demo["id"], "url": f"demo/{demo['id']}/index.html", "commit": demo["commit"], "repo": demo.get("repo"), "files": len(seen),
+            "bytes": size, "stats": stats}
 
 
 # ---------------------------------------------------------------- markdown
@@ -920,6 +967,7 @@ def main():
             "draft": None, "vram": None,
             "probe": "Strata sweep: 6 prompts (3 code, 3 prose), 1,000 tokens, temp 0; prefill on a cold 29K prompt"})
     measurements["strata"] = strata
+    measurements["demos"] = [export_demo(d) for d in DEMOS if (d["root"] / ".git").exists()]
     dm = next((p for p in PROJECTS if p["id"] == "densemoe"), None)
     measurements["densemoe"] = parse_densemoe(dm["root"]) if dm and dm["id"] in tracked_by else {}
     so = next((p for p in PROJECTS if p["id"] == "strataoss"), None)
@@ -968,6 +1016,7 @@ def main():
           f"engineab={sum(len(x['arms']) for x in measurements['engineab'])} "
           f"arc={len(measurements['arc'])} rpc={len(measurements['rpc'])} depth={len(measurements['depthsweep'])} "
           f"agent={sum(x['runs'] for x in measurements['agent'])} "
+          f"demos={','.join(f"{d['id']}:{d['files']}f/{d['bytes']/1e6:.1f}MB" for d in measurements['demos'])} "
           f"size={total/1e6:.1f}MB", file=sys.stderr)
 
 

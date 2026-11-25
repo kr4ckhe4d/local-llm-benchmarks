@@ -205,6 +205,7 @@
       if (kind === 'densemoe') return denseMoePage();
       if (kind === 'strata-oss') return strataOssPage();
       if (kind === 'arc') return arcPage();
+      if (kind === 'pagoda') return pagodaPage();
       if (kind === 'agent') return agentPage();
       if (kind === 'files') return filesPage(rest.join('/'), prevKind === 'files');
       app.innerHTML = `<div class="wrap"><div class="empty">Not found. <a href="#/">Back to overview</a></div></div>`;
@@ -250,6 +251,7 @@
         <div class="tile"><div class="v">${fmtInt(D.files.length)}</div><div class="k">Raw evidence files</div><div class="s">logs, answers, scripts</div></div>
       </div>
 
+      ${(D.m.demos || []).some(d => d.id === 'pagoda') ? `<a class="feature" href="#/pagoda"><img src="raw/benchmarks/pi-pagoda/shots/pagoda.jpg" alt="" loading="lazy"><div><div class="eyebrow">New · demo</div><h3>Qwen3.8-27B built a 3D pagoda garden, unattended, in 12 hours</h3><p>The Pi coding agent on this machine's router, 16 tasks, 21 sessions, no human review. Run the scene in your browser, and see what a model that can't look at its own screenshots gets wrong.</p></div></a>` : ''}
       <div class="section-h"><h2>Research projects</h2><a href="#/projects">All projects →</a></div>
       ${projectCards()}
 
@@ -989,6 +991,64 @@
       hbar($('#a-rpc-tg'), rrows('tg'), { labW: 260, rowH: 24, dec: 2 });
       hbar($('#a-rpc-pp'), rrows('pp'), { labW: 260, rowH: 24, dec: 1 });
     }
+  }
+
+
+  // ------------------------------------------------------------------ pagoda demo (Pi + Qwen3.8-27B, unattended)
+  function pagodaPage() {
+    setTitle('Pagoda demo');
+    const demo = (D.m.demos || []).find(d => d.id === 'pagoda');
+    const R = demo?.stats;
+    const doc = docBySlug('pi-pagoda-demo');
+    const shots = D.files.filter(f => /^benchmarks\/pi-pagoda\/shots\/.+\.jpg$/.test(f.p)).map(f => f.p);
+    const ORDER = ['ui-panel', 'pagoda', 'torii', 'pond', 'sunset-overview', 'night-overview', 'underside', 'overview-day'];
+    shots.sort((a, b) => ORDER.indexOf(a.split('/').pop().slice(0, -4)) - ORDER.indexOf(b.split('/').pop().slice(0, -4)));
+    const CAP = { 'ui-panel': 'Controls panel, 09:00', pagoda: 'The pagoda, 10:00', torii: 'Torii gate, lanterns, stepping stones', pond: 'Pond: the koi render black (no vertex normals)',
+      'sunset-overview': 'Sunset, 18:30', 'night-overview': 'Night, 23:00: lanterns, fireflies, stars', underside: 'The island underside', 'overview-day': 'Overview, 09:00' };
+    if (!demo || !R) { app.innerHTML = `<div class="wrap"><div class="empty">The demo was not part of this build.</div></div>`; return; }
+    const sec = id => doc ? `#/doc/pi-pagoda-demo/${id}` : '#/';
+    const hrs = Math.floor(R.wall_hours), mins = Math.round((R.wall_hours - hrs) * 60);
+    const T = R.tasks.filter(t => t.minutes != null);
+    app.innerHTML = `<div class="wrap">
+      <div class="page-h"><div class="eyebrow">Demo · Pi coding agent · ${esc(Object.keys(R.model)[0].split('/').pop())}</div><h1>A 27B model built this, unattended, in ${hrs} h ${mins} min</h1>
+      <p>The Pi coding agent ran only <b>Qwen3.8-27B Q8_0</b> from this machine's llama.cpp router and built a real-time Three.js scene from a written brief: 16 tasks, one Pi session each, handing off through a file. Nobody reviewed code or answered questions during the run. The model takes no image input, so it judged its own work from image statistics and pixel probes, never by looking. Write-up: ${doc ? `<a href="#/doc/pi-pagoda-demo">pi-pagoda-demo.md</a>` : 'pi-pagoda-demo.md'} · evidence: <a href="#/files/benchmarks/pi-pagoda/">benchmarks/pi-pagoda/</a>.</p></div>
+      <div class="demo-frame" id="demo-frame">
+        <img src="raw/benchmarks/pi-pagoda/shots/ui-panel.jpg" alt="The pagoda garden with its controls panel">
+        <div class="demo-cta"><button class="btn primary" id="demo-run">▶ Run the live scene here</button><a class="btn" href="${esc(demo.url)}" target="_blank" rel="noopener">Open full screen ↗</a>${demo.repo ? `<a class="btn" href="https://github.com/${esc(demo.repo)}" target="_blank" rel="noopener">${GH} Source</a>` : ''}<span>WebGL2 · ${(demo.bytes / 1e6).toFixed(1)} MB · desktop GPU recommended · keys 1-5, N, Space</span></div>
+      </div>
+      <div class="tiles">
+        <div class="tile"><div class="v">${hrs}<small>h</small> ${mins}<small>min</small></div><div class="k">Wall clock, unattended</div><div class="s">one manual restart (T07)</div></div>
+        <div class="tile"><div class="v">${R.tasks.length}<small>/ ${R.tasks.length}</small></div><div class="k">Tasks done</div><div class="s">${R.sessions} Pi sessions</div></div>
+        <div class="tile"><div class="v">${fmtInt(R.tool_calls)}</div><div class="k">Tool calls</div><div class="s">${R.compactions} context compactions</div></div>
+        <div class="tile"><div class="v">${fmt(R.tokens.output / 1e6, 2)}<small>M</small></div><div class="k">Tokens generated</div><div class="s">${fmt((R.tokens.prompt_cached + R.tokens.prompt_uncached) / 1e6, 1)}M prompt, ${Math.round(100 * R.tokens.prompt_cached / (R.tokens.prompt_cached + R.tokens.prompt_uncached))}% cached</div></div>
+        <div class="tile"><div class="v">60<small>fps</small></div><div class="k">Every review view</div><div class="s">1600x900, RX 9070 XT, 0 console errors</div></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><h3>Minutes per task</h3><p class="sub">From the previous task's end to this one's <span class="mono">task_complete</span>. Orange: handed off as partial at least once. Hover for what the session did.</p><div id="pg-tasks"></div><div class="foot">Source: <a href="#/files/benchmarks/pi-pagoda/run-stats.json">run-stats.json</a> · <a href="#/files/benchmarks/pi-pagoda/loop/loop-log.tsv">loop-log.tsv</a></div></div>
+        <div class="card"><h3>Tokens generated per Pi session</h3><p class="sub">Output tokens, thinking included, in time order. Hover for duration, tool calls and compactions.</p><div id="pg-sess"></div><div class="foot">Recomputed from Pi's session files by <a href="#/files/benchmarks/pi-pagoda/collect.py">collect.py</a></div></div>
+      </div>
+      <div class="note" style="margin-top:18px"><b>What a blind 27B misses.</b> The model scored its own work 4 of 5 on every realism line without seeing it. The screenshots show what slipped through: the koi render as black shapes (the merged mesh has no normals), the grass texture tiles into a checkerboard, and the haze under the island glows white at night. Its numeric checks did catch two real three.js traps: NaN from the Sky addon's clouds and the Water addon's mirror plane. <a href="${sec('what-the-27b-could-not-see')}">More →</a></div>
+      <div class="section-h"><h2>Final screenshots</h2><a href="#/files/benchmarks/pi-pagoda/shots/">All files →</a></div>
+      <div class="figs">${shots.map(f => { const n = f.split('/').pop().slice(0, -4); return `<a class="card fig" href="#/files/${esc(f)}"><img src="raw/${esc(f)}" alt="${esc(CAP[n] || n)}" loading="lazy"><span class="figcap">${esc(CAP[n] || n)}</span></a>`; }).join('')}</div>
+      <div class="section-h"><h2>How the loop works</h2>${doc ? `<a href="${sec('how-the-loop-works')}">In the write-up →</a>` : ''}</div>
+      <div class="doccards">
+        <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/AGENTS.md"><b>AGENTS.md</b><span>Working rules: one task per session, never ask, fixed finishing order</span></a>
+        <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/project.md"><b>project.md</b><span>The brief, acceptance checks and realism rubric</span></a>
+        <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/tasks.md"><b>tasks.md</b><span>16 tasks with Done-when lines, final state</span></a>
+        <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/goal-loop.ts"><b>goal-loop.ts</b><span>Pi extension: task_complete starts a fresh session</span></a>
+        <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/shot.mjs"><b>shot.mjs</b><span>Headless Chrome check: screenshots, errors, FPS, image stats</span></a>
+        <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/decisions.md"><b>decisions.md</b><span>Every call the model made on its own, with a reason</span></a>
+      </div>
+      <p class="sub" style="color:var(--ink-2);margin:14px 0 0">The live scene is the run's final commit ${demo.repo ? `<a class="mono" href="https://github.com/${esc(demo.repo)}/commit/${esc(demo.commit)}" target="_blank" rel="noopener">${esc(demo.commit)}</a> of <a href="https://github.com/${esc(demo.repo)}" target="_blank" rel="noopener">${esc(demo.repo)}</a>` : `<span class="mono">${esc(demo.commit)}</span>`}, served unchanged (${demo.files} files; three.js trimmed to the modules the scene imports).</p>
+      ${footer()}</div>`;
+    const tTip = t => tipRows(t.task, [['minutes', fmt(t.minutes, 1)], ['partial handoffs', t.partials ? String(t.partials) : null], ['task_complete calls', String(t.calls)], ['finished', (t.end || '').slice(11, 16) + ' UTC'], ['summary', (t.summary || '').slice(0, 260) + ((t.summary || '').length > 260 ? '…' : '')]]);
+    hbar($('#pg-tasks'), T.map(t => ({ label: t.task, value: t.minutes, text: fmt(t.minutes, 0) + ' min', cls: t.partials ? 'alt' : '', tip: tTip(t) })), { labW: 60, rowH: 20, dec: 0 });
+    hbar($('#pg-sess'), R.per_session.map((s, i) => ({ label: `${i + 1} · ${s.start.slice(11, 16)}`, value: s.output_tokens, text: fmt(s.output_tokens / 1000, 0) + 'K',
+      tip: tipRows(`Session ${i + 1}`, [['started', s.start.slice(11, 16) + ' UTC'], ['minutes', fmt(s.minutes, 0)], ['tokens generated', fmtInt(s.output_tokens)], ['tool calls', String(s.tool_calls)], ['task_complete calls', String(s.task_complete)], ['compactions', s.compactions ? String(s.compactions) : null]]) })),
+      { labW: 90, rowH: 16, tickFmt: v => fmtInt(v / 1000) + 'K' });
+    $('#demo-run').addEventListener('click', () => {
+      $('#demo-frame').innerHTML = `<iframe src="${esc(demo.url)}" title="Pagoda garden, live" allow="fullscreen" loading="eager"></iframe>`;
+    });
   }
 
   // ------------------------------------------------------------------ strata
