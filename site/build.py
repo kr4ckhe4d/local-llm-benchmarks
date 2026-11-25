@@ -112,7 +112,7 @@ def project_files(proj):
 # page shows exactly what the write-up describes. Only the files the app imports are copied (three.js is
 # vendored there at 17 MB; the scene needs ~2.5 MB of it).
 DEMOS = [
-    {"id": "pagoda", "root": HOME / "code/pi-test", "commit": "eb20112", "repo": "kr4ckhe4d/qwen3.8-27B-q8-pagoda",
+    {"id": "pagoda", "root": HOME / "code/pi-test", "commit": "2e001bf", "repo": "kr4ckhe4d/qwen3.8-27B-q8-pagoda",
      "entry": ["index.html", "src/main.js"],
      "imports": {"three": "vendor/three/build/three.module.js", "three/addons/": "vendor/three/examples/jsm/"},
      "stats": "benchmarks/pi-pagoda/run-stats.json"},
