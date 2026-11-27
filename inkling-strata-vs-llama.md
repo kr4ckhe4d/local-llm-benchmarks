@@ -160,3 +160,52 @@ and 24.12 / 24.11. The per-request thinking check passes on the router build. No
 of the full-attention passes as one launch (~16 kernels); the F32 router product (128 rows at ~200 GB/s); a `PAD` of a
 constant weight and a conv-state `GET_ROWS` every pass. `GGML_OP_REL_BIAS` has CPU and CUDA/HIP versions only; Vulkan
 would fall back to the CPU for it.
+
+## Rebased onto upstream 15fcfc735 (2026-11-27)
+
+Upstream landed its own Inkling 2 fusions in the four days to 2026-11-26 — `0e4e925e8`, `51ab45e3c`,
+`abca69200`, `e683365a7`, `396ed2cce`, by three authors, none of them this repo — and moved its fusion
+dispatch out of `ggml-cuda.cu` into a new `fusion.cu`. **They do not reach these numbers on RDNA4:**
+plain upstream generates **39.52 tok/s** on the same GGUF and flags where this branch reaches 63.21, so
+the branch was rebased rather than retired. 17 of its 29 commits had to have their hooks re-homed into
+`fusion.cu`; the recipe is in llama.cpp `ae2fa1043`.
+
+The rebase landed at 59.33 tok/s, 4.5% below the 62.13 it replaced, and the launch counter found both
+causes at once — 1,537 launches a token against 1,233:
+
+| | tok/s | launches/token |
+|---|---:|---:|
+| pre-rebase `5c9e1f761` | 62.13 | 1,233 |
+| rebased `ae2fa1043` | 59.33 | 1,537 |
+| + the state-cell guard `4b02a212c` | 60.67 | 1,441 |
+| + the dispatch order `484c0fa9a` | **63.21** | **1,185** |
+| plain upstream `15fcfc735` | 39.52 | — |
+
+- **Upstream `7b74cb92d` reads recurrent states in place instead of copying**, so the one-token conv step's
+  state cell and the history window it reads became views of the same `cache_r_l*` tensor. The memory guard
+  refused `wo_conv` and `moe_conv_step` on every layer, 96 launches a token, which stopped the attention-out
+  projection and the MoE weighted sum folding into the step. That pair is the rolling state itself — the
+  kernel loads the window before it stores the cell — so it is now skipped and every other pair still checked.
+- **Re-homing inverted two matchers.** The generic `MUL -> L2_NORM` fusion ended up ahead of `attn_prep`,
+  matched `Qcur`'s `MUL` first and returned, so the per-head prep never saw the node and Q, K, V and R each
+  ran their own kernel. Relative order inside `ggml_cuda_try_fuse` is load-bearing; the pre-rebase file is
+  the reference for it.
+
+`ub1` KLD stays 0.000000 at 100% same-top-p through both fixes. The end state is **48 launches below where
+the branch sat before the rebase**, because upstream removed launches of its own as well.
+
+**The other models are not untouched by the rebase, and the branch is not Inkling-only.** Generation,
+three builds, [`benchmarks/.../strata-ideas/other-models.sh`](benchmarks/inkling-2-mini-UD-Q8_K_XL/strata-ideas/other-models.sh):
+
+| tg128 | pre-rebase `b93bef94f` | plain upstream `15fcfc735` | branch `484c0fa9a` |
+|---|---:|---:|---:|
+| Gemma 4 12B BF16, R9700 | 23.69 | 23.31 | **23.73** |
+| Qwen3.8-27B Q6, two cards | 24.12 | 24.69 | **24.70** |
+
+Qwen3.8 gains 2.4% and it is upstream's doing. Gemma 4 looks flat, but plain upstream loses 1.6% on it and
+the branch wins that back: **+1.8% against upstream**, from the generic fusions (TANH+MUL, the consecutive
+matvec grouping, `MUL -> L2_NORM`), not the Inkling-shaped ones. The two fixes above cannot touch either
+model — both matchers need an `SSM_CONV` node these dense architectures do not build.
+
+KLD was not re-measured for the other two: the saved bases under `/mnt/fast/kld-inkling/strata-ideas/` were
+captured on `db75ce3dc`, so after a rebase they no longer isolate the branch from upstream's own drift.
