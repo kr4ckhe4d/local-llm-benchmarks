@@ -181,8 +181,9 @@ The cheap pack is a different kind of object from the quants in
    build on both ends — the RPC protocol is versioned, so `ubuntulocal` has to
    match commit for commit. Strata has no RPC backend.
 3. ~~**The router branch rebased onto upstream, built for ROCm.**~~ **Done on
-   2026-11-27**: the router builds from `ae2fa1043`, upstream `15fcfc735` plus
-   this repo's 29 Inkling-2 commits, so `hy_v4_flash` is present. It was never
+   2026-11-27**: the router builds from `484c0fa9a`, upstream `15fcfc735` plus
+   this repo's 29 Inkling-2 commits and two fixes to the rebase, so
+   `hy_v4_flash` is present. It was never
    sufficient on its own — memory is still the blocker — and whether the arch
    runs on `gfx1201` is untested.
 
