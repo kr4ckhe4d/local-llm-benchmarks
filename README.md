@@ -38,6 +38,7 @@ in the linked files.
 | [claude-harness.md](claude-harness.md) | Running **Claude Code** against local llama.cpp models: what breaks, fixes, which model to pick, SearXNG web search |
 | [aider-harness.md](aider-harness.md) | Running **aider** against the same router |
 | [`pi-local.sh`](pi-local.sh) | Running the **Pi** coding agent against the router or Strata (the `claude-local.sh` counterpart) |
+| [`loop templates/claude-code-goal-loop/`](<loop templates/claude-code-goal-loop/>) | The same loop for **Claude Code**: `run-loop.sh` runs one headless `claude -p` session per task, hooks block tool calls after `task-complete`, nudge early stops and warn at 70% context. Works with `claude-local.sh` for local models |
 | [`loop templates/pi-goal-loop/`](<loop templates/pi-goal-loop/>) | The **Pi goal-loop template**: brief, task list, handoff and a Pi extension that starts a fresh session after every finished task, so a local model works unattended until the acceptance checks pass. `init.sh` scaffolds a project |
 | [pi-pagoda-demo.md](pi-pagoda-demo.md) | **Pi + Qwen3.8-27B Q8_0, unattended for 11.8 h**: a Three.js pagoda garden built from a brief in 16 tasks and 21 sessions, 60 fps, live demo on the site. What a model without image input gets wrong when it judges its own screenshots, and where the session loop broke |
 | [real-world-testing.md](real-world-testing.md) | Agentic coding through **Cline**: can the models do a job end to end |

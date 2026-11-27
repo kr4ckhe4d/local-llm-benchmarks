@@ -107,4 +107,5 @@ per-task minutes from Pi's session files (`~/.pi/agent/sessions/`) and the loop 
 inside one session file mean the rollover did not happen.
 
 The same template is also packaged as a Claude Code skill (`pi-goal-loop`), which fills in the brief and tasks
-from a one-line request.
+from a one-line request. For the same loop driven by Claude Code instead of Pi, see
+[`claude-code-goal-loop`](../claude-code-goal-loop/README.md).
