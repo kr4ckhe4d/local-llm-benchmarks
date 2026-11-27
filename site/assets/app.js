@@ -1038,6 +1038,7 @@
         <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/goal-loop.ts"><b>goal-loop.ts</b><span>Pi extension: task_complete starts a fresh session</span></a>
         <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/shot.mjs"><b>shot.mjs</b><span>Headless Chrome check: screenshots, errors, FPS, image stats</span></a>
         <a class="doccard" href="#/files/benchmarks/pi-pagoda/loop/decisions.md"><b>decisions.md</b><span>Every call the model made on its own, with a reason</span></a>
+        ${docBySlug('loop-templates-pi-goal-loop-readme') ? `<a class="doccard" href="#/doc/loop-templates-pi-goal-loop-readme"><b>loop templates/pi-goal-loop</b><span>Reusable version with the fixes from this run, and init.sh</span></a>` : ''}
       </div>
       <p class="sub" style="color:var(--ink-2);margin:14px 0 0">The live scene is the run's final commit ${demo.repo ? `<a class="mono" href="https://github.com/${esc(demo.repo)}/commit/${esc(demo.commit)}" target="_blank" rel="noopener">${esc(demo.commit)}</a> of <a href="https://github.com/${esc(demo.repo)}" target="_blank" rel="noopener">${esc(demo.repo)}</a>` : `<span class="mono">${esc(demo.commit)}</span>`}, served unchanged (${demo.files} files; three.js trimmed to the modules the scene imports).</p>
       ${footer()}</div>`;

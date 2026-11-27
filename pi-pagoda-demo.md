@@ -114,4 +114,4 @@ lighting, day cycle, water reflections and the whole controls panel came out of 
 
 The scene's repo, with the full commit history of the run (one or more commits per task), the brief, the task list,
 the decision log and the loop extension: [kr4ckhe4d/qwen3.8-27B-q8-pagoda](https://github.com/kr4ckhe4d/qwen3.8-27B-q8-pagoda).
-The live demo above is its final commit from the run, `2e001bf`, served as-is. The loop setup is packaged as a Claude Code skill (`pi-goal-loop`) for reuse.
+The live demo above is its final commit from the run, `2e001bf`, served as-is. The loop setup, with the fixes from this run, is a reusable template in [`loop templates/pi-goal-loop/`](<loop templates/pi-goal-loop/README.md>) and is also packaged as a Claude Code skill (`pi-goal-loop`) for reuse.

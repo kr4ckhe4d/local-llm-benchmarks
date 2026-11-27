@@ -16,6 +16,7 @@ import sys
 from datetime import datetime, timezone
 from statistics import median
 from pathlib import Path
+from urllib.parse import unquote
 
 from markdown_it import MarkdownIt
 
@@ -47,8 +48,8 @@ PROJECTS = [
         "title": "RDNA4 llama.cpp benchmarks",
         "blurb": "Measured local LLMs on RX 9070 XT + Radeon AI PRO R9700 with llama.cpp and ROCm: "
                  "throughput, VRAM fit, KLD vs BF16, MTP, long context, code quality, coding agents.",
-        "doc": lambda f: f.endswith(".md") and ("/" not in f or f == "benchmarks/README.md"),
-        "raw": lambda f: (f.startswith(("benchmarks/", "aider-driver/", "templates/"))
+        "doc": lambda f: f.endswith(".md") and ("/" not in f or f == "benchmarks/README.md" or re.match(r"loop templates/[^/]+/README\.md$", f)),
+        "raw": lambda f: (f.startswith(("benchmarks/", "aider-driver/", "templates/", "loop templates/"))
                           or ("/" not in f and Path(f).suffix in TOP_LEVEL_EXT) or f.endswith(".md")),
         "order": _order(["README.md", "r9700+rx9070.md"]),
     },
@@ -192,6 +193,7 @@ def render_doc(proj, rel, doc_slugs, fileset, dirset, tracked):
         if href.startswith("#"):
             return f"#/doc/{slug}/{href[1:]}", False
         target, _, anchor = href.partition("#")
+        target = unquote(target)  # "loop%20templates/..." -> the path on disk
         norm = str(Path(base, target)) if base else target
         norm = re.sub(r"/+$", "", str(Path(norm)))
         while "/../" in "/" + norm:
@@ -245,6 +247,7 @@ def render_doc(proj, rel, doc_slugs, fileset, dirset, tracked):
                 elif c.type == "image":
                     srcp = c.attrGet("src")
                     if srcp and not re.match(r"^[a-z]+:", srcp):
+                        srcp = unquote(srcp)
                         norm = str(Path(base, srcp)) if base else srcp
                         if proj["prefix"] + norm in fileset:
                             c.attrSet("src", f"raw/{proj['prefix']}{norm}")
