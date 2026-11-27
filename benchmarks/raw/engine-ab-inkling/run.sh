@@ -14,6 +14,9 @@ DOCS=$B/raw/engine-ab-qwen36/docs
 # Inkling's thinking switch: effort 0, as the router preset sets it (Strata forces "none" = 0 whatever is sent)
 EXTRA='{"chat_template_kwargs": {"reasoning_effort": 0}}'
 ARMS=${ARMS:-llama-q8 strata-q8-nodraft strata-q8-dspark}
+# SUFFIX=-rebased: the rows and logs of a re-run land under their own labels (results.jsonl is append-only and
+# site/build.py takes the median over every row of a label, so a re-run under the same label would blend)
+SUFFIX=${SUFFIX:-}
 . "$B/gpu-mem.sh"
 mkdir -p "$D/logs"
 
@@ -50,7 +53,7 @@ bench() {  # bench <label> <url>
 }
 
 llama_arm() {  # llama_arm <label> [server binary] [ubatch]
-  local label=$1 bin=${2:-$LLAMA} ub=${3:-128}
+  local label=$1$SUFFIX bin=${2:-$LLAMA} ub=${3:-128}
   vram_idle 900 || { echo "=== $label SKIPPED: GPUs not idle: $(vram_report)"; return; }
   setsid "$bin" -m "$Q8" --device ROCm1 -ngl 99 -np 1 -c 131072 -fa on -ub $ub -b 2048 --reasoning-budget 1024 \
     --jinja --host 127.0.0.1 --port 8099 > "$D/logs/$label.log" 2>&1 &
@@ -66,7 +69,7 @@ llama_arm() {  # llama_arm <label> [server binary] [ubatch]
 }
 
 strata_arm() {  # strata_arm <label> <config>
-  local label=$1 cfg=$2
+  local label=$1$SUFFIX cfg=$2
   vram_idle 900 || { echo "=== $label SKIPPED: GPUs not idle: $(vram_report)"; return; }
   ( cd "$ST" && exec setsid "$ST/.venv/bin/python" serve/server.py --engine strata --config "$cfg" \
       --port 8097 ) > "$D/logs/$label.log" 2>&1 &

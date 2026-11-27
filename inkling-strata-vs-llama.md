@@ -209,3 +209,16 @@ model — both matchers need an `SSM_CONV` node these dense architectures do not
 
 KLD was not re-measured for the other two: the saved bases under `/mnt/fast/kld-inkling/strata-ideas/` were
 captured on `db75ce3dc`, so after a rebase they no longer isolate the branch from upstream's own drift.
+
+**Against Strata, served, at 128K** ([`engine-ab-inkling`](benchmarks/raw/engine-ab-inkling/README.md#re-run-2026-11-28-the-rebased-branch-against-strata-0222),
+same client and GGUF as above, Strata updated to 0.2.22 / engine 0.1.69 the same day):
+
+| | branch before | branch rebased | Strata 0.2.20 | Strata 0.2.22 |
+|---|---:|---:|---:|---:|
+| generation, empty context | 59.7 | **61.7** | 68.5 | 68.1 |
+| 33K prompt: reading / generating | 716 / 51.5 | 711 / 52.5 | 643 / 54.6 | 642 / 54.6 |
+| 125K prompt: reading / generating | 532 / 37.8 | 523 / 38.5 | 541 / 34.2 | 540 / 34.2 |
+
+Strata did not move across three engine versions. The branch gained ~3% generating and lost 1.7% reading the 125K
+prompt, which is undiagnosed. The empty-context gap is now about 10%, down from 14% at 7 commits. Through the
+server the branch generates 61.7 where `llama-bench` says 63.2: the server holds a 128K context and samples.

@@ -35,6 +35,40 @@ run, at 4 commits: 57.8 / 716 / 49.7 / 530 / 36.2, rows in `results-branch-4comm
 [../../inkling-2-mini-UD-Q8_K_XL/strata-ideas/](../../inkling-2-mini-UD-Q8_K_XL/strata-ideas/TODO.md) and
 [inkling-strata-vs-llama.md](../../../inkling-strata-vs-llama.md#tried-on-a-branch).
 
+## Re-run, 2026-11-28: the rebased branch against Strata 0.2.22
+
+Both engines had moved since the table above: llama.cpp's branch was rebased onto upstream `15fcfc735` and given two
+fixes ([`inkling-strata-vs-llama.md`](../../../inkling-strata-vs-llama.md#rebased-onto-upstream-15fcfc735-2026-11-27)),
+and Strata went from 0.2.20 to 0.2.22 (engine 0.1.66 to 0.1.69; `update-engines.sh strata`, no config key lost). Two arms,
+same harness, same GGUF, same flags: `ARMS="llama-q8-branch strata-q8-nodraft" ./run.sh`. The rows are under their own
+labels (`llama-q8-branch-rebased`, `strata-q8-nodraft-0.2.22`), so the rows above are untouched.
+
+| Arm | Code | Prose | Explain | 33K prefill | 33K decode | 125K prefill | 125K decode | Peak VRAM R9700 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Strata Q8, 0.2.20 / engine 0.1.66 (above) | 67.8 | 68.5 | 67.8 | 643 | 54.6 | 541 | 34.2 | 27.1 GB |
+| Strata Q8, **0.2.22 / engine 0.1.69** | 67.7 | 68.1 | 67.8 | 642 | 54.6 | 540 | 34.2 | 27.1 GB |
+| llama.cpp Q8, branch, 7 commits, `89edf0c8a` (above) | 59.7 | 59.7 | 59.9 | 716 | 51.5 | 532 | 37.8 | 29.6 GB |
+| llama.cpp Q8, **branch rebased, `484c0fa9a`**, `-ub 512` | 61.6 | 61.7 | 61.8 | 711 | 52.5 | 523 | 38.5 | 29.7 GB |
+
+* **Strata did not move.** Three engine versions and 336 commits, and every cell is within 0.6% of the 0.2.20 run.
+  Its update notes list an Inkling two-card expert-budget fix, a sampling default and a thinking-budget cap; none
+  shows in this single-card, thinking-off run.
+* **The branch gained about 3% in an empty context** (59.7 to 61.6-61.8) and 2% at 33K and 125K decode, from
+  upstream's own work plus the branch's fusions kept on top of it. Plain upstream on the same GGUF decodes at
+  39.5 tok/s in `llama-bench`, so this is the branch's doing, not upstream's.
+* **The gap to Strata is now about 10%** in an empty context (it was 28% at the start of the branch and 14% at
+  7 commits). At 33K Strata decodes 4% faster and the branch reads the prompt 11% faster (711 against 642). At 125K
+  the branch decodes 13% faster (38.5 against 34.2) and Strata reads 3% faster (540 against 523).
+* **One cell went the wrong way: 125K prefill is 1.7% down** (532 to 523, two repetitions each, 522.2 and 523.6
+  against the old 531.5 and its pair). Not diagnosed.
+
+Medians of 3 (generation) and 2 (depth), as above; the widest spread across repetitions is 1.3% (the branch's prose
+generation, 60.97 to 61.78), inside the 1.5% bound above. The branch's `llama-server` was
+built from `~/llama.cpp-inkling`, whose working tree carries the uncommitted per-request thinking patch (server
+request handling only). Not re-run: the DSpark and SQ-20 arms, and the refusal probe below. Strata's
+no-thinking prefill and its `temperature: 0` handling (see Pitfalls) are as they were on 0.2.20 until someone checks
+them on 0.2.22.
+
 ## What it says
 
 * **Strata is faster on the same file:** +28% decode in an empty context (68 against 53), +26% prompt reading at

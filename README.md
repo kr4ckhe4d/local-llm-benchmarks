@@ -23,7 +23,7 @@ router branch: upstream plus the Inkling-2 fusions (`inkling2-strata-ideas`, sin
 | Qwen3.8 27B | **UD-Q6_K** + MTP | 57 tok/s; KLD vs BF16 0.0020 (IQ4_XS: 0.0179); as good as Q8_0 in Claude Code, 12% faster |
 | GLM-4.7-Flash 30B-A3B | Q4/Q8, 128K | 75 tok/s in an empty context, but **154 tok/s prefill** at 128K depth (attention-bound; removed) |
 | Nemotron 3.5 Lightning 30B-A3B | Q8_0 + MTP, 128K | **167 tok/s**, 83% draft acceptance (1.70x); 128K costs only 2.7 GB more than 32K — but 28K thinking tokens per coding task |
-| Inkling-2-Mini | UD-Q8_K_XL, 128K, R9700 | 31 -> **62 tok/s** in llama.cpp over two rounds of kernel fusion (KLD 0); reads a 33K prompt at **716 tok/s**, 11% faster than Strata (643); Strata still generates 14% faster empty (68) |
+| Inkling-2-Mini | UD-Q8_K_XL, 128K, R9700 | 31 -> **62 tok/s** in llama.cpp over two rounds of kernel fusion (KLD 0); 63 since the 2026-11-27 rebase onto upstream; reads a 33K prompt at **711 tok/s**, 11% faster than Strata 0.2.22 (642); Strata still generates 10% faster empty (68 against 61.7 served) |
 | MoE models generally | second card | CPU expert offload gone: **+38% to +183%** generation |
 
 Generation is the 700-token probe in an empty context unless it says "depth";

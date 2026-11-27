@@ -889,7 +889,10 @@ def main():
                       # engine-ab-inkling (2026-11-23): Inkling-2-Mini, R9700 alone, 128K
                       "llama-q8": "llama.cpp Q8", "llama-q8-branch": "llama.cpp Q8, branch, 7 commits (-ub 512)", "strata-q8-nodraft": "Strata Q8",
                       "strata-q8-dspark": "Strata Q8 + DSpark", "strata-sq20-nodraft": "Strata SQ-20",
-                      "strata-sq20-dspark": "Strata SQ-20 + DSpark"}
+                      "strata-sq20-dspark": "Strata SQ-20 + DSpark",
+                      # the same two arms re-run 2026-11-28, after the rebase and the Strata update
+                      "llama-q8-branch-rebased": "llama.cpp Q8, rebased branch",
+                      "strata-q8-nodraft-0.2.22": "Strata Q8, 0.2.22"}
     measurements["engineab"] = []
     for e in tree:
         f = e["p"]
