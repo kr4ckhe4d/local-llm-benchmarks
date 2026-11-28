@@ -1,0 +1,1012 @@
+{
+ "metrics": {
+  "task": "sqlparse-begin-end-split",
+  "turns": 50,
+  "tool_calls": 49,
+  "bad_calls": 0,
+  "prompt_tokens": 772734,
+  "completion_tokens": 25474,
+  "max_prompt": 29562,
+  "finish": null,
+  "summary": null,
+  "end": "turn limit",
+  "wall_s": 525.7,
+  "pass": false,
+  "check_exit": 1,
+  "protected_changed": [],
+  "check_tail": "      BEGIN\n        DECLARE a tinyint DEFAULT CAST(6 as tinyint);\n        DECLARE b tinyint DEFAULT CAST(7 as tinyint);\n        RETURN a * b;\n      END\n    SELECT meaning_of_life();\"\"\"\n        stmts = sqlparse.split(sql)\n>       assert len(stmts) == 1\nE       AssertionError: assert 4 == 1\nE        +  where 4 = len(['WITH\\nFUNCTION meaning_of_life()\\n  RETURNS tinyint\\n  BEGIN\\n    DECLARE a tinyint DEFAULT CAST(6 as tinyint);', 'DECLARE b tinyint DEFAULT CAST(7 as tinyint);', 'RETURN a * b;', 'END\\nSELECT meaning_of_life();'])\n\ntests/test_split.py:239: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_split.py::test_split_begin_end_semicolons - AssertionError:...\n1 failed, 40 passed in 0.06s",
+  "claimed": false,
+  "false_claim": false,
+  "diffstat": " 1 file changed, 32 insertions(+)",
+  "repeat": 3
+ },
+ "log": [
+  {
+   "turn": 1,
+   "content": "",
+   "reasoning": "Let me explore the repo.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"ls && head -50 sqlparse.py 2>/dev/null || ls *\"}"
+     },
+     "id": "i56gVv4TXHny3Xi0p8qsGRsY8UKIco6d"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "AGENTS.md\nAUTHORS\nCHANGELOG\nCLAUDE.md\nCONTRIBUTING.md\nLICENSE\nMakefile\nREADME.rst\nSECURITY.md\nTODO\ndocs\nexamples\npixi.lock\npyproject.toml\nsqlparse\ntests\nAGENTS.md\nAUTHORS\nCHANGELOG\nCLAUDE.md\nCONTRIBUTING.md\nLICENSE\nMakefile\nREADME.rst\nSECURITY.md\nTODO\npixi.lock\npyproject.toml\n\ndocs:\nMakefile\nsource\nsqlformat.1\n\nexamples:\ncolumn_defs_lowlevel.py\nextract_table_names.py\n\nsqlparse:\n__init__.py\n__main__.py\ncli.py\nengine\nexceptions.py\nfilters\nformatter.py\nkeywords.py\nlexer.py\npy.typed\nsql.py\ntokens.py\nutils.py\n\ntests:\n__init__.py\nconftest.py\nfiles\ntest_cli.py\ntest_dos_prevention.py\ntest_format.py\ntest_grouping.py\ntest_keywords.py\ntest_parse.py\ntest_regressions.py\ntest_split.py\ntest_tokenize.py\ntest_utils.py\n\n[exit code 0]"
+  },
+  {
+   "turn": 2,
+   "content": "",
+   "reasoning": "Let me look at the splitting code and tests.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -rn \\\"def split\\\" sqlparse/ tests/ | head -20\"}"
+     },
+     "id": "ccMVXJV47reQWovEoZWEXEG8ed1xMoH7"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "sqlparse/utils.py:36:def split_unquoted_newlines(stmt):\nsqlparse/__init__.py:68:def split(\n\n[exit code 0]"
+  },
+  {
+   "turn": 3,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"sed -n 1,200p sqlparse/__init__.py\"}"
+     },
+     "id": "d7cklMKOmRbMyNGx9Ql8kXl9i18zp29T"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "#\n# Copyright (C) 2009-2020 the sqlparse authors and contributors\n# <see AUTHORS file>\n#\n# This module is part of python-sqlparse and is released under\n# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n\n\"\"\"Parse SQL statements.\"\"\"\n\n# Setup namespace\nfrom typing import Any, Generator, IO, List, Optional, Tuple, Union\n\nfrom sqlparse import sql\nfrom sqlparse import cli\nfrom sqlparse import engine\nfrom sqlparse import tokens\nfrom sqlparse import filters\nfrom sqlparse import formatter\n\n\n__version__ = \"0.5.4.dev0\"\n__all__ = [\"engine\", \"filters\", \"formatter\", \"sql\", \"tokens\", \"cli\"]\n\n\ndef parse(\n    sql: str, encoding: Optional[str] = None\n) -> Tuple[sql.Statement, ...]:\n    \"\"\"Parse sql and return a list of statements.\n\n    :param sql: A string containing one or more SQL statements.\n    :param encoding: The encoding of the statement (optional).\n    :returns: A tuple of :class:`~sqlparse.sql.Statement` instances.\n    \"\"\"\n    return tuple(parsestream(sql, encoding))\n\n\ndef parsestream(\n    stream: Union[str, IO[str]], encoding: Optional[str] = None\n) -> Generator[sql.Statement, None, None]:\n    \"\"\"Parses sql statements from file-like object.\n\n    :param stream: A file-like object.\n    :param encoding: The encoding of the stream contents (optional).\n    :returns: A generator of :class:`~sqlparse.sql.Statement` instances.\n    \"\"\"\n    stack = engine.FilterStack()\n    stack.enable_grouping()\n    return stack.run(stream, encoding)\n\n\ndef format(sql: str, encoding: Optional[str] = None, **options: Any) -> str:\n    \"\"\"Format *sql* according to *options*.\n\n    Available options are documented in :ref:`formatting`.\n\n    In addition to the formatting options this function accepts the\n    keyword \"encoding\" which determines the encoding of the statement.\n\n    :returns: The formatted SQL statement as string.\n    \"\"\"\n    stack = engine.FilterStack()\n    options = formatter.validate_options(options)\n    stack = formatter.build_filter_stack(stack, options)\n    stack.postprocess.append(filters.SerializerUnicode())\n    return \"\".join(stack.run(sql, encoding))\n\n\ndef split(\n    sql: str, encoding: Optional[str] = None, strip_semicolon: bool = False\n) -> List[str]:\n    \"\"\"Split *sql* into single statements.\n\n    :param sql: A string containing one or more SQL statements.\n    :param encoding: The encoding of the statement (optional).\n    :param strip_semicolon: If True, remove trailing semicolons\n        (default: False).\n    :returns: A list of strings.\n    \"\"\"\n    stack = engine.FilterStack(strip_semicolon=strip_semicolon)\n    return [str(stmt).strip() for stmt in stack.run(sql, encoding)]\n\n[exit code 0]"
+  },
+  {
+   "turn": 4,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -rn \\\"split\\\" sqlparse/engine/ sqlparse/filters/ | head -40\"}"
+     },
+     "id": "mOaAbHlkOX2Ti0QL637Rt2F7rNyIfLbd"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "sqlparse/engine/statement_splitter.py:12:    \"\"\"Filter that split stream at individual statements\"\"\"\nsqlparse/engine/statement_splitter.py:28:    def _change_splitlevel(self, ttype, value):\nsqlparse/engine/statement_splitter.py:29:        \"\"\"Get the new split level (increase, decrease or remain equal)\"\"\"\nsqlparse/engine/statement_splitter.py:98:            # Change current split level (increase, decrease or remain equal)\nsqlparse/engine/statement_splitter.py:99:            self.level += self._change_splitlevel(ttype, value)\nsqlparse/engine/statement_splitter.py:105:            # Issue762: Allow GO (or \"GO 2\") as statement splitter.\nsqlparse/engine/statement_splitter.py:107:            # keywords it's also to change some rules, like this splitting\nsqlparse/engine/statement_splitter.py:110:                    or (ttype is T.Keyword and value.split()[0] == 'GO'):\nsqlparse/engine/filter_stack.py:12:from sqlparse.engine.statement_splitter import StatementSplitter\nsqlparse/engine/__init__.py:10:from sqlparse.engine.statement_splitter import StatementSplitter\nsqlparse/filters/right_margin.py:29:                    self.line = token.value.splitlines()[-1]\nsqlparse/filters/reindent.py:45:        line = (raw or '\\n').splitlines()[-1]\nsqlparse/filters/reindent.py:55:        split_words = ('FROM', 'STRAIGHT_JOIN$', 'JOIN$', 'AND', 'OR',\nsqlparse/filters/reindent.py:58:        m_split = T.Keyword, split_words, True\nsqlparse/filters/reindent.py:59:        tidx, token = tlist.token_next_by(m=m_split, idx=idx)\nsqlparse/filters/reindent.py:69:    def _split_kwds(self, tlist):\nsqlparse/filters/reindent.py:85:    def _split_statements(self, tlist):\nsqlparse/filters/reindent.py:233:        self._split_statements(tlist) if stmts else None\nsqlparse/filters/reindent.py:234:        self._split_kwds(tlist)\nsqlparse/filters/output.py:28:        has_nl = len(str(stmt).strip().splitlines()) > 1\nsqlparse/filters/output.py:59:                after_lb = token.value.split('\\n', 1)[1]\nsqlparse/filters/output.py:108:                after_lb = token.value.split('\\n', 1)[1]\nsqlparse/filters/others.py:11:from sqlparse.utils import split_unquoted_newlines\nsqlparse/filters/others.py:172:        lines = split_unquoted_newlines(stmt)\nsqlparse/filters/aligned_indent.py:17:    split_words = ('FROM',\nsqlparse/filters/aligned_indent.py:90:        split_words = T.Keyword, self.split_words, True\nsqlparse/filters/aligned_indent.py:91:        tidx, token = tlist.token_next_by(m=split_words, idx=idx)\nsqlparse/filters/aligned_indent.py:99:    def _split_kwds(self, tlist):\nsqlparse/filters/aligned_indent.py:108:                token_indent = token.value.split()[0]\nsqlparse/filters/aligned_indent.py:116:        self._split_kwds(tlist)\n\n[exit code 0]"
+  },
+  {
+   "turn": 5,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"path\":\"sqlparse/engine/statement_splitter.py\"}"
+     },
+     "id": "8DppuXqxLeMznbTnIuP3lueUNU3NhZys"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "read_file",
+   "result": "    1\t#\n    2\t# Copyright (C) 2009-2020 the sqlparse authors and contributors\n    3\t# <see AUTHORS file>\n    4\t#\n    5\t# This module is part of python-sqlparse and is released under\n    6\t# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n    7\t\n    8\tfrom sqlparse import sql, tokens as T\n    9\t\n   10\t\n   11\tclass StatementSplitter:\n   12\t    \"\"\"Filter that split stream at individual statements\"\"\"\n   13\t\n   14\t    def __init__(self):\n   15\t        self._reset()\n   16\t\n   17\t    def _reset(self):\n   18\t        \"\"\"Set the filter attributes to its default values\"\"\"\n   19\t        self._in_declare = False\n   20\t        self._in_case = False\n   21\t        self._is_create = False\n   22\t        self._begin_depth = 0\n   23\t\n   24\t        self.consume_ws = False\n   25\t        self.tokens = []\n   26\t        self.level = 0\n   27\t\n   28\t    def _change_splitlevel(self, ttype, value):\n   29\t        \"\"\"Get the new split level (increase, decrease or remain equal)\"\"\"\n   30\t\n   31\t        # parenthesis increase/decrease a level\n   32\t        if ttype is T.Punctuation and value == '(':\n   33\t            return 1\n   34\t        elif ttype is T.Punctuation and value == ')':\n   35\t            return -1\n   36\t        elif ttype not in T.Keyword:  # if normal token return\n   37\t            return 0\n   38\t\n   39\t        # Everything after here is ttype = T.Keyword\n   40\t        # Also to note, once entered an If statement you are done and basically\n   41\t        # returning\n   42\t        unified = value.upper()\n   43\t\n   44\t        # three keywords begin with CREATE, but only one of them is DDL\n   45\t        # DDL Create though can contain more words such as \"or replace\"\n   46\t        if ttype is T.Keyword.DDL and unified.startswith('CREATE'):\n   47\t            self._is_create = True\n   48\t            return 0\n   49\t\n   50\t        # can have nested declare inside of being...\n   51\t        if unified == 'DECLARE' and self._is_create and self._begin_depth == 0:\n   52\t            self._in_declare = True\n   53\t            return 1\n   54\t\n   55\t        if unified == 'BEGIN':\n   56\t            self._begin_depth += 1\n   57\t            if self._is_create:\n   58\t                # FIXME(andi): This makes no sense.  ## this comment neither\n   59\t                return 1\n   60\t            return 0\n   61\t\n   62\t        # BEGIN and CASE/WHEN both end with END\n   63\t        if unified == 'END':\n   64\t            if not self._in_case:\n   65\t                self._begin_depth = max(0, self._begin_depth - 1)\n   66\t            else:\n   67\t                self._in_case = False\n   68\t            return -1\n   69\t\n   70\t        if (unified in ('IF', 'FOR', 'WHILE', 'CASE')\n   71\t                and self._is_create and self._begin_depth > 0):\n   72\t            if unified == 'CASE':\n   73\t                self._in_case = True\n   74\t            return 1\n   75\t\n   76\t        if unified in ('END IF', 'END FOR', 'END WHILE'):\n   77\t            return -1\n   78\t\n   79\t        # Default\n   80\t        return 0\n   81\t\n   82\t    def process(self, stream):\n   83\t        \"\"\"Process the stream\"\"\"\n   84\t        EOS_TTYPE = T.Whitespace, T.Comment.Single\n   85\t\n   86\t        # Run over all stream tokens\n   87\t        for ttype, value in stream:\n   88\t            # Yield token if we finished a statement and there's no whitespaces\n   89\t            # It will count newline token as a non whitespace. In this context\n   90\t            # whitespace ignores newlines.\n   91\t            # why don't multi line comments also count?\n   92\t            if self.consume_ws and ttype not in EOS_TTYPE:\n   93\t                yield sql.Statement(self.tokens)\n   94\t\n   95\t                # Reset filter and prepare to process next statement\n   96\t                self._reset()\n   97\t\n   98\t            # Change current split level (increase, decrease or remain equal)\n   99\t            self.level += self._change_splitlevel(ttype, value)\n  100\t\n  101\t            # Append the token to the current statement\n"
+  },
+  {
+   "turn": 6,
+   "content": "",
+   "reasoning": "The current logic handles `BEGIN ... END` for CREATE statements (procedures). Let me reproduce the bug.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;'''\\nfor s in sqlparse.split(sql):\\n    print(repr(s)); print('---')\\n\\\"\"}"
+     },
+     "id": "ies9BDf9GUFbdKvlmb88DUy5tF48fahH"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "'CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND;'\n---\n\n[exit code 0]"
+  },
+  {
+   "turn": 7,
+   "content": "",
+   "reasoning": "Hmm, that worked? Wait \u2014 the outer parentheses `create_customer()` increase level to 1 and the BEGIN...END... Actually let me test the second case and a simpler case where the parens are balanced... Actually the example works because the parens inside BEGIN balance out? Let's trace: `CREATE` keyword, `_is_create` = True. `(` \u2192 +1. `)` \u2192 -1. `BEGIN` \u2192 _begin_depth=1, is_create \u2192 return 1. So level = 1. `DECLARE` \u2192 is_create and begin_depth>0... wait `unified == 'DECLARE' and self._is_create and self._begin_depth == 0` \u2014 begin_depth is 1, so not in_declare. BEGIN\u2192+1... Let's just test both cases from the bug.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);'''\\nprint(sqlparse.split(sql))\\n\\\"\"}"
+     },
+     "id": "nmhBEtD102SsJw12ddI1f0tPk4al4Xd6"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;', 'SET y = x;', 'RETURN y;', 'END\\nSELECT f(1);']\n\n[exit code 0]"
+  },
+  {
+   "turn": 8,
+   "content": "",
+   "reasoning": "The reported bug: `WITH FUNCTION ... BEGIN ... END SELECT ...` should stay one statement. The `CREATE PROCEDURE` case works (since `_is_create` is set). For `WITH FUNCTION`, `_is_create` is never set, so BEGIN doesn't increase depth (returns 0) \u2014 actually BEGIN returns 0 unless `_is_create`. So semicolons inside BEGIN are at level 0 and split.\n\nExpected behavior per the bug report: \"semicolons inside a BEGIN ... END block do not end the statement; the statement ends at the first semicolon after the block's END, or at the end of the input.\"\n\nSo the fix: treat BEGIN...END blocks generally, not only when `_is_create`. Let's look at the current behavior more carefully.\n\nCurrent `_change_splitlevel`:\n- parenthesis +/-\n- CREATE DDL \u2192 _is_create=True, return 0\n- DECLARE (if is_create and begin_depth==0) \u2192 return 1\n- BEGIN \u2192 begin_depth += 1; if is_create: return 1, return 0\n- END \u2192 if not in_case: begin_depth = max(0, begin_depth-1); return -1\n- IF/FOR/WHILE/CASE (if is_create and begin_depth>0) \u2192 return 1\n- END IF/FOR/WHILE \u2192 -1\n\nWith the bug report, also check: with `CREATE PROCEDURE`, BEGIN returns 1, so level = 1 inside BEGIN; END decrements and returns -1, level back to 0. Good.\n\nBut the existing tests: let's check test_split.py to see how this is tested.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cat tests/test_split.py\"}"
+     },
+     "id": "y3yUKqZnTfItc4EgEaUcApBfytq6uWXu"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "# Tests splitting functions.\n\nimport types\nfrom io import StringIO\n\nimport pytest\n\nimport sqlparse\n\n\ndef test_split_semicolon():\n    sql1 = 'select * from foo;'\n    sql2 = \"select * from foo where bar = 'foo;bar';\"\n    stmts = sqlparse.parse(''.join([sql1, sql2]))\n    assert len(stmts) == 2\n    assert str(stmts[0]) == sql1\n    assert str(stmts[1]) == sql2\n\n\ndef test_split_backslash():\n    stmts = sqlparse.parse(\"select '\\'; select '\\'';\")\n    assert len(stmts) == 2\n\n\n@pytest.mark.parametrize('fn', ['function.sql',\n                                'function_psql.sql',\n                                'function_psql2.sql',\n                                'function_psql3.sql',\n                                'function_psql4.sql'])\ndef test_split_create_function(load_file, fn):\n    sql = load_file(fn)\n    stmts = sqlparse.parse(sql)\n    assert len(stmts) == 1\n    assert str(stmts[0]) == sql\n\n\ndef test_split_dashcomments(load_file):\n    sql = load_file('dashcomment.sql')\n    stmts = sqlparse.parse(sql)\n    assert len(stmts) == 3\n    assert ''.join(str(q) for q in stmts) == sql\n\n\n@pytest.mark.parametrize('s', ['select foo; -- comment\\n',\n                               'select foo; -- comment\\r',\n                               'select foo; -- comment\\r\\n',\n                               'select foo; -- comment'])\ndef test_split_dashcomments_eol(s):\n    stmts = sqlparse.parse(s)\n    assert len(stmts) == 1\n\n\ndef test_split_begintag(load_file):\n    sql = load_file('begintag.sql')\n    stmts = sqlparse.parse(sql)\n    assert len(stmts) == 3\n    assert ''.join(str(q) for q in stmts) == sql\n\n\ndef test_split_begintag_2(load_file):\n    sql = load_file('begintag_2.sql')\n    stmts = sqlparse.parse(sql)\n    assert len(stmts) == 1\n    assert ''.join(str(q) for q in stmts) == sql\n\n\ndef test_split_dropif():\n    sql = 'DROP TABLE IF EXISTS FOO;\\n\\nSELECT * FROM BAR;'\n    stmts = sqlparse.parse(sql)\n    assert len(stmts) == 2\n    assert ''.join(str(q) for q in stmts) == sql\n\n\ndef test_split_comment_with_umlaut():\n    sql = ('select * from foo;\\n'\n           '-- Testing an umlaut: \u00e4\\n'\n           'select * from bar;')\n    stmts = sqlparse.parse(sql)\n    assert len(stmts) == 2\n    assert ''.join(str(q) for q in stmts) == sql\n\n\ndef test_split_comment_end_of_line():\n    sql = ('select * from foo; -- foo\\n'\n           'select * from bar;')\n    stmts = sqlparse.parse(sql)\n    assert len(stmts) == 2\n    assert ''.join(str(q) for q in stmts) == sql\n    # make sure the comment belongs to first query\n    assert str(stmts[0]) == 'select * from foo; -- foo\\n'\n\n\ndef test_split_casewhen():\n    sql = (\"SELECT case when val = 1 then 2 else null end as foo;\\n\"\n           \"comment on table actor is 'The actor table.';\")\n    stmts = sqlparse.split(sql)\n    assert len(stmts) == 2\n\n\ndef test_split_casewhen_procedure(load_file):\n    # see issue580\n    stmts = sqlparse.split(load_file('casewhen_procedure.sql'))\n    assert len(stmts) == 2\n\n\ndef test_split_cursor_declare():\n    sql = ('DECLARE CURSOR \"foo\" AS SELECT 1;\\n'\n           'SELECT 2;')\n    stmts = sqlparse.split(sql)\n    assert len(stmts) == 2\n\n\ndef test_split_if_function():  # see issue 33\n    # don't let IF as a function confuse the splitter\n    sql = ('CREATE TEMPORARY TABLE tmp '\n           'SELECT IF(a=1, a, b) AS o FROM one; '\n           'SELECT t FROM two')\n    stmts = sqlparse.split(sql)\n    assert len(stmts) == 2\n\n\ndef test_split_stream():\n    stream = StringIO(\"SELECT 1; SELECT 2;\")\n    stmts = sqlparse.parsestream(stream)\n    assert isinstance(stmts, types.GeneratorType)\n    assert len(list(stmts)) == 2\n\n\ndef test_split_encoding_parsestream():\n    stream = StringIO(\"SELECT 1; SELECT 2;\")\n    stmts = list(sqlparse.parsestream(stream))\n    assert isinstance(stmts[0].tokens[0].value, str)\n\n\ndef test_split_unicode_parsestream():\n    stream = StringIO('SELECT \u00f6')\n    stmts = list(sqlparse.parsestream(stream))\n    assert str(stmts[0]) == 'SELECT \u00f6'\n\n\ndef test_split_simple():\n    stmts = sqlparse.split('select * f"
+  },
+  {
+   "turn": 9,
+   "content": "",
+   "reasoning": "Now let's understand the splitter. The bug: `WITH FUNCTION ... BEGIN ... END SELECT ...` \u2014 the \"WITH FUNCTION\" case doesn't set `_is_create`, so BEGIN doesn't increase level, and semicolons inside split the statement.\n\nAlso check the current behavior for the BigQuery example \u2014 it works? The output showed one statement. Wait, the bug report says it cuts at every semicolon. Hmm, the first test printed one statement... Let me check again \u2014 it printed `'CREATE OR REPLACE PROCEDURE ... END;'` and `---`. Wait that means split() worked? Hmm, maybe I misread. Actually the print shows one statement and the `---`. So the BigQuery case works?\n\nWait, maybe the issue arises with a different structure. Let me re-check: `CREATE OR REPLACE PROCEDURE ... BEGIN ... END` \u2014 `_is_create` is set on CREATE keyword. BEGIN: `_begin_depth += 1; if self._is_create: return 1`. So level becomes 1 after BEGIN, then semicolons at level 1 don't split... wait, but BEGIN returns 1 AND _begin_depth increments? Actually for CREATE path: `self._begin_depth += 1; if self._is_create: return 1; return 0`. So level becomes 1. DECLARE returns 1 too (if is_create and begin_depth==0) \u2014 wait, DECLARE with `_is_create` and `_begin_depth == 0`: after BEGIN, _begin_depth is 1, so DECLARE returns 0? Hmm wait in the example, BEGIN before DECLARE... `_begin_depth == 0` is false, so DECLARE returns 0. Fine.\n\nEND: `if not self._in_case: self._begin_depth = max(0, self._begin_depth - 1)` then return -1. So END decreases level by 1. After BEGIN (level 1) and END (level 0), the semicolon after END splits. Good, and DECLARE at top: `DECLARE id STRING;` \u2014 DECLARE keyword occurs when _is_create and _begin_depth==0? No, after BEGIN, _begin_depth==1. Hmm, but wait \u2014 in this example, maybe DECLARE was before... whatever, the test passed and printed one statement.\n\nLet me check the WITH FUNCTION case again: it's broken. The `_is_create` flag is only set by DDL CREATE keyword. WITH FUNCTION doesn't set it. BEGIN returns 0 \u2014 so level stays 0, and semicolons split. Also `BEGIN` sets `_begin_depth += 1`, END decrements. But since `_is_create` is False, BEGIN returns 0.\n\nBut wait \u2014 the bug report says the BigQuery procedure case is broken too. Let me test again more carefully. Maybe I had quoting issues. Let me test with a simpler case.\n\nActually wait \u2014 maybe the issue arises when the procedure has no semicolon at the end or... Let me test the exact reported example again, maybe I got a lucky run. Actually the output above shows it split into 1 statement correctly. Hmm, but the issue could be with `CREATE OR REPLACE PROCEDURE` where the lexer tokenizes `CREATE` as Keyword.DDL? Let's debug.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;'''\\nprint(sqlparse.split(sql))\\nimport sqlparse.engine\\nprint([ (t.ttype, t.value) for t in sqlparse.parse(sql)[0].tokens ] if False else '')\\n\\\"\"}"
+     },
+     "id": "BVhgwoNwcVDZEEsAowqRPcypwHNyLxDy"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND;']\n\n\n[exit code 0]"
+  },
+  {
+   "turn": 10,
+   "content": "",
+   "reasoning": "Interesting \u2014 the BigQuery procedure case passes already. Wait, but the bug report says it fails. Let me re-read... Ah, wait. Maybe the bug occurs in a `WITH FUNCTION ... BEGIN ... END` case, or maybe with different token types. The file I ran was the exact input and it passed... Let me check the tokens to see what happens. Actually, the first command in my first bash returned the expected output (1 statement). Hmm, but the bug report says it's broken. Maybe the code in the repo is different from what I'm seeing... Let me check git log/status.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"git log --oneline -3 && git status --short\"}"
+     },
+     "id": "2PIsSCfnJa7EWBS4gHsKDYO2Ep1c6Ek7"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "b8f303d initial\n\n[exit code 0]"
+  },
+  {
+   "turn": 11,
+   "content": "",
+   "reasoning": "Interesting\u2014the CREATE PROCEDURE case works already? Wait, the bug report says it cuts at every semicolon. Let me check with sqlparse.split (not parse). Actually I used split above and it returned 1 statement. Hmm \u2014 wait, the earlier command used `sqlparse.split(sql)` and got 1 statement. Maybe the bug is only for the WITH FUNCTION case? Let me check the first example more carefully \u2014 maybe it depends on the token types. Let me check tokens.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;'''\\nstmts = sqlparse.parse(sql)\\nfor t in stmts[0].tokens: print(t.ttype, repr(t.value))\\n\\\" | head -60\"}"
+     },
+     "id": "7H7ve8GTmEZz8OX4vqfvJ9CtCLpXDwOQ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Token.Keyword.DDL 'CREATE OR REPLACE'\nToken.Text.Whitespace ' '\nToken.Keyword 'PROCEDURE'\nToken.Text.Whitespace ' '\nNone 'mydataset.create_customer()'\nToken.Text.Whitespace.Newline '\\n'\nNone 'BEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 12,
+   "content": "",
+   "reasoning": "Interesting, the parser grouped everything. Let's look at what the lexer produces. Actually the parse output tokenizes differently. Let's inspect tokens from the plain lexer (sqlparse.parse with grouping disabled). Let's check engine FilterStack and how parsing proceeds. Simpler: run the splitter manually on the tokens via the lexer. Let me see how existing BEGIN/END tests work \u2014 e.g. begintag.sql.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cat tests/files/begintag.sql tests/files/begintag_2.sql tests/files/casewhen_procedure.sql 2>/dev/null\"}"
+     },
+     "id": "IyP3riLLW0cETPk0w5a3PrTzHTCv7D36"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "begin;\nupdate foo\n       set bar = 1;\ncommit;CREATE TRIGGER IF NOT EXISTS remove_if_it_was_the_last_file_link\n-- Delete the direntry when is removed it's last static link\n    AFTER DELETE ON links\n    WHEN NOT EXISTS\n    (\n        SELECT * FROM links\n        WHERE child_entry = OLD.child_entry\n        LIMIT 1\n    )\nBEGIN\n    DELETE FROM dir_entries\n    WHERE dir_entries.inode = OLD.child_entry;\nEND;create procedure procName()\nbegin\n  select case when column = 'value' then column else 0 end;\nend;\ncreate procedure procName()\nbegin\n  select 1;\nend;\n\n[exit code 0]"
+  },
+  {
+   "turn": 13,
+   "content": "",
+   "reasoning": "The statement_splitter splits at semicolons, but the token type of the whole body when BEGIN is inside a CREATE is passed... Wait, in the first test the whole BEGIN...END text was a single token with ttype None, because the lexer groups? Actually the parse result showed BEGIN...END as a single None token. Hmm, so `_change_splitlevel` sees ttype None \u2192 0, no splitting. That's why CREATE procedure works but WITH FUNCTION doesn't.\n\nWait, the WITH FUNCTION case failed with splitting. Let's inspect tokens.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);'''\\nstmts = sqlparse.parse(sql)\\nfor stmt in stmts:\\n    print('STMT:', repr(str(stmt)))\\n    for t in stmt.tokens: print('  ', t.ttype, repr(t.value))\\n\\\"\"}"
+     },
+     "id": "MWQRqbZ5ukx4BgugP3FxhM2WD70CYm8M"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "STMT: 'WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;'\n   Token.Keyword.CTE 'WITH'\n   Token.Text.Whitespace ' '\n   Token.Keyword 'FUNCTION'\n   Token.Text.Whitespace ' '\n   None 'f(x INT)'\n   Token.Text.Whitespace ' '\n   Token.Keyword 'RETURNS'\n   Token.Text.Whitespace ' '\n   Token.Name.Builtin 'INT'\n   Token.Text.Whitespace.Newline '\\n'\n   Token.Keyword 'BEGIN'\n   Token.Text.Whitespace.Newline '\\n'\n   Token.Text.Whitespace ' '\n   Token.Text.Whitespace ' '\n   Token.Keyword 'DECLARE'\n   Token.Text.Whitespace ' '\n   None 'y'\n   Token.Text.Whitespace ' '\n   Token.Name.Builtin 'INT'\n   Token.Punctuation ';'\nSTMT: '\\n  SET y = x;'\n   Token.Text.Whitespace.Newline '\\n'\n   Token.Text.Whitespace ' '\n   Token.Text.Whitespace ' '\n   Token.Keyword 'SET'\n   Token.Text.Whitespace ' '\n   None 'y = x'\n   Token.Punctuation ';'\nSTMT: '\\n  RETURN y;'\n   Token.Text.Whitespace.Newline '\\n'\n   Token.Text.Whitespace ' '\n   Token.Text.Whitespace ' '\n   Token.Keyword 'RETURN'\n   Token.Text.Whitespace ' '\n   None 'y'\n   Token.Punctuation ';'\nSTMT: '\\nEND\\nSELECT f(1);'\n   Token.Text.Whitespace.Newline '\\n'\n   Token.Keyword 'END'\n   Token.Text.Whitespace.Newline '\\n'\n   Token.Keyword.DML 'SELECT'\n   Token.Text.Whitespace ' '\n   None 'f(1)'\n   Token.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 14,
+   "content": "",
+   "reasoning": "The problem: `WITH FUNCTION ... BEGIN ... END` \u2014 here the WITH keyword is the CTE, not DDL. The `_change_splitlevel` handles BEGIN: if not `_is_create`, returns 0 \u2014 so level stays 0 inside the block, and a semicolon inside will split.\n\nAlso for the first example (CREATE OR REPLACE PROCEDURE) the current output works (split into 1). Wait \u2014 the bug report says split() cuts at semicolons inside the body. But running it gives 1 statement. Hmm, maybe the bug report targets the current version... maybe the bug appears in the actual version of statement_splitter at this commit. Let me check git log - the repo is at \"initial\" commit b8f303d. Actually the first example printed a single statement \u2014 maybe that's fine in the current code path? Let me re-check \u2014 maybe there's something with `DECLARE` keyword within create... The first example printed 1 statement which matches expected. But the bug report says it cuts. Hmm \u2014 maybe the bug report is the target of a change that doesn't exist yet? Let me re-run... It gave 1 statement. Hmm wait, maybe the split happened but the generator... the output shows one statement. So BigQuery procedure case is... hmm.\n\nWait, actually maybe there's a subtlety: perhaps the first example is correctly handled by the current code only because the whole BEGIN...END was grouped into a single token? Wait the tokenizer output shows 'BEGIN\\n ... END' as a single token of type None? That's weird \u2014 actually it printed `None` for that big token. Hmm, that's how sqlparse parses? That seems odd. Wait the token type `None` for the big body? That's probably because... hmm, actually maybe the parser treats BEGIN...END as a compound and groups it? No, parse does enable_grouping. So the BEGIN...END might be grouped as a ungrouped statement? Actually the `parse` function enables grouping, while `split` uses `FilterStack(strip_semicolon=...)` without grouping. Let me check what split produces. Split gave 1 statement. But the bug says it cuts... Let me test more carefully \u2014 maybe via sqlparse.split vs parse. The first example via split: printed 1 statement. Hmm, that's the expected result.\n\nBut wait \u2014 maybe the issue is in `BEGIN ... END` where `_is_create` gets stuck... Let me test WITH FUNCTION case more thoroughly \u2014 it splits into 4, which matches the bug report. And maybe the first example had a quirk where `CREATE OR REPLACE PROCEDURE` is a DDL with `_is_create`, so BEGIN returns 1 and the whole block is at level 1, END returns -1. That works. But maybe there are variants where it fails, e.g., `CREATE PROCEDURE ... BEGIN ... END` \u2014 that should work too.\n\nHmm, but the bug report says \"The same happens for a WITH FUNCTION ... BEGIN ... END SELECT ... query\". Perhaps the original report in the actual sqlparse issue... Let me check the real issue: sqlparse issue about \"WITH FUNCTION ... BEGIN ... END\" maybe. The fix likely: treat BEGIN keyword generally (not only when _is_create) by increasing level, and END decreasing. But careful: `BEGIN` in a regular query? Begin/end for procedural code \u2014 in plain SELECT statements, BEGIN isn't valid SQL, so it's safe to treat BEGIN/END as level changes always. But test_split_begintag: \"begin;\\nupdate foo set bar = 1;\\ncommit;\" expects 3 statements \u2014 BEGIN here is the transaction BEGIN (sqlite), not a procedure block. If we treat BEGIN/END as nesting unconditionally, then `begin;` with level... BEGIN \u2192 level 1, then `unexpected semicolon`... wait semicolon check requires level <= 0. With BEGIN \u2192 level 1, the semicolon after begin would NOT split, and `commit` at the end \u2014 level never returns to 0, and END is missing... then the whole thing would be 1 statement. That breaks test_split_begintag which expects 3 statements.\n\nSo we need a heuristic: treat BEGIN...END as a block when it's part of a CREATE procedure etc. What triggers the bug? WITH FUNCTION \u2014 a WITH clause with a FUNCTION definition containing BEGIN...END. In that case, BEGIN appears after WITH...FUNCTION... RETURNS. The current code only handles blocks when `_is_create` (CREATE keyword). So for WITH FUNCTION, BEGIN returns 0 \u2192 split inside.\n\nFix: make",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -rn \\\"PROCEDURE\\\\|FUNCTION\\\" sqlparse/keywords.py | head; grep -rn \\\"BEGIN\\\\|END\\\" sqlparse/keywords.py | head -20\"}"
+     },
+     "id": "SDvC1Hyv9xpwJGRziI4cSOG9QiyIjjVI"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "177:    'COMMAND_FUNCTION': tokens.Keyword,\n178:    'COMMAND_FUNCTION_CODE': tokens.Keyword,\n246:    'DYNAMIC_FUNCTION': tokens.Keyword,\n247:    'DYNAMIC_FUNCTION_CODE': tokens.Keyword,\n284:    'FUNCTION': tokens.Keyword,\n454:    'PROCEDURE': tokens.Keyword,\n72:    (r'END(\\s+IF|\\s+LOOP|\\s+WHILE)?\\b', tokens.Keyword),\n133:    'BEGIN': tokens.Keyword,\n253:    'END-EXEC': tokens.Keyword,\n440:    'PENDANT': tokens.Keyword,\n710:    'END': tokens.Keyword,\n907:    'EXTENDED': tokens.Keyword,\n\n[exit code 0]"
+  },
+  {
+   "turn": 15,
+   "content": "",
+   "reasoning": "The WITH FUNCTION case: the BEGIN is tokenized as Keyword. END is tokenized as Keyword (with possible ' END IF' etc.). The issue: `_is_create` is False (no CREATE keyword), so the BEGIN branch returns 0 and `_begin_depth` increments but never inflates level; semicolons at level 0 split.\n\nFix: treat BEGIN/END blocks generally \u2014 when we see BEGIN, increment `_begin_depth` and return 1 (or at least don't let `;` at level 0 split inside the block). But careful: test_split_casewhen expects 'SELECT case when ... end as foo;' to split at the semicolon \u2014 CASE/END handling: currently for non-create, CASE doesn't increment level... wait in current code, `if unified in ('IF','FOR','WHILE','CASE') and self._is_create and self._begin_depth > 0` \u2014 only in create. So CASE in normal select: END returns -1 (since _in_case False), level goes negative... hmm but test_split_casewhen passes currently. Let's check: 'SELECT case when val = 1 then 2 else null end as foo;' \u2014 SELECT... 'END' tokenizes as Keyword 'END'. unified == 'END' \u2192 not _in_case \u2192 _begin_depth = max(0, 0-1) = 0, return -1 \u2192 level = -1. Then ';' \u2192 level <= 0 \u2192 split. OK.\n\nNow the fix needs to handle BEGIN/END blocks generally (not only in create). But careful with begintag.sql: 'begin; update foo set bar = 1; commit;' \u2014 expected 3 statements. BEGIN there doesn't increase level... wait test_split_begintag expects 3 statements: begin; / update foo set bar = 1; / commit;. So BEGIN must NOT make the whole thing one statement. Hmm.\n\nSo why does CREATE PROCEDURE work but plain BEGIN not? Because in create, BEGIN returns 1 (increase level) only if _is_create. In plain 'begin', current behavior splits \u2014 desired by test.\n\nAnd 'WITH FUNCTION' \u2014 expected stay one statement. Distinguish from plain 'begin; update...'? The WITH FUNCTION case has BEGIN on the same... hmm.\n\nApproach: when we see BEGIN, increment _begin_depth and return 1 always (increase level), but test_split_begintag expects 'begin;' to be its own statement. Hmm, that would break: 'begin;' would then not split at semicolon inside BEGIN.\n\nWait test_split_begintag expects 3 statements from:\n```\nbegin;\nupdate foo\n       set bar = 1;\ncommit;\n```\nIf BEGIN increments level, then 'begin;' wouldn't split \u2192 1 statement. Breaks.\n\nAlternative: track BEGIN inside a `WITH FUNCTION` context, or treat BEGIN after FUNCTION/PROCEDURE/CREATE... The report mentions two cases:\n1. CREATE OR REPLACE PROCEDURE ... BEGIN ... END \u2014 already works? Wait \u2014 the bug report says split() cuts it into pieces, but my test showed it returns one statement! Let me re-check. Oh wait \u2014 I ran split and it returned 1 statement. Hmm. But wait, maybe the exception: the report says \"The same happens for a WITH FUNCTION...\" \u2014 the procedure case worked in my test? Let me double check... The output shows `['CREATE OR REPLACE PROCEDURE ... END;']` \u2014 one statement. Hmm, maybe the actual current behavior changed since... Let me test the exact bug report text again carefully. The bug report says it's cut at semicolons. But my repro shows one statement. Maybe the file task modified something? Let's check tests pass.\n\nActually wait \u2014 the bug report might be stale relative to the current code which fixes the procedure case but not WITH FUNCTION. Let me check git diff... single commit \"initial\". Let me check the actual failing behavior for the WITH FUNCTION case only. First repro result: yes, WITH FUNCTION splits wrongly.\n\nHmm but the report explicitly says split cuts the BigQuery procedure. Let me test with the exact example. I did \u2014 it returned a single statement. Maybe the issue is the current code handles it via the 'CREATE' + BEGIN branch? In `_change_splitlevel`, `if unified == 'BEGIN': self._begin_depth += 1; if self._is_create: return 1; return 0`. For CREATE PROCEDURE, BEGIN returns 1 \u2192 level",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;'''\\nprint(sqlparse.split(sql))\\nprint()\\nsql2 = open('tests/files/function_psql2.sql').read()\\nprint(sqlparse.split(sql2))\\n\\\"\"}"
+     },
+     "id": "c0sSJ7ggze6n4QzQRHZSnTtcO1i74UL8"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND;']\n\n[\"CREATE OR REPLACE FUNCTION update_something() RETURNS void AS\\n$body$\\nBEGIN\\n    raise notice 'foo';\\nEND;\\n$body$\\nLANGUAGE 'plpgsql' VOLATILE CALLED ON NULL INPUT SECURITY INVOKER;\"]\n\n[exit code 0]"
+  },
+  {
+   "turn": 16,
+   "content": "",
+   "reasoning": "The procedure from the bug report actually splits correctly?! Wait \u2014 the first print output shows a single statement. But the bug says it splits. Maybe the issue is with `sqlparse.split()`. Wait, it printed a single statement. Hmm, but the bug says it cuts at semicolons. Let me re-check \u2014 maybe there's a difference: the bug example uses `CREATE OR REPLACE PROCEDURE`. The output above shows one statement, correct. Hmm.\n\nWait \u2014 maybe the bug report's example needs to be tested via `sqlparse.split()` exactly. It printed one statement. Let me double check with the exact given code, maybe the bug arises only after some other conditions... Let me run with Python warnings. Actually maybe the current behavior depends on the lexer version... Let me just run the exact bug snippet again carefully.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -m pytest tests/test_split.py -q 2>&1 | tail -5\"}"
+     },
+     "id": "eMrNiZXP7oI9REkmzsj2dMzgtfEAqQnm"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": ".......................................                                  [100%]\n39 passed in 0.05s\n\n[exit code 0]"
+  },
+  {
+   "turn": 17,
+   "content": "",
+   "reasoning": "Interesting - the first bug report case (BigQuery procedure) already passes split? It returns a single statement. Wait \u2014 the reported bug says split cuts at every semicolon. But the test shows single statement. Maybe there's something else \u2014 maybe the bug is tested elsewhere, or maybe the bug report refers to the current behavior being broken in a different way. Let me re-check: `sqlparse.split(sql)` returns single statement. Hmm, that looks correct already?! Maybe the issue is with the PROCEDURE without `_is_create`... it shows fine. Let me test the WITH FUNCTION case \u2014 that fails. And maybe BigQuery procedure works only because `_is_create`... wait for procedure, CREATE OR REPLACE is DDL, so _is_create = True, BEGIN bumps _begin_depth by 1 and returns 1 \u2014 so level=1 inside, semicolons don't split. OK.\n\nWhy would the bug report say BigQuery procedures split? Perhaps with `BEGIN` on the same line or something? Let me test variant: `CREATE PROCEDURE foo() BEGIN ...` \u2014 begin depth issue. Actually also maybe nested BEGIN/END inside the body breaks it. Let me test nested blocks.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  IF id IS NOT NULL THEN\\n    INSERT INTO mydataset.customers (customer_id)\\n      VALUES(id);\\n  END IF;\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;'''\\nprint(sqlparse.split(sql))\\n\\\"\"}"
+     },
+     "id": "l9MCvLjk0huJO948Rfrs7CUvBl96MXlF"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  IF id IS NOT NULL THEN\\n    INSERT INTO mydataset.customers (customer_id)\\n      VALUES(id);\\n  END IF;\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 18,
+   "content": "",
+   "reasoning": "Now, the bug: `BEGIN ... END` inside a CTE (`WITH FUNCTION ... BEGIN ... END SELECT ...`) should stay one statement. Currently the splitter fails because:\n\n1. `_is_create` is only set when CREATE keyword is seen. With `WITH FUNCTION`, `_is_create` is False, so `BEGIN` returns 0 (no level change), and `DECLARE` doesn't increment level either. Semicolons inside the BEGIN block split.\n\nFix: In `_change_splitlevel`, treat `BEGIN` as increasing split level (or at least keep the statement in one), and track `_in_begin_block` regardless of `_is_create`. The issue is: for `begin; update ...; commit;` (begintag.sql) \u2014 3 statements expected. Let's examine: begintag.sql is:\n\n```\nbegin;\nupdate foo\n       set bar = 1;\ncommit;\n```\nExpected: 3 statements. Here `begin` is a keyword, and semicolons inside should NOT be suppressed. So we can't just make BEGIN always increment level \u2014 that would merge everything.\n\nHmm. The distinction: in `CREATE PROCEDURE ... BEGIN ... END;` the `BEGIN` is after a CREATE/FUNCTION/PROCEDURE keyword. In `WITH FUNCTION ... BEGIN ... END SELECT`, BEGIN after FUNCTION. In `begin; update; commit;` BEGIN is a standalone statement.\n\nLook at current logic: `if (unified in ('IF', 'FOR', 'WHILE', 'CASE') and self._is_create and self._begin_depth > 0)`. And `DECLARE` only increases level when `self._is_create and self._begin_depth == 0`.\n\nFor the WITH FUNCTION case, we need BEGIN to increase level. How to distinguish `WITH FUNCTION f() ... BEGIN ... END` from plain `BEGIN;`?\n\nOption: treat BEGIN as increasing level when it's inside a `FUNCTION` definition. We could track whether we've seen a `FUNCTION` keyword before BEGIN. Also CREATE PROCEDURE/FUNCTION: `_is_create` stays True... but note `_is_create` persists for the whole statement; the tokens accumulate. Actually after a statement ends, `_reset` is called.\n\nWait \u2014 in the WITH FUNCTION case, what does the lexer do? Let's check how the CREATE PROCEDURE case worked: `CREATE OR REPLACE PROCEDURE` \u2014 CREATE sets `_is_create`. BEGIN: `_begin_depth = 1`, return 1 (because `_is_create`). So level = 1. DECLARE: `_begin_depth == 1`, not 0, so no extra. Semicolons: level = 1 > 0, no split. END: decrement `_begin_depth` to 0, return -1 \u2192 level = 0. Then the `;` after END splits. Good.\n\nFor the plain `begin; update foo set bar = 1; commit;` case: `begin` keyword \u2014 `_is_create` False, so BEGIN returns 0 \u2192 level unchanged (0). `;` after begin splits \u2192 stmt 1. `update` ... `;` splits \u2192 stmt 2. `commit;` \u2192 stmt 3. Good.\n\nSo for the WITH FUNCTION case, we need BEGIN to increase level like it does for `_is_create`. New condition: BEGIN increases level when `self._is_create` OR we've seen a `FUNCTION`/`PROCEDURE` keyword in the current statement? Or more simply: when we've seen `BEGIN` with non-CREATE context... Hmm.\n\nLet's think about what statement contexts contain BEGIN...END:\n- `CREATE [OR REPLACE] PROCEDURE name(...) BEGIN ... END`\n- `CREATE [OR REPLACE] FUNCTION ... BEGIN ... END` (usually via $body$ dollar-quoting, but sometimes plain)\n- `WITH FUNCTION f(...) RETURNS ... BEGIN ... END SELECT ...` (bigquery style)\n- `DECLARE ... BEGIN ... END` blocks (nested)\n\nBut plain `BEGIN;` (transaction) must NOT increase level.\n\nA reasonable heuristic: BEGIN increases the split level if the current statement so far contains a `FUNCTION` or `PROCEDURE` keyword (or is `_is_create`). Let's implement: track `self._is_begin_block` \u2014 set when we see FUNCTION/PROCEDURE keyword before BEGIN, or _is_create. Actually simpler: set a flag `self._saw_function_or_procedure` when we see a",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);\\n'''\\nprint(sqlparse.split(sql))\\n\\\" && grep -rn \\\"_begin_depth\\\\|_is_create\\\\|_in_declare\\\\|_in_case\\\" sqlparse/ -r\"}"
+     },
+     "id": "G6nvwK52Mh3WS3jSUOUdG1DLSooiHBNg"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;', 'SET y = x;', 'RETURN y;', 'END\\nSELECT f(1);']\nsqlparse/engine/statement_splitter.py:19:        self._in_declare = False\nsqlparse/engine/statement_splitter.py:20:        self._in_case = False\nsqlparse/engine/statement_splitter.py:21:        self._is_create = False\nsqlparse/engine/statement_splitter.py:22:        self._begin_depth = 0\nsqlparse/engine/statement_splitter.py:47:            self._is_create = True\nsqlparse/engine/statement_splitter.py:51:        if unified == 'DECLARE' and self._is_create and self._begin_depth == 0:\nsqlparse/engine/statement_splitter.py:52:            self._in_declare = True\nsqlparse/engine/statement_splitter.py:56:            self._begin_depth += 1\nsqlparse/engine/statement_splitter.py:57:            if self._is_create:\nsqlparse/engine/statement_splitter.py:64:            if not self._in_case:\nsqlparse/engine/statement_splitter.py:65:                self._begin_depth = max(0, self._begin_depth - 1)\nsqlparse/engine/statement_splitter.py:67:                self._in_case = False\nsqlparse/engine/statement_splitter.py:71:                and self._is_create and self._begin_depth > 0):\nsqlparse/engine/statement_splitter.py:73:                self._in_case = True\n\n[exit code 0]"
+  },
+  {
+   "turn": 19,
+   "content": "",
+   "reasoning": "The bug: for `WITH FUNCTION ... BEGIN ... END SELECT ...`, the statement splits at every semicolon. Why? Because `_is_create` is only set for `CREATE ...` keywords. For `WITH FUNCTION f...`, `_is_create` stays False. Then `BEGIN`: `_begin_depth` increments, but returns 0 (not 1) when `not self._is_create`. So level never increases \u2192 semicolons inside BEGIN block split.\n\nAlso for `CREATE OR REPLACE PROCEDURE ...` \u2014 why does it fail then? Let's check: `CREATE OR REPLACE` token... the keyword regex might tokenize `CREATE` and `OR REPLACE` as separate keywords? From the dump: first token is `Token.Keyword.DDL 'CREATE OR REPLACE'` in one token. unified.startswith('CREATE') \u2192 True, `_is_create = True`. Then `PROCEDURE` token is Keyword (not DDL)... wait `PROCEDURE` is Keyword. Then `BEGIN`: `_begin_depth = 1`, returns 1 (is_create). Then DECLARE: `_in_declare = True`, returns 1 (since is_create and begin_depth == 0? No \u2014 begin_depth is 1 now!). Hmm wait, BEGIN came before DECLARE, so _begin_depth = 1. So DECLARE returns... `unified == 'DECLARE' and self._is_create and self._begin_depth == 0` \u2192 False \u2192 falls to default return 0. But that's fine because begin already added 1.\n\nThen semicolons: level stays 1 through the BEGIN block. END: `_begin_depth = 0`, returns -1 \u2192 level 0. Then `;` \u2192 split. So the procedure example actually works \u2014 confirmed by output.\n\nBut wait \u2014 the bug report says the procedure IS cut at semicolons. Hmm, but our run shows it stays one statement. Let me re-check... The first test shows it stays one statement. Maybe the bug is in newer versions but this repo version... The report says \"sqlparse.split() cuts my BigQuery procedure into pieces\". Maybe the actual issue is with `WITH FUNCTION ... BEGIN ... END`. And for the procedure maybe with a different ordering? Let me test more variants \u2014 e.g. procedure without CREATE, or with `END;` followed by another statement.\n\nActually the reported snippet output we got: the CREATE PROCEDURE case printed one statement. Hmm, but maybe the issue occurs when the CREATE OR REPLACE PROCEDURE contains `DECLARE` AFTER begin? No.\n\nWait \u2014 maybe the bug occurs in this case: the level added by BEGIN is 1, but if BEGIN is followed... Let me check the actual issue: `BEGIN` returns 1 when `_is_create` is set. `_is_create` is set only when DDL Create token seen. For WITH FUNCTION, not. So the main fix: treat BEGIN generally (increase depth regardless of _is_create), but then plain `SELECT ... BEGIN ... END` shouldn't... Actually BEGIN/END only appear in procedural code, so increasing depth on BEGIN should be safe. But then the CREATE special-cases in 'IF'/'FOR' etc. require `self._is_create and self._begin_depth > 0` \u2014 for WITH FUNCTION case, IF inside the body should also be handled? In the CREATE PROCEDURE example with IF inside BEGIN, it worked (level: BEGIN+1=1; IF+1=2; ... END IF -1 \u2192 1; END -1 \u2192 0; `;` splits). Good.\n\nBut careful: test_split_create_function etc. rely on behavior. Let's look at what happens with BEGIN for non-CREATE statements in existing tests. begintag.sql: `begin; update foo set bar=1; commit;` \u2192 3 statements split. BEGIN token: currently with not is_create \u2192 returns 0, level stays 0 \u2192 semicolons split. If we change BEGIN to always return +1, then begintag.sql would become 1 statement! That breaks test_split_begintag (expects 3).\n\nSo we need to distinguish: BEGIN as part of a function/procedure definition vs BEGIN as a statement (transaction begin). The distinguishing: `WITH FUNCTION ... BEGIN ... END SELECT` \u2014 BEGIN appears after FUNCTION keyword before any SELECT. And `CREATE PROCEDURE ... BEGIN ... END` \u2014 CREATE keyword seen.\n\nHmm, how does sqlparse decide? Currently `_is_create` gates the BEGIN handling (returns 1) and the IF/FOR/WHILE/",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cat tests/files/multiple_case_in_begin.sql; python -c \\\"\\nimport sqlparse\\nprint(sqlparse.split('begin; update foo set bar = 1; commit;'))\\nprint(sqlparse.split('WITH FUNCTION f(x INT) RETURNS INT BEGIN DECLARE y INT; SET y = x; RETURN y; END SELECT f(1);'))\\n\\\"\"}"
+     },
+     "id": "GSoCiVR5ZWbZtrjca6ghmAwf5mQX19x5"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "CREATE TRIGGER mytrig\nAFTER UPDATE OF vvv ON mytable\nBEGIN\n    UPDATE aa\n        SET mycola = (CASE WHEN (A=1) THEN 2 END);\n    UPDATE bb\n        SET mycolb = (CASE WHEN (B=1) THEN 5 END);\nEND;['begin;', 'update foo set bar = 1;', 'commit;']\n['WITH FUNCTION f(x INT) RETURNS INT BEGIN DECLARE y INT;', 'SET y = x;', 'RETURN y;', 'END SELECT f(1);']\n\n[exit code 0]"
+  },
+  {
+   "turn": 20,
+   "content": "",
+   "reasoning": "Let me analyze the statement splitter logic to fix the bug.\n\nCurrent `_change_splitlevel`:\n- `CREATE` (DDL) sets `_is_create = True`.\n- `DECLARE` while `_is_create and _begin_depth == 0` \u2192 `_in_declare=True`, level +1. That seems to be for CREATE FUNCTION with declared variables before BEGIN? Actually in BigQuery the DECLARE comes inside BEGIN. Hmm.\n- `BEGIN` \u2192 `_begin_depth += 1`; if `_is_create` return 1 else 0.\n- `END` \u2192 if not `_in_case`, decrement `_begin_depth`, return -1; else `_in_case=False`, return -1.\n- IF/FOR/WHILE/CASE (with `_is_create` and `_begin_depth > 0`) \u2192 +1 (CASE also sets `_in_case`).\n- `END IF`, `END FOR`, `END WHILE` \u2192 -1.\n\nThe bug: For a `WITH FUNCTION ...` query (not a CREATE), `_is_create` is False, so `BEGIN` returns 0 and the level never increases \u2014 semicolons split. For the CREATE PROCEDURE case it worked in the simple test... wait, why did the CREATE PROCEDURE test pass then? Because of the way tokens group: the whole body after `CREATE OR REPLACE` was parsed as one non-keyword token (None ttype) \"BEGIN\\n DECLARE...END\" \u2014 because the lexer didn't tokenize BEGIN etc. as keywords? Actually, the token was `None 'BEGIN\\n  DECLARE id STRING;\\n ...END'` \u2014 the lexer treated it as a single unnamed token. Interesting \u2014 because `PROCEDURE mydataset.create_customer()` \u2014 PROCEDURE is a keyword, then `mydataset.create_customer()` as None, then `BEGIN...END` as one big None token. So the splitter never saw BEGIN/DECLARE keywords as tokens. Hmm, that's odd. Why? Probably because the regex in the lexer splits on keywords... Let me check the lexer. Actually `BEGIN` is a keyword (line 133 in keywords.py: 'BEGIN': tokens.Keyword). But the tokenizer grouped \"BEGIN\\n DECLARE...\" as one token with ttype None. That might be because of the \"ID\" regex fallback \u2014 the lexer probably has a giant token regex that matches `BEGIN\\n  DECLARE id STRING;...` \u2014 hmm.\n\nActually maybe it works by the splitter not splitting because there's no punctuation ';' inside non-keyword? No \u2014 semicolons inside the unnamed token would still... The token value includes ';' but the splitter only checks `value == ';'` for punctuation tokens, so the ';' inside a non-keyword token doesn't split. That's why the CREATE PROCEDURE case \"works\". But wait, the bug report says CREATE OR REPLACE PROCEDURE is cut at every semicolon. Let me re-check... The bug report example:\n\n```\nCREATE OR REPLACE PROCEDURE mydataset.create_customer()\nBEGIN\n  DECLARE id STRING;\n  ...\n```\n\nand we got one statement back. Hmm, that contradicts the bug report... wait maybe the report's example has the procedure body as shown and split cuts it. But our test shows it doesn't split. Maybe the issue arises differently \u2014 maybe with `EXEC` or `BEGIN\\nDECLARE...` where the lexer tokenizes BEGIN as keyword. E.g. `WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN...` \u2014 in that case the whole BEGIN...END body IS tokenized (BEGIN as keyword, DECLARE as keyword, semicolons punctuation), and the splitter splits.\n\nActually wait \u2014 why the difference between the two? In the WITH FUNCTION case, BEGIN is tokenized as Keyword. In the CREATE PROCEDURE case, it's one big None token. The difference: probably the default SQL dialect keyword rules vs the parser... Hmm, actually in `parse`, no dialect is specified. The lexer uses `keywords.get_keywords()` with... let me look at the lexer to understand why one is tokenized and the other isn't.\n\nLet me look at sqlparse/lexer.py.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"sed -n 1,120p sqlparse/lexer.py\"}"
+     },
+     "id": "tiN0N1j0umJeMdBOxYnmwHr2O2OlV75l"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "#\n# Copyright (C) 2009-2020 the sqlparse authors and contributors\n# <see AUTHORS file>\n#\n# This module is part of python-sqlparse and is released under\n# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n\n\"\"\"SQL Lexer\"\"\"\nimport re\nfrom threading import Lock\n\n# This code is based on the SqlLexer in pygments.\n# http://pygments.org/\n# It's separated from the rest of pygments to increase performance\n# and to allow some customizations.\n\nfrom io import TextIOBase\n\nfrom sqlparse import tokens, keywords\nfrom sqlparse.utils import consume\n\n\nclass Lexer:\n    \"\"\"The Lexer supports configurable syntax.\n    To add support for additional keywords, use the `add_keywords` method.\"\"\"\n\n    _default_instance = None\n    _lock = Lock()\n\n    # Development notes:\n    # - This class is prepared to be able to support additional SQL dialects\n    #   in the future by adding additional functions that take the place of\n    #   the function default_initialization().\n    # - The lexer class uses an explicit singleton behavior with the\n    #   instance-getter method get_default_instance(). This mechanism has\n    #   the advantage that the call signature of the entry-points to the\n    #   sqlparse library are not affected. Also, usage of sqlparse in third\n    #   party code does not need to be adapted. On the other hand, the current\n    #   implementation does not easily allow for multiple SQL dialects to be\n    #   parsed in the same process.\n    #   Such behavior can be supported in the future by passing a\n    #   suitably initialized lexer object as an additional parameter to the\n    #   entry-point functions (such as `parse`). Code will need to be written\n    #   to pass down and utilize such an object. The current implementation\n    #   is prepared to support this thread safe approach without the\n    #   default_instance part needing to change interface.\n\n    @classmethod\n    def get_default_instance(cls):\n        \"\"\"Returns the lexer instance used internally\n        by the sqlparse core functions.\"\"\"\n        with cls._lock:\n            if cls._default_instance is None:\n                cls._default_instance = cls()\n                cls._default_instance.default_initialization()\n        return cls._default_instance\n\n    def default_initialization(self):\n        \"\"\"Initialize the lexer with default dictionaries.\n        Useful if you need to revert custom syntax settings.\"\"\"\n        self.clear()\n        self.set_SQL_REGEX(keywords.SQL_REGEX)\n        self.add_keywords(keywords.KEYWORDS_COMMON)\n        self.add_keywords(keywords.KEYWORDS_ORACLE)\n        self.add_keywords(keywords.KEYWORDS_MYSQL)\n        self.add_keywords(keywords.KEYWORDS_PLPGSQL)\n        self.add_keywords(keywords.KEYWORDS_HQL)\n        self.add_keywords(keywords.KEYWORDS_MSACCESS)\n        self.add_keywords(keywords.KEYWORDS_SNOWFLAKE)\n        self.add_keywords(keywords.KEYWORDS_BIGQUERY)\n        self.add_keywords(keywords.KEYWORDS)\n\n    def clear(self):\n        \"\"\"Clear all syntax configurations.\n        Useful if you want to load a reduced set of syntax configurations.\n        After this call, regexps and keyword dictionaries need to be loaded\n        to make the lexer functional again.\"\"\"\n        self._SQL_REGEX = []\n        self._keywords = []\n\n    def set_SQL_REGEX(self, SQL_REGEX):\n        \"\"\"Set the list of regex that will parse the SQL.\"\"\"\n        FLAGS = re.IGNORECASE | re.UNICODE\n        self._SQL_REGEX = [\n            (re.compile(rx, FLAGS).match, tt)\n            for rx, tt in SQL_REGEX\n        ]\n\n    def add_keywords(self, keywords):\n        \"\"\"Add keyword dictionaries. Keywords are looked up in the same order\n        that dictionaries were added.\"\"\"\n        self._keywords.append(keywords)\n\n    def is_keyword(self, value):\n        \"\"\"Checks for a keyword.\n\n        If the given value is in one of the KEYWORDS_* dictionary\n        it's considered a keyword. Otherwise, tokens.Name is returned.\n        \"\"\"\n        val = value.upper()\n        for kwdict in self._keywords:\n "
+  },
+  {
+   "turn": 21,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -rn \\\"END IF\\\\|END LOOP\\\\|END WHILE\\\\|END CASE\\\\|'END'\\\" sqlparse/ keywords.py 2>/dev/null | head; grep -rn \\\"END\\\" sqlparse/keywords.py | head -20\"}"
+     },
+     "id": "9Tjvffm4waY2X6fqDZGy4NPsRG638DRf"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "sqlparse/sql.py:521:    M_CLOSE = T.Keyword, 'END IF'\nsqlparse/sql.py:527:    M_CLOSE = T.Keyword, 'END LOOP'\nsqlparse/sql.py:571:    M_CLOSE = T.Keyword, 'END'\nsqlparse/sql.py:603:            elif token.match(T.Keyword, 'END'):\nsqlparse/sql.py:647:    M_CLOSE = T.Keyword, 'END'\nsqlparse/keywords.py:710:    'END': tokens.Keyword,\nsqlparse/filters/aligned_indent.py:71:        end_token = tlist.token_next_by(m=(T.Keyword, 'END'))[1]\nsqlparse/engine/statement_splitter.py:63:        if unified == 'END':\nsqlparse/engine/statement_splitter.py:76:        if unified in ('END IF', 'END FOR', 'END WHILE'):\n72:    (r'END(\\s+IF|\\s+LOOP|\\s+WHILE)?\\b', tokens.Keyword),\n253:    'END-EXEC': tokens.Keyword,\n440:    'PENDANT': tokens.Keyword,\n710:    'END': tokens.Keyword,\n907:    'EXTENDED': tokens.Keyword,\n\n[exit code 0]"
+  },
+  {
+   "turn": 22,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"sed -n 60,90p sqlparse/keywords.py; grep -n \\\"BEGIN\\\" sqlparse/keywords.py\"}"
+     },
+     "id": "LuOk584tgDWBFU2dcVfLydsjZIOKFt6Z"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "     tokens.Number.Float),\n    (r'(?![_A-Z\u00c0-\u00dc])-?\\d+(?![_A-Z\u00c0-\u00dc])', tokens.Number.Integer),\n    (r\"'(''|\\\\'|[^'])*'\", tokens.String.Single),\n    # not a real string literal in ANSI SQL:\n    (r'\"(\"\"|\\\\\"|[^\"])*\"', tokens.String.Symbol),\n    (r'(\"\"|\".*?[^\\\\]\")', tokens.String.Symbol),\n    # sqlite names can be escaped with [square brackets]. left bracket\n    # cannot be preceded by word character or a right bracket --\n    # otherwise it's probably an array index\n    (r'(?<![\\w\\])])(\\[[^\\]\\[]+\\])', tokens.Name),\n    (r'((LEFT\\s+|RIGHT\\s+|FULL\\s+)?(INNER\\s+|OUTER\\s+|STRAIGHT\\s+)?'\n     r'|(CROSS\\s+|NATURAL\\s+)?)?JOIN\\b', tokens.Keyword),\n    (r'END(\\s+IF|\\s+LOOP|\\s+WHILE)?\\b', tokens.Keyword),\n    (r'IF\\s+(NOT\\s+)?EXISTS\\b', tokens.Keyword),\n    (r'NOT\\s+NULL\\b', tokens.Keyword),\n    (r'(ASC|DESC)(\\s+NULLS\\s+(FIRST|LAST))?\\b', tokens.Keyword.Order),\n    (r'(ASC|DESC)\\b', tokens.Keyword.Order),\n    (r'NULLS\\s+(FIRST|LAST)\\b', tokens.Keyword.Order),\n    (r'UNION\\s+ALL\\b', tokens.Keyword),\n    (r'CREATE(\\s+OR\\s+REPLACE)?\\b', tokens.Keyword.DDL),\n    (r'DOUBLE\\s+PRECISION\\b', tokens.Name.Builtin),\n    (r'GROUP\\s+BY\\b', tokens.Keyword),\n    (r'ORDER\\s+BY\\b', tokens.Keyword),\n    (r'PRIMARY\\s+KEY\\b', tokens.Keyword),\n    (r'HANDLER\\s+FOR\\b', tokens.Keyword),\n    (r'GO(\\s\\d+)\\b', tokens.Keyword),\n    (r'(LATERAL\\s+VIEW\\s+)'\n     r'(EXPLODE|INLINE|PARSE_URL_TUPLE|POSEXPLODE|STACK)\\b',\n     tokens.Keyword),\n    (r\"(AT|WITH')\\s+TIME\\s+ZONE\\s+'[^']+'\", tokens.Keyword.TZCast),\n    (r'(NOT\\s+)?(LIKE|ILIKE|RLIKE)\\b', tokens.Operator.Comparison),\n133:    'BEGIN': tokens.Keyword,\n\n[exit code 0]"
+  },
+  {
+   "turn": 23,
+   "content": "",
+   "reasoning": "So `END IF` is lexed as a single keyword token. `BEGIN` is Keyword. `DECLARE ...` is keyword.\n\nThe issue: for `CREATE OR REPLACE PROCEDURE`, the current code:\n- CREATE -> _is_create = True\n- BEGIN -> _begin_depth = 1, return 1 (if is_create). So level = 1.\n- DECLARE -> _in_declare = True, return 1. level = 2?? Wait, `self.level += self._change_splitlevel(...)`. Hmm, BEGIN gives +1 (is_create), so level=1 after BEGIN. DECLARE: _is_create and begin_depth==0? No, begin_depth=1. So returns 0. OK.\n\nWait but the test passes for the big query... it gave one statement. Wait the output above shows CREATE OR REPLACE PROCEDURE gives one statement already! Hmm. Wait \u2014 the first output printed the whole thing as one statement. But the bug report says split cuts at every semicolon. Let me re-check... Maybe I mis-tested. Let me re-run carefully.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;'''\\nr = sqlparse.split(sql)\\nprint(len(r))\\nfor s in r: print('---'); print(s)\\n\\\"\"}"
+     },
+     "id": "Q27LWQudp2uzqSvErxnEFmvvk04xb6Vi"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "1\n---\nCREATE OR REPLACE PROCEDURE mydataset.create_customer()\nBEGIN\n  DECLARE id STRING;\n  SET id = GENERATE_UUID();\n  INSERT INTO mydataset.customers (customer_id)\n    VALUES(id);\n  SELECT FORMAT(\"Created customer %s\", id);\nEND;\n\n[exit code 0]"
+  },
+  {
+   "turn": 24,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;\\nSELECT 1;'''\\nprint(sqlparse.split(sql))\\n\\\"\"}"
+     },
+     "id": "zlmbA7rKJAdFz8XykvWHzP7QxGxl0JS2"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND;', 'SELECT 1;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 25,
+   "content": "",
+   "reasoning": "Interesting \u2014 the stated bug report says BigQuery procedure is split at every semicolon. But my test shows it stays one statement. Maybe the bug manifests elsewhere \u2014 e.g., without CREATE? Let's test variants.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;\\n'''\\nprint(sqlparse.split(sql))\\nsql = open('tests/files/begintag_2.sql').read()\\nprint(repr(sql))\\n\\\"\"}"
+     },
+     "id": "m0QBGXBxuBWs9pecXCsEF1OiLSphYa0F"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND;']\n\"CREATE TRIGGER IF NOT EXISTS remove_if_it_was_the_last_file_link\\n-- Delete the direntry when is removed it's last static link\\n    AFTER DELETE ON links\\n    WHEN NOT EXISTS\\n    (\\n        SELECT * FROM links\\n        WHERE child_entry = OLD.child_entry\\n        LIMIT 1\\n    )\\nBEGIN\\n    DELETE FROM dir_entries\\n    WHERE dir_entries.inode = OLD.child_entry;\\nEND;\"\n\n[exit code 0]"
+  },
+  {
+   "turn": 26,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''DO \\\\$\\\\$\\nBEGIN\\n  RAISE NOTICE 'foo';\\nEND;\\n\\\\$\\\\$;'''\\nprint(sqlparse.split(sql))\\nprint()\\nsql2 = '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);'''\\n# multi-token tokens: check how BEGIN appears in token list\\nstmts = sqlparse.parse(sql2)\\nfor stmt in stmts[:1]:\\n    for t in stmt.tokens: print(t.ttype, repr(t.value))\\n\\\"\"}"
+     },
+     "id": "282cX2EWvNzDegiTVpcNHZdy4CyVTIZu"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "[\"DO $$\\nBEGIN\\n  RAISE NOTICE 'foo';\\nEND;\\n$$;\"]\n\nToken.Keyword.CTE 'WITH'\nToken.Text.Whitespace ' '\nToken.Keyword 'FUNCTION'\nToken.Text.Whitespace ' '\nNone 'f(x INT)'\nToken.Text.Whitespace ' '\nToken.Keyword 'RETURNS'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'BEGIN'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'DECLARE'\nToken.Text.Whitespace ' '\nNone 'y'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 27,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\n# how does a WITH ... BEGIN ... END get tokenized for the JOIN? check test_split_begintag (3 statements)\\nprint(open('tests/files/begintag.sql').read())\\n\\\" && python -c \\\"\\nimport sqlparse\\nsql = open('tests/files/begintag.sql').read()\\nprint(sqlparse.split(sql))\\n\\\"\"}"
+     },
+     "id": "iAlCic1F9Wdu8vddqK3jck4VKjUJ4sAi"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "begin;\nupdate foo\n       set bar = 1;\ncommit;\n['begin;', 'update foo\\n       set bar = 1;', 'commit;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 28,
+   "content": "",
+   "reasoning": "Key point: `begin;` then semicolon should still split (existing test begintag expects 3 statements). So BEGIN BEGIN alone without CREATE doesn't make the whole thing a single statement. The fix is for CREATE PROCEDURE/FUNCTION with BEGIN...END and WITH FUNCTION...BEGIN...END.\n\nNow, the bug report: `WITH FUNCTION ... BEGIN ... END SELECT ...` should stay one statement. Currently it splits. Also the BigQuery procedure one splits (bug \u2014 but it printed one for the test? Wait, earlier it printed 1 statement. Let me re-read the bug report.\n\n> sqlparse.split() cuts my BigQuery procedure into pieces at every semicolon inside its body\n\nBut my test shows it works already? Hmm, maybe the bug is in a newer variant. Let me test the exact statement from the bug report again... It returned one statement. Wait \u2014 maybe the issue is with `END;` at the very end \u2014 that's fine. Let me look more carefully: maybe with newer tokens (e.g., BEGIN with keyword tokens in weird contexts). Let me check the git log \u2014 initial commit. Perhaps the bug was introduced recently or is about the statement ending at the first semicolon *after* END... The statement in the bug report: ends with `END;` \u2014 that's the statement end. OK.\n\nBut WITH FUNCTION case fails. Let's test what happens with `WITH FUNCTION ... END SELECT` \u2014 it splits at semicolons inside the BEGIN block. Expected: stays one statement. The BEGIN there isn't a CREATE, so `_is_create` is False.\n\nLet me think about what design should handle both:\n\n1. BigQuery procedure (CREATE ... BEGIN ... END;) \u2014 already works? It returned 1 statement. But wait \u2014 the expected behavior per the report: \"the statement ends at the first semicolon after the block's END, or at the end of the input.\" So the statement ends with the semicolon after END. Current behavior for that case matches. But maybe with nested BEGIN...END inside? Let me test nested BEGIN.\n\nLet me test a few variants to see where it fails.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\n# nested BEGIN inside procedure body\\nsql = '''CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  DECLARE x INT;\\n  BEGIN\\n    SET x = 1;\\n  END;\\n  SELECT x;\\nEND;\\nSELECT 2;'''\\nprint(len(sqlparse.split(sql)))\\nfor s in sqlparse.split(sql): print(repr(s))\\n\\\"\"}"
+     },
+     "id": "lfG09kbIIgpJ27BO49U6F414GO8GPrkJ"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "2\n'CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  DECLARE x INT;\\n  BEGIN\\n    SET x = 1;\\n  END;\\n  SELECT x;\\nEND;'\n'SELECT 2;'\n\n[exit code 0]"
+  },
+  {
+   "turn": 29,
+   "content": "",
+   "reasoning": "Interesting: nested BEGIN works because `._begin_depth` increments and decrements. But the issue is `WITH FUNCTION ... BEGIN` \u2014 `_is_create` is False, so BEGIN returns 0 and DECLARE returns 0 (needs _is_create), so levels don't change \u2014 semicolons split.\n\nThe fix: treat BEGIN/END as control flow regardless of CREATE context. But careful not to break the existing tests that rely on `begin; update foo set bar=1; commit;` splitting into 3 statements (test_split_begintag). In that case, `begin` is a bare BEGIN keyword outside a CREATE \u2014 and it must NOT keep the statement together. Hmm.\n\nExisting semantics:\n- For `BEGIN` when `_is_create`: `_begin_depth += 1`, returns 1 (increase) \u2014 but then `BEGIN ...` in begintag_2 (CREATE TRIGGER) returns 1... wait, in begintag_2, BEGIN is within create, so _begin_depth becomes 1, returns 1, level becomes 1, so semicolons inside don't split. Good.\n- For bare BEGIN (no create), BEGIN returns 0, so split. That's what test_split_begintag relies on.\n\nSo the requirement: semicolons inside a `BEGIN ... END` block don't end statements, regardless of whether it's inside CREATE \u2014 but test_split_begintag expects `begin; update foo...` to split into 3. So the bare `begin;` splitting is intentional behavior for a begin as a standalone statement... Hmm wait \u2014 BEGIN; update foo...; commit;. If we made BEGIN/END always increase/decrease, then begin; would start a block, update foo...; would be absorbed, commit; ends with END? No \u2014 commit isn't END. So that would break test_split_begintag.\n\nSo the distinction must remain: BEGIN in a \"procedure-like\" context (CREATE ... or WITH FUNCTION ...) is a block. Bare BEGIN is not a block.\n\nThe WITH FUNCTION case: the trigger is `WITH FUNCTION`. The CREATE case is triggered by DDL keyword CREATE. So add: a `WITH ... FUNCTION` pattern \u2014 when we see `WITH` followed by `FUNCTION`, mark as `_in_function` (or make the split-level increase on BEGIN when in that context).\n\nApproach: track whether we're in a \"definition context\" \u2014 i.e., `_is_create` OR a pending WITH...FUNCTION. When `WITH` is seen, set `_with_seen = True`? But WITH is also Common Table Expression used in plain queries (`WITH x AS (...) SELECT`), which should not keep things together \u2014 actually a WITH clause doesn't contain BEGIN/END anyway.\n\nBetter: track state `_with_function`. When token is keyword `WITH`, we could look ahead... we can't easily look ahead. Alternative: set a flag `_pending_with = True` when WITH seen; when `FUNCTION` keyword seen, set `_in_function_def = True` and reset flag. That handles `WITH FUNCTION f() ... BEGIN`.\n\nSimpler: since `BEGIN` handling needs to know whether we're in a definition, change the BEGIN handler: `if unified == 'BEGIN': self._begin_depth += 1; if self._is_create or self._with_function: return 1; return 0`. Hmm, but if WITH FUNCTION context and BEGIN returns 1... wait in create case it returns 1 (increase), keeping level 1 so semicolons don't split. But `_begin_depth` increments regardless.\n\nBut wait: for WITH FUNCTION, the existing code: BEGIN returns 0 (not is_create), and `_begin_depth` becomes 1. Then `DECLARE` returns... the DECLARE branch requires `_is_create` so returns 0 in WITH case. END branch: decrements `_begin_depth` (max(0, -1)). END returns -1. So with `WITH FUNCTION ... BEGIN`, BEGIN increments _begin_depth to 1, returns 0 \u2192 level 0. DECLARE returns 0. `;` at level 0 \u2192 split. That's the bug.\n\nFix: In the BEGIN branch, if `_is_create or _with_function`: return 1. Also maybe always track _with_function only before the BEGIN/END.\n\nAlso the END branch: `if not self._in_case: self._begin_depth = max(",
+   "tool_calls": [],
+   "finish_reason": "stop"
+  },
+  {
+   "turn": 30,
+   "content": "",
+   "reasoning": "Let me re-check the current state. The bug: `sqlparse.split()` cuts a BigQuery procedure into pieces at every semicolon inside its body. Wait \u2014 my earlier test showed `CREATE OR REPLACE PROCEDURE ...` splits correctly into 1 statement. Let me re-check. Earlier:\n\n```\npython -c \"\nimport sqlparse\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\nBEGIN\n  DECLARE id STRING;\n  ...\nEND;'''\nprint(repr(s))...\n```\nOutput: 1 statement. Hmm, that seemed fine. But the bug report says it splits into pieces. Maybe the issue is with a different BigQuery procedure pattern. Let me look at what's different \u2014 maybe with a second statement after the procedure? That worked too (2 statements).\n\nWait, maybe the issue is with `CREATE OR REPLACE PROCEDURE ... BEGIN ... END` where there's no outer CREATE? Like the WITH FUNCTION case. The bug report says both BigQuery procedures AND WITH FUNCTION ... BEGIN ... END SELECT. The conjunction test showed the WITH FUNCTION case splits into 4 statements \u2014 that's broken.\n\nBut the BigQuery test case in the report \u2014 let me actually run it very carefully. Maybe the issue arises when the procedure body contains certain constructs, e.g. a nested BEGIN/END, or DECLARE... Hmm but earlier tests passed. Let me re-run and check more carefully. Maybe the issue arises when the procedure has a `COMMIT` or has `BEGIN` at level 0... Actually wait \u2014 maybe the token `BEGIN\\n  DECLARE id STRING;\\n...` was all tokenized as ONE token in the parse output above! Look at the earlier output:\n\n```\nNone 'BEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  ...\\nEND'\n```\n\nInteresting \u2014 the whole BEGIN...END body was tokenized as a single Name token (`None` ttype). That's why the CREATE PROCEDURE case works: the semicolons are inside an unparsed chunk. That's why tests pass but it's also brittle.\n\nHmm wait, but the bug report says the BigQuery procedure IS split into pieces at every semicolon inside its body. Maybe with a different query \u2014 the exact one in the report:\n\n```\nCREATE OR REPLACE PROCEDURE mydataset.create_customer()\nBEGIN\n  DECLARE id STRING;\n  SET id = GENERATE_UUID();\n  INSERT INTO mydataset.customers (customer_id)\n    VALUES(id);\n  SELECT FORMAT(\"Created customer %s\", id);\nEND;\n```\n\nI ran exactly this and got 1 statement. Hmm. Unless the `SELECT FORMAT(\"Created customer %s\", id);` line is treated differently... Let me re-run to be sure. Maybe I mis-tested. Let me just run it again.\n\nActually wait \u2014 maybe the version in the repo differs from what I tested... no, it's the same. Let me just rerun.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -c \\\"\\nimport sqlparse\\nsql = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\\\\\"Created customer %s\\\\\\\", id);\\nEND;'''\\nprint(sqlparse.split(sql))\\n\\\"\"}"
+     },
+     "id": "QOmB01AqdeH2OJCygqi87RJjDxMvdAnI"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\"Created customer %s\", id);\\nEND;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 31,
+   "content": "",
+   "reasoning": "Interesting - the procedure example already works. But the WITH FUNCTION example fails. Let me check the actual bug report again: \"sqlparse.split() cuts my BigQuery procedure into pieces\" \u2014 but the example printed 1 statement. Maybe the issue is in a different version, or maybe the actual problem is with a different form. Let me check the CLI `sqlparse.split`... wait, maybe the test uses parse. Hmm, actually the test in tests/test_split.py uses sqlparse.split. Let me check whether the split function differs from parse. Both go through the same FilterStack. Wait \u2014 split passes `strip_semicolon=strip_semicolon`. Hmm.\n\nWait, maybe the issue is only with newer versions... The task says the bug report describes a symptom. Maybe the bug is not currently reproduced by the first example, but the second example (WITH FUNCTION) reproduces. Let me focus on that one.\n\nActually wait \u2014 maybe the statement_splitter's `_change_splitlevel` handles CREATE procedure via `_is_create` with DECLARE etc. The WITH FUNCTION case: WITH is not DDL-CREATE, so `_is_create` stays False, and `BEGIN` returns 0 (since `self._is_create` is False \u2192 `return 0`... wait:\n\n```python\nif unified == 'BEGIN':\n    self._begin_depth += 1\n    if self._is_create:\n        return 1\n    return 0\n```\n\nSo for WITH FUNCTION, BEGIN increments _begin_depth but returns 0 (no level increase), so semicolons inside the body still end the statement. That's the bug in the second example.\n\nFor the CREATE procedure example, it works because `_is_create` is True and BEGIN returns 1. But wait \u2014 is that the right behavior for CREATE PROCEDURE? BEGIN returns 1, END returns -1 (since not in case), so level goes 1\u21920 after END. Semicolons inside body: level is \u22651... Actually at BEGIN, level=1, semicolons within the body keep level 1, so no split. After END, level=0, next semicolon ends statement. Good.\n\nBut the report says the BigQuery procedure example is broken. Hmm, maybe with different versions... Let me test more variants. Actually wait \u2014 maybe the first example already works in this repo. Let me test the second one in detail and fix it.\n\nThe general fix: BEGIN increments _begin_depth and should increase the split level regardless of _is_create (i.e., `BEGIN ... END` blocks are generally statement-level constructs). But careful: tests like test_split_begintag expect `begin; update foo...; commit;` to split into 3 statements. Here BEGIN appears without CREATE. If we make BEGIN increment level by 1, then `begin;` at level... wait, level starts at 0, BEGIN would return 1, level becomes 1, then `;` after begin \u2014 level is 1, so no split. That would break test_split_begintag!\n\nSo the current behavior: BEGIN returns 1 only when _is_create; otherwise 0. And that test expects begin; \u2192 split.\n\nSo we need to distinguish \"BEGIN ... END\" as a block context that starts a statement vs. a transaction begin. How to do that robustly?\n\nIdeas:\n1. Only treat BEGIN as a block when the statement starts with CREATE PROCEDURE / CREATE FUNCTION / WITH FUNCTION (i.e., _is_create or WITH FUNCTION / WITH ... FUNCTION context).\n2. Increase level on BEGIN if we're inside a \"function/procedure definition\" context.\n\nThe WITH FUNCTION case: statement starts with WITH ... FUNCTION. So we need to detect WITH FUNCTION / WITH RECURSIVE ... FUNCTION context and treat BEGIN as a block.\n\nLet me think about what semantics to implement:\n- Track `_in_with_function` state: when we see WITH followed (in the same statement) by FUNCTION ... BEGIN, treat BEGIN..END as a block.\n\nSimpler approach: whenever we see BEGIN while in a \"function definition\" context (either CREATE FUNCTION/PROCEDURE or WITH <...> FUNCTION/PROCEDURE), increment level.\n\nLet me check how the parser tokenizes: 'WITH' is keyword CTE, 'FUNCTION' is Keyword, 'PROCEDURE' is Keyword.\n\nImplementation plan in statement_splitter.py:\n\nIn _change_splitlevel, handle:\n- When unified == 'WITH' and not already in a block: set a flag `_maybe_with_function = True`? That's fragile.\n\n",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -n \\\"_is_create\\\\|_in_case\\\\|_in_declare\\\\|_begin_depth\\\" sqlparse/engine/statement_splitter.py && sed -n 28,80p sqlparse/engine/statement_splitter.py\"}"
+     },
+     "id": "vHeDKdFiz4Ey7Bb5us1wRICC51P4R0PP"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "19:        self._in_declare = False\n20:        self._in_case = False\n21:        self._is_create = False\n22:        self._begin_depth = 0\n47:            self._is_create = True\n51:        if unified == 'DECLARE' and self._is_create and self._begin_depth == 0:\n52:            self._in_declare = True\n56:            self._begin_depth += 1\n57:            if self._is_create:\n64:            if not self._in_case:\n65:                self._begin_depth = max(0, self._begin_depth - 1)\n67:                self._in_case = False\n71:                and self._is_create and self._begin_depth > 0):\n73:                self._in_case = True\n    def _change_splitlevel(self, ttype, value):\n        \"\"\"Get the new split level (increase, decrease or remain equal)\"\"\"\n\n        # parenthesis increase/decrease a level\n        if ttype is T.Punctuation and value == '(':\n            return 1\n        elif ttype is T.Punctuation and value == ')':\n            return -1\n        elif ttype not in T.Keyword:  # if normal token return\n            return 0\n\n        # Everything after here is ttype = T.Keyword\n        # Also to note, once entered an If statement you are done and basically\n        # returning\n        unified = value.upper()\n\n        # three keywords begin with CREATE, but only one of them is DDL\n        # DDL Create though can contain more words such as \"or replace\"\n        if ttype is T.Keyword.DDL and unified.startswith('CREATE'):\n            self._is_create = True\n            return 0\n\n        # can have nested declare inside of being...\n        if unified == 'DECLARE' and self._is_create and self._begin_depth == 0:\n            self._in_declare = True\n            return 1\n\n        if unified == 'BEGIN':\n            self._begin_depth += 1\n            if self._is_create:\n                # FIXME(andi): This makes no sense.  ## this comment neither\n                return 1\n            return 0\n\n        # BEGIN and CASE/WHEN both end with END\n        if unified == 'END':\n            if not self._in_case:\n                self._begin_depth = max(0, self._begin_depth - 1)\n            else:\n                self._in_case = False\n            return -1\n\n        if (unified in ('IF', 'FOR', 'WHILE', 'CASE')\n                and self._is_create and self._begin_depth > 0):\n            if unified == 'CASE':\n                self._in_case = True\n            return 1\n\n        if unified in ('END IF', 'END FOR', 'END WHILE'):\n            return -1\n\n        # Default\n        return 0\n\n[exit code 0]"
+  },
+  {
+   "turn": 32,
+   "content": "",
+   "reasoning": "Let me analyze the bug. The issue: semicolons inside a `BEGIN ... END` block should not end the statement. Currently:\n\n- When `CREATE` appears, `_is_create = True`, and `BEGIN` returns +1 \u2014 works for CREATE statements.\n- For `WITH FUNCTION ... BEGIN ... END`, `_is_create` is False, so BEGIN returns 0 \u2192 semicolons inside split.\n\nAlso, the BigQuery `CREATE OR REPLACE PROCEDURE` works because `BEGIN` increases level. But the bug report says \"sqlparse.split() cuts my BigQuery procedure into pieces at every semicolon inside its body\" \u2014 yet my test showed it works. Maybe there's a subtle bug where `DECLARE` at `_begin_depth == 0` returns +1 but never gets -1? Wait, DECLARE returns 1 and increments `_in_declare`... but nothing decrements the level back for declare. Actually DECLARE consumes the rest. Hmm, but the procedure test passed.\n\nWait \u2014 maybe the bug report refers to a NEW version of sqlparse where things changed. Let me check the bug: maybe the issue is with `sqlparse.split()` in the current code. Let me check with a different case: `CREATE PROCEDURE ... BEGIN ... END` where a subquery with parens is inside? Actually let me test the reported BigQuery sample with the current code \u2014 it returned 1 statement correctly. Hmm.\n\nWait \u2014 actually maybe the issue is in a NEWER version of the code where the fix for CREATE procedure was removed or the `_is_create` logic changed. Let me check git log and whether the bug reproduces. Actually my tests show the CREATE OR REPLACE PROCEDURE case works. But the WITH FUNCTION case fails. So part of the reported bug is still reproducible.\n\nThe task says: \"The same happens for a `WITH FUNCTION ... BEGIN ... END SELECT ...` query\". So the main failing case is WITH FUNCTION. Maybe the BigQuery procedure works already (via _is_create). But the bug report claims it doesn't. Let me check with `split` vs `parse` more carefully \u2014 maybe passing `strip_semicolon` or with different formatting. Let me check the exact bug report string again... In my earlier run, `split` returned 1 statement. Hmm, but maybe with the `CREATE OR REPLACE PROCEDURE` with a multi-token `DECLARE`? That worked.\n\nHmm, wait. Maybe the issue is about `CREATE OR REPLACE PROCEDURE` where the body has `END;` at the end and then more statements. That worked too.\n\nLet me check `_in_declare` path: `DECLARE` inside create with `_begin_depth == 0` returns 1 and sets `_in_declare = True`. Then in BEGIN: `_begin_depth += 1`, returns 1 if _is_create. So level increases... The level needs to come back to 0 at the `END` then `;`. After DECLARE (+1), BEGIN (+1), END (-1) \u2192 level +1, then `;` doesn't split (level 1 > 0). Then the final statement is yielded as pending. That's why the trailing `;` in \"END;\" doesn't split \u2014 meaning the trailing semicolon stays attached to the create statement. That's the current behavior.\n\nBut wait, the bug says the BigQuery procedure is split at every semicolon. Maybe the bug was introduced in a newer commit. This repo says version 0.5.4.dev0. Let me check the actual upstream. Actually the environment is at \"initial\" commit \u2014 single commit. So the bug may be elsewhere. Let me test the exact BigQuery example with blank lines etc. Actually I already did \u2014 it works.\n\nHmm, maybe the bug is with `split(strip_semicolon=True)`? No, the report doesn't mention that.\n\nLet me test with a procedure that contains `;` in a comment, or with DECLARE at top-level. Actually, let me run the full test suite to see failures.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python -m pytest tests/ -q 2>&1 | tail -20\"}"
+     },
+     "id": "UCd15zUhmh7QMf80M1liCeoyN6QmfcBE"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "........................................................................ [ 15%]\n...x.............x...................................................... [ 30%]\n........................................................................ [ 45%]\n........................................................................ [ 60%]\n........................................................................ [ 75%]\n...X.................................................................... [ 90%]\n..............................................                           [100%]\n475 passed, 2 xfailed, 1 xpassed in 1.11s\n\n[exit code 0]"
+  },
+  {
+   "turn": 33,
+   "content": "",
+   "reasoning": "Now I understand the mechanism. The problem cases:\n\n1. `CREATE OR REPLACE PROCEDURE ... BEGIN ... END` \u2014 this actually works in my test! It returned 1 statement. Hmm wait, the bug report says it's split into pieces. Let me re-check with the exact input from the bug report. It passed with 1 statement... Maybe the bug arises in a slightly different version? Let me check git log.\n\nActually wait \u2014 maybe the bug report was against a different version, or maybe the bug appears in a newer scenario. Let me test exactly the bug report's first case again... it returned 1 statement. Hmm.\n\nBut the second case (WITH FUNCTION ... BEGIN ... END SELECT ...) fails: 4 statements.\n\nMaybe the intended scenario differs due to `sqlparse.split` vs `parse`. Let me test with a slightly different structure. The bug report says \"sqlparse.split() cuts my BigQuery procedure into pieces at every semicolon inside its body\". Let me test the case-insensitivity or the exact spacing... Actually let me test more carefully \u2014 maybe with the actual CURRENT code, the first case works because of `_is_create` + `BEGIN` returning 1... wait, when `BEGIN` is seen with `_is_create`, it returns 1, incrementing level. Then DECLARE at depth... Actually BEGIN returns 1 only if _is_create, so level increases to 1 and any semicolons inside are at level>=1, not split. Then END returns -1, level back to 0. Then `;` after END splits. Good.\n\nBut for the WITH FUNCTION case, `WITH FUNCTION f(x INT) RETURNS INT` \u2014 the keyword here: `FUNCTION` is `tokens.Keyword`, not DDL, so `_is_create` is False. `BEGIN` does not return 1 \u2192 level stays 0 \u2192 semicolons split. That's the bug to fix.\n\nFor the first case (BigQuery procedure)... it worked. But maybe with `BEGIN` as... hmm, wait. Let me test a BigQuery procedure without CREATE \u2014 e.g., `ALTER PROCEDURE ... BEGIN ... END`, or maybe the bug report's version differs. The bug report may have been produced with the repo's current state \u2014 but my test showed it works. Let me test with a trailing semicolon and different keyword casing.\n\nActually wait \u2014 maybe the issue is the `END` in `BEGIN ... END` block: after END, level goes from... In CREATE PROCEDURE case: BEGIN with _is_create \u2192 level 1. Inside, semicolons at level 1+ \u2014 not split. END \u2192 level 0. Then final `;` splits... but the statement was yielded only at the end. Fine.\n\nBut hold on, maybe the actual bug: `BEGIN` followed by... Let me test the exact bug report input in isolation with fresh interpreter to be sure. I did \u2014 returned 1 statement. Hmm.\n\nLet me check whether there's something with `DECLARE` inside \u2014 `_in_declare` requires `_is_create` and `_begin_depth == 0`, and returns 1. Not relevant here.\n\nHmm, maybe the first reported case fails on a different code path \u2014 `sqlparse.split()` vs... Let me check `sqlparse.split` implementation \u2014 it uses FilterStack(strip_semicolon=...) which includes statement_splitter. Let me check filter_stack.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cat sqlparse/engine/filter_stack.py && git log --oneline -3\"}"
+     },
+     "id": "B8QiUJYyr8V8HSjiLjXgBhZWbCmjFRnf"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "#\n# Copyright (C) 2009-2020 the sqlparse authors and contributors\n# <see AUTHORS file>\n#\n# This module is part of python-sqlparse and is released under\n# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n\n\"\"\"filter\"\"\"\n\nfrom sqlparse import lexer\nfrom sqlparse.engine import grouping\nfrom sqlparse.engine.statement_splitter import StatementSplitter\nfrom sqlparse.exceptions import SQLParseError\nfrom sqlparse.filters import StripTrailingSemicolonFilter\n\n\nclass FilterStack:\n    def __init__(self, strip_semicolon=False):\n        self.preprocess = []\n        self.stmtprocess = []\n        self.postprocess = []\n        self._grouping = False\n        if strip_semicolon:\n            self.stmtprocess.append(StripTrailingSemicolonFilter())\n\n    def enable_grouping(self):\n        self._grouping = True\n\n    def run(self, sql, encoding=None):\n        try:\n            stream = lexer.tokenize(sql, encoding)\n            # Process token stream\n            for filter_ in self.preprocess:\n                stream = filter_.process(stream)\n\n            stream = StatementSplitter().process(stream)\n\n            # Output: Stream processed Statements\n            for stmt in stream:\n                if self._grouping:\n                    stmt = grouping.group(stmt)\n\n                for filter_ in self.stmtprocess:\n                    filter_.process(stmt)\n\n                for filter_ in self.postprocess:\n                    stmt = filter_.process(stmt)\n\n                yield stmt\n        except RecursionError as err:\n            raise SQLParseError('Maximum recursion depth exceeded') from err\nb8f303d initial\n\n[exit code 0]"
+  },
+  {
+   "turn": 34,
+   "content": "",
+   "reasoning": "Now let me analyze why the reported case fails. The report says `sqlparse.split()` cuts the procedure into pieces at every semicolon inside its body. But when I ran it, it returned a single statement. Hmm \u2014 maybe the bug depends on the exact content. Let me try the exact example again with `sqlparse.split`:\n\nIt gave 1 statement. Wait, maybe the bug is different: maybe the `sqlparser` on the *first* line `CREATE OR REPLACE PROCEDURE mydataset.create_customer()` \u2014 here tokens are `CREATE OR REPLACE` DDL, `PROCEDURE`, whitespace, `mydataset.create_customer()` as one token (no parenthesis token!). Notice: the function name `mydataset.create_customer()` is tokenized as a single Name token including `()`. So the `(`/`)` never occur as Punctuation tokens. The BEGIN increments `_begin_depth` to 1 and returns... let's trace.\n\nFor the WITH FUNCTION case, BEGIN returns... in the code, `if unified == 'BEGIN': self._begin_depth += 1; if self._is_create: return 1; return 0`. For WITH FUNCTION, `_is_create` is False (WITH isn't CREATE), so BEGIN returns 0 but increments `_begin_depth`. Then DECLARE: unified=='DECLARE' and _is_create False \u2192 default 0. Then semicolons: level == 0 \u2192 split. That's the bug: with a BEGIN...END block not preceded by CREATE, the splitter doesn't raise the level.\n\nFor the CREATE PROCEDURE case: BEGIN with _is_create \u2192 return 1. The DECLARE (begin_depth==1) \u2192 not DECLARE branch. `SET id = GENERATE_UUID();` \u2014 `SET`... `GENERATE_UUID()` is a single token. INSERT INTO ... VALUES(id) \u2014 `(` and `)` tokens: level 1 \u2192 2 then 1. SELECT FORMAT(\"...\", id) \u2014 2 more parens \u2192 level 1 \u2192 2 \u2192 1. END \u2192 `_begin_depth` 1\u21920, return -1 \u2192 level 0. Then `;` \u2192 level<=0 \u2192 split. So the procedure works as one statement.\n\nBut the bug report says \"sqlparse.split() cuts my BigQuery procedure into pieces at every semicolon inside its body\". Maybe the bug occurs with a slightly different form. Let me test a few variations: maybe when `_is_create` is False for the procedure because... hmm. Actually maybe the bug report is from an older version of the file? Let me check the current code more carefully \u2014 maybe there's a different issue: `END` handling. In the CREATE PROCEDURE case, END returns -1 and sets level to 0. Then `;` triggers split. Good.\n\nBut wait \u2014 maybe the issue is in a DIFFERENT dialect where the statement is like `DECLARE ... BEGIN ... END;`? Or maybe the issue is with nested CASE inside the procedure body \u2014 e.g. the `casewhen_procedure.sql` test uses `BEGIN ... SELECT case ... END;` and it works (2 statements). Hmm.\n\nLet me re-read the bug report: \"sqlparse.split() cuts my BigQuery procedure into pieces at every semicolon inside its body\". The exact example returns 1 statement in my run... but wait, maybe I need to check with the exact file state \u2014 maybe git status shows modified files? It said \"initial\" commit and clean. Let me check test files and see if there's a hidden bug \u2014 maybe the bug manifests in `sqlparse.parse` vs `sqlparse.split`? I tested split. Hmm.\n\nWait \u2014 maybe the actual issue: BigQuery procedures use `EXECUTE IMMEDIATE` or the `DECLARE` block at the top... Actually, let me look at the bug report again: \"CREATE OR REPLACE PROCEDURE mydataset.create_customer() BEGIN DECLARE id STRING; SET id = GENERATE_UUID(); INSERT ...; SELECT FORMAT(...); END;\"\n\nHmm, in my test this returned 1 statement. Let me double check the versions of the file... Maybe the repo is at a state where this works for this exact input, but a *variant* fails. The second reported case fails: WITH FUNCTION. The first case might fail with different token streams, e.g. when the procedure has an IF inside? I tested that too \u2014 it worked.\n\nLet me test a BigQuery procedure more precisely per BigQuery docs \u2014 e.g. `CREATE PROCEDURE ... BEGIN ... END;` followed",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# Try the exact reported example vs variants\\nvariants = {\\n 'exact': '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\"Created customer %s\\\", id);\\nEND;''',\\n 'no CREATE': '''PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\nEND;''',\\n 'with case': '''CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = \\\"x\\\";\\n  CASE WHEN id = \\\"x\\\" THEN SET id = \\\"y\\\"; END;\\n  SELECT FORMAT(\\\"%s\\\", id);\\nEND;''',\\n 'with declare at end block': '''BEGIN\\n  DECLARE id STRING;\\n  SET id = \\\"x\\\";\\n  SELECT 1;\\nEND;''',\\n}\\nfor k, sql in variants.items():\\n    print(k, '->', len(sqlparse.split(sql)), 'statements')\\n    for s in sqlparse.split(sql): print('   ', repr(s[:80]))\\nEOF\"}"
+     },
+     "id": "XK1o855ZUIoF1a46RKRtLEDBiiSp7U4O"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "exact -> 1 statements\n    'CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRIN'\nno CREATE -> 3 statements\n    'PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;'\n    'SET id = GENERATE_UUID();'\n    'END;'\nwith case -> 1 statements\n    'CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = \"x\";\\n  CAS'\nwith declare at end block -> 4 statements\n    'BEGIN\\n  DECLARE id STRING;'\n    'SET id = \"x\";'\n    'SELECT 1;'\n    'END;'\n\n[exit code 0]"
+  },
+  {
+   "turn": 35,
+   "content": "",
+   "reasoning": "Interesting: the exact reported case (with CREATE OR REPLACE) already passes! Wait \u2014 the bug report says it splits. Let me re-check: maybe I need the `split` function not `parse`. The bug report says `sqlparse.split()`. I did use `sqlparse.split` above... it returned 1 statement. Hmm.\n\nWait, maybe there are different behaviors depending on keyword set or the actual scenario uses something else. The report example given works... but maybe with `sqlparse.parse` vs `sqlparse.split`? Let me test parse and split... `sqlparse.split` uses `engine.FilterStack(strip_semicolon=...)` then `stack.run(...)`. Same as parse. And `parse` enables grouping. Let me test both.\n\nActually, wait \u2014 maybe the bug is in the first token: `CREATE OR REPLACE PROCEDURE` \u2014 where does `BEGIN` get classified? In the token dump, the whole body including BEGIN was a single untokenized `None` token (because BigQuery procedure `CREATE OR REPLACE PROCEDURE ... (...) BEGIN ... END` \u2014 the lexer didn't recognize it as a keyword sequence). Hmm, but the split worked because BEGIN was inside a single opaque token.\n\nBut wait \u2014 the exact example works. The bug report's example is presumably the *snapshot* of the bug fixed in a later upstream version. Let me check the actual upstream fix. sqlparse issue? The bug report mentions `WITH FUNCTION ... BEGIN ... END SELECT ...` which fails, and the PROCEDURE case... maybe the exact procedure example works but the report expects it to work generally. Let me check the `WITH FUNCTION` case which fails.\n\nThe `WITH FUNCTION` case: tokens are BEGIN (Keyword), DECLARE (Keyword), etc. The splitter does:\n- WITH (Keyword.CTE) \u2192 0\n- FUNCTION \u2192 0\n- ... 'f(x INT)' None\n- RETURNS keyword \u2192 0\n- INT \u2192 0\n- BEGIN \u2192 begin_depth=1, _is_create False \u2192 return 0. Hmm, this means level stays 0 and `;` after SET y = x ends statement! Because with BEGIN, the code returns 0 (not 1) unless _is_create. That's the bug: with _is_create False (WITH FUNCTION is not CREATE), BEGIN doesn't raise the level, so semicolons inside the BEGIN...END block split the statement.\n\nSo the fix: BEGIN should increase level by 1 regardless of _is_create (i.e., BEGIN \u2192 +1, END \u2192 -1). Let's verify why CREATE path returns 1: \"BEGIN \u2192 return 1 if _is_create\". For non-create (WITH FUNCTION), it returns 0, which is wrong. So change: BEGIN \u2192 +1 always? But then test_split_begintag expects 'begin; update foo...; commit;' to have 3 statements. With BEGIN \u2192 +1, 'begin;' would be level 1 at the semicolon \u2192 no split on first BEGIN's semicolon. Hmm, but that's a SQL-standard `begin;` transaction... In begintag.sql:\n\n```\nbegin;\nupdate foo\n       set bar = 1;\ncommit;\n```\n\nExpected 3 statements. If BEGIN is treated as +1, then the semicolon after `begin` would not split \u2192 statement 1 = \"begin; update foo set bar = 1;\" \u2192 wrong.\n\nHmm. So BEGIN meaning transaction begin vs BEGIN...END block is ambiguous. That's why _is_create gating exists: for CREATE procedures/functions, BEGIN is a block; otherwise it's a transaction begin.\n\nThe WITH FUNCTION case is the tricky one: `WITH FUNCTION f(x) BEGIN ... END SELECT ...` \u2014 the BEGIN is a function body block. The `_is_create` flag is only set on Keyword.DDL starting with CREATE. A WITH FUNCTION query doesn't have CREATE.\n\nHow does sqlparse handle it elsewhere? Let me check the upstream fix for this bug. Upstream sqlparse issue #790-ish? Let me search git log / issues... no network. Let me think.\n\nApproach: track \"in function/procedure body\" state more generally. When we see WITH followed by FUNCTION, or PROCEDURE/FUNCTION definition... Let me check how `sqlparse.parse` handles it \u2014 grouping code in engine/grouping.py may know how to group BEGIN...END blocks.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cat sqlparse/engine/grouping.py\"}"
+     },
+     "id": "GYOvKMvMwhOkFbQEDqox450czPPUmW2L"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "#\n# Copyright (C) 2009-2020 the sqlparse authors and contributors\n# <see AUTHORS file>\n#\n# This module is part of python-sqlparse and is released under\n# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n\nfrom sqlparse import sql\nfrom sqlparse import tokens as T\nfrom sqlparse.utils import recurse, imt\n\n# Maximum recursion depth for grouping operations to prevent DoS attacks\n# Set to None to disable limit (not recommended for untrusted input)\nMAX_GROUPING_DEPTH = 100\n\n# Maximum number of tokens to process in one grouping operation to prevent\n# DoS attacks.\n# Set to None to disable limit (not recommended for untrusted input)\nMAX_GROUPING_TOKENS = 10000\n\nT_NUMERICAL = (T.Number, T.Number.Integer, T.Number.Float)\nT_STRING = (T.String, T.String.Single, T.String.Symbol)\nT_NAME = (T.Name, T.Name.Placeholder)\n\n\ndef _group_matching(tlist, cls, depth=0):\n    \"\"\"Groups Tokens that have beginning and end.\"\"\"\n    if MAX_GROUPING_DEPTH is not None and depth > MAX_GROUPING_DEPTH:\n        return\n\n    # Limit the number of tokens to prevent DoS attacks\n    if MAX_GROUPING_TOKENS is not None \\\n       and len(tlist.tokens) > MAX_GROUPING_TOKENS:\n        return\n\n    opens = []\n    tidx_offset = 0\n    token_list = list(tlist)\n\n    for idx, token in enumerate(token_list):\n        tidx = idx - tidx_offset\n\n        if token.is_whitespace:\n            # ~50% of tokens will be whitespace. Will checking early\n            # for them avoid 3 comparisons, but then add 1 more comparison\n            # for the other ~50% of tokens...\n            continue\n\n        if token.is_group and not isinstance(token, cls):\n            # Check inside previously grouped (i.e. parenthesis) if group\n            # of different type is inside (i.e., case). though ideally  should\n            # should check for all open/close tokens at once to avoid recursion\n            _group_matching(token, cls, depth + 1)\n            continue\n\n        if token.match(*cls.M_OPEN):\n            opens.append(tidx)\n\n        elif token.match(*cls.M_CLOSE):\n            try:\n                open_idx = opens.pop()\n            except IndexError:\n                # this indicates invalid sql and unbalanced tokens.\n                # instead of break, continue in case other \"valid\" groups exist\n                continue\n            close_idx = tidx\n            tlist.group_tokens(cls, open_idx, close_idx)\n            tidx_offset += close_idx - open_idx\n\n\ndef group_brackets(tlist):\n    _group_matching(tlist, sql.SquareBrackets)\n\n\ndef group_parenthesis(tlist):\n    _group_matching(tlist, sql.Parenthesis)\n\n\ndef group_case(tlist):\n    _group_matching(tlist, sql.Case)\n\n\ndef group_if(tlist):\n    _group_matching(tlist, sql.If)\n\n\ndef group_for(tlist):\n    _group_matching(tlist, sql.For)\n\n\ndef group_begin(tlist):\n    _group_matching(tlist, sql.Begin)\n\n\ndef group_typecasts(tlist):\n    def match(token):\n        return token.match(T.Punctuation, '::')\n\n    def valid(token):\n        return token is not None\n\n    def post(tlist, pidx, tidx, nidx):\n        return pidx, nidx\n\n    valid_prev = valid_next = valid\n    _group(tlist, sql.Identifier, match, valid_prev, valid_next, post)\n\n\ndef group_tzcasts(tlist):\n    def match(token):\n        return token.ttype == T.Keyword.TZCast\n\n    def valid_prev(token):\n        return token is not None\n\n    def valid_next(token):\n        return token is not None and (\n            token.is_whitespace\n            or token.match(T.Keyword, 'AS')\n            or token.match(*sql.TypedLiteral.M_CLOSE)\n        )\n\n    def post(tlist, pidx, tidx, nidx):\n        return pidx, nidx\n\n    _group(tlist, sql.Identifier, match, valid_prev, valid_next, post)\n\n\ndef group_typed_literal(tlist):\n    # definitely not complete, see e.g.:\n    # https://docs.microsoft.com/en-us/sql/odbc/reference/appendixes/interval-literal-syntax\n    # https://docs.microsoft.com/en-us/sql/odbc/reference/appendixes/interval-literals\n    # https://www.postgresql.org/docs/9.1/datatype-datetime.html\n    # https://www.postg"
+  },
+  {
+   "turn": 36,
+   "content": "",
+   "reasoning": "Let me look at the sql.Begin class and see how END tokens are handled, to understand why CREATE OR REPLACE PROCEDURE works but WITH FUNCTION doesn't.\n\nThe issue: `WITH FUNCTION f(x INT) RETURNS INT BEGIN ... END SELECT f(1)` \u2014 the parser has `_is_create` False since it doesn't see CREATE. BEGIN is in T.Keyword, `unified == 'BEGIN'`, `_begin_depth` becomes 1, then `if self._is_create: return 1` \u2014 since not create, returns 0. So semicolons inside the BEGIN block end statements.\n\nThe cleanest fix is to make the splitter treat BEGIN...END as a block regardless of CREATE. But careful about the existing test `test_split_dashcomments` etc. and begintag: `begin; update foo set bar = 1; commit;` \u2014 3 statements. Here `begin;` is a statement that ENDS with `;`. So we can't just treat every BEGIN as opening a block.\n\nHmm, begintag.sql:\n```\nbegin;\nupdate foo\n       set bar = 1;\ncommit;\n```\nexpected: 3 statements. Here \"begin;\" \u2014 BEGIN keyword followed by `;` \u2014 the BEGIN is not followed by a nested BEGIN body but is an actual statement (transaction begin). If we treat \"BEGIN\" as opening a block unconditionally, then `begin; update...` \u2014 the semicolon after begin would be inside the block, and the block would end at END... there is no END. So we'd get one big statement. That breaks the existing test.\n\nSo the distinction: `BEGIN` opens a block only when... in the CREATE case. For the mydataset procedure example, the token stream for BEGIN: let me check how the token is typed in the exact-match example. Earlier print for the procedure case showed the whole body as a single `None` token! Wait:\n\n```\n   Token.Keyword.DDL 'CREATE OR REPLACE'\n   Token.Text.Whitespace ' '\n   Token.Keyword 'PROCEDURE'\n   Token.Text.Whitespace ' '\n   None 'mydataset.create_customer()'\n   Token.Text.Whitespace.Newline '\\n'\n   None 'BEGIN\\n  DECLARE id STRING;\\n  ...'\n   Token.Punctuation ';'\n```\n\nInteresting \u2014 the whole BEGIN...END body was tokenized as a single `None` token (ungrouped tokens). Wait no \u2014 that was `sqlparse.parse(sql)[0].tokens`? Let me re-check... Actually earlier I printed tokens from stmt.tokens and the third token was 'mydataset.create_customer()' as None, and then a big None token with the whole body. Hmm, that's the parse after grouping? No \u2014 parse groups the statements. `group_begin` would group BEGIN...END into a sql.Begin group! But `stmt.tokens` showed raw? Actually I iterated `stmts[0].tokens` and it printed None tokens... Wait, maybe the `parse` output groups differently; the printed tokens showed 'CREATE OR REPLACE' then 'PROCEDURE' \u2014 that means group_begin did NOT group the BEGIN...END? Odd. Let me check what `sqlparse.split` does: it uses `stack.run(sql)` with no grouping (enable_grouping not called in split). Actually `split` creates `engine.FilterStack(strip_semicolon=strip_semicolon)` and calls `stack.run(sql)` \u2014 grouping not enabled. The tokens printed from parse (which enables grouping) \u2014 the tokens shown were for the first statement of the exact example? No wait, the earlier output printed `CREATE OR REPLACE` 'DDL', 'PROCEDURE' Keyword, 'mydataset.create_customer()' None... with whole body as None token. That seems like grouping kept the body as a flat token list... The `None` ttype for the body is weird.\n\nActually wait \u2014 maybe I printed before grouping in a bad way. Doesn't matter. The key thing: the bug report says the `WITH FUNCTION` case fails. For that, tokens are BEGIN as Keyword. For the CREATE PROCEDURE case, it currently works (1 statement) \u2014 presumably because the whole `BEGIN\\n...\\nEND` is tokenized as a single opaque token? That seems odd. Let me actually check tokenization of the exact example with the raw lexer.\n\nAnyway, the fix approach: in `_change_splitlevel`, treat `BEGIN` as opening a block whenever it appears, but then `begin;",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\nfrom sqlparse import lexer\\nsql_proc = '''CREATE OR REPLACE PROCEDURE mydataset.create_customer()\\nBEGIN\\n  DECLARE id STRING;\\n  SET id = GENERATE_UUID();\\n  INSERT INTO mydataset.customers (customer_id)\\n    VALUES(id);\\n  SELECT FORMAT(\\\"Created customer %s\\\", id);\\nEND;'''\\nfor tt, v in lexer.tokenize(sql_proc): print(tt, repr(v))\\nEOF\"}"
+     },
+     "id": "Yw0eyLvBb6vkgKfZnLv2OmKevLZEEdnn"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Token.Keyword.DDL 'CREATE OR REPLACE'\nToken.Text.Whitespace ' '\nToken.Keyword 'PROCEDURE'\nToken.Text.Whitespace ' '\nToken.Name 'mydataset'\nToken.Punctuation '.'\nToken.Name 'create_customer'\nToken.Punctuation '('\nToken.Punctuation ')'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'BEGIN'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'DECLARE'\nToken.Text.Whitespace ' '\nToken.Name 'id'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'STRING'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'SET'\nToken.Text.Whitespace ' '\nToken.Name 'id'\nToken.Text.Whitespace ' '\nToken.Operator.Comparison '='\nToken.Text.Whitespace ' '\nToken.Name 'GENERATE_UUID'\nToken.Punctuation '('\nToken.Punctuation ')'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword.DML 'INSERT'\nToken.Text.Whitespace ' '\nToken.Keyword 'INTO'\nToken.Text.Whitespace ' '\nToken.Name 'mydataset'\nToken.Punctuation '.'\nToken.Name 'customers'\nToken.Text.Whitespace ' '\nToken.Punctuation '('\nToken.Name 'customer_id'\nToken.Punctuation ')'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'VALUES'\nToken.Punctuation '('\nToken.Name 'id'\nToken.Punctuation ')'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword.DML 'SELECT'\nToken.Text.Whitespace ' '\nToken.Name 'FORMAT'\nToken.Punctuation '('\nToken.Literal.String.Symbol '\"Created customer %s\"'\nToken.Punctuation ','\nToken.Text.Whitespace ' '\nToken.Name 'id'\nToken.Punctuation ')'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'END'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 37,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\nsql_with = '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);'''\\nfor tt, v in __import__('sqlparse.lexer', fromlist=['tokenize']).tokenize(sql_with): print(tt, repr(v))\\nEOF\"}"
+     },
+     "id": "ztGfaOnCCHtiNzp329EJ01zsF7foOFtL"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Token.Keyword.CTE 'WITH'\nToken.Text.Whitespace ' '\nToken.Keyword 'FUNCTION'\nToken.Text.Whitespace ' '\nToken.Name 'f'\nToken.Punctuation '('\nToken.Name 'x'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Punctuation ')'\nToken.Text.Whitespace ' '\nToken.Keyword 'RETURNS'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'BEGIN'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'DECLARE'\nToken.Text.Whitespace ' '\nToken.Name 'y'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'SET'\nToken.Text.Whitespace ' '\nToken.Name 'y'\nToken.Text.Whitespace ' '\nToken.Operator.Comparison '='\nToken.Text.Whitespace ' '\nToken.Name 'x'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'RETURN'\nToken.Text.Whitespace ' '\nToken.Name 'y'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'END'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword.DML 'SELECT'\nToken.Text.Whitespace ' '\nToken.Name 'f'\nToken.Punctuation '('\nToken.Literal.Number.Integer '1'\nToken.Punctuation ')'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 38,
+   "content": "",
+   "reasoning": "Now I understand the problem precisely. The statement splitter fails to handle BEGIN/END blocks when:\n\n1. `WITH FUNCTION ... BEGIN ... END ...` \u2014 the `_is_create` flag is False (the statement starts with CTE `WITH`, not CREATE), so BEGIN/END don't increment/decrement level and no protection. Also `with CREATE` path: in the report, `CREATE OR REPLACE PROCEDURE ... BEGIN ... END` \u2014 why does that work? Because `_is_create=True` and BEGIN returns 1 when `_is_create`, so level stays 1 through declarations... wait, at `BEGIN` with `_is_create`, it returns 1 and `self.level += 1` \u2192 level=1. Then `;` inside body: level is still 1 (DECLARE returns 1 at `_begin_depth == 0`... wait, the DECLARE check requires `self._is_create and self._begin_depth == 0` \u2014 but at BEGIN, `self._begin_depth` was incremented to 1, so DECLARE with depth==1... hmm wait, `BEGIN` increments `_begin_depth` BEFORE the DECLARE is processed. Actually the BEGIN token is processed first: `_begin_depth` becomes 1, and returns 1 (level=1). Then DECLARE: `self._begin_depth > 0` so the `_in_declare` branch isn't taken, and returns 0. So semicolons inside the body keep level=1 \u2192 no split. Then `END`: `not self._in_case`, so `_begin_depth` decrements to 0, returns -1 \u2192 level=0. Then `;` \u2192 statement ends. Good.\n\nFor the WITH FUNCTION case, `_is_create` is False (starts with CTE), so BEGIN returns 0 (level stays 0), and every `;` splits. The fix: track BEGIN/END depth regardless of `_is_create`, so any BEGIN...END block is protected. But careful about tests like test_split_begintag which expects `begin; update foo ...; commit;` to split into 3 statements. In that case, `BEGIN`/`END` are used as plain SQL keywords (not in a procedure), and the current behavior treats `BEGIN` without `_is_create` as return 0 \u2014 i.e., unprotected. Note test_split_begintag expects begin; update...; commit; = 3 statements. So we can't just protect every bare BEGIN/END block, or that test would break: with bare `BEGIN`, the splitter would enter depth 1 and never split. So we need to distinguish \"BEGIN as procedure-body marker\" from \"BEGIN as a statement\".\n\nCurrent logic: `BEGIN` is protected only when `_is_create` (DDL CREATE...) \u2014 that's why CREATE PROCEDURE works. For WITH FUNCTION, we need another rule: when inside a WITH clause with FUNCTION ... BEGIN ... END ... SELECT. How to detect? The statement begins with a CTE `WITH ...` containing `FUNCTION`. Hmm.\n\nThe bug report says: \"The same happens for a `WITH FUNCTION ... BEGIN ... END SELECT ...` query (MySQL-style function defined in a WITH clause), which should stay one statement.\"\n\nOptions:\n1. Treat a `WITH` clause containing `FUNCTION ... BEGIN ... END` as a create-like context. When we see CTE `WITH` and then `FUNCTION`, and then `BEGIN` \u2014 treat the whole statement as a function-definition context: BEGIN increments level (or handles like create).\n\nActually a cleaner approach: generalize the BEGIN/END handling: whenever we see a BEGIN that is part of a function/procedure definition. The rule for CREATE is `_is_create` set at `CREATE`. For WITH FUNCTION, we can set `_is_create` (or a new flag `_in_function`) when we see `FUNCTION` after `WITH`.\n\nBut careful about test_split_if_function: \n```\nCREATE TEMPORARY TABLE tmp SELECT IF(a=1, a, b) AS o FROM one; SELECT t FROM two\n```\nThis has CREATE + IF( \u2014 the `IF(a=1...` is a function call `IF(`. The splitter's `_change_splitlevel` for `IF` requires `self._is_create and self._begin_depth > 0`. In that test, `IF(a=1` \u2014 `IF` is followed by `(`... but",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# How does lexer tokenize WITH ... FUNCTION? Also check 'END IF' token type.\\nfrom sqlparse import lexer\\nsql = '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);'''\\nfor tt, v in lexer.tokenize(sql): print(tt, repr(v))\\nEOF\"}"
+     },
+     "id": "ZcXwHTlaTaVVIRr1i0ukiFAqI8x9Ggqt"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Token.Keyword.CTE 'WITH'\nToken.Text.Whitespace ' '\nToken.Keyword 'FUNCTION'\nToken.Text.Whitespace ' '\nToken.Name 'f'\nToken.Punctuation '('\nToken.Name 'x'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Punctuation ')'\nToken.Text.Whitespace ' '\nToken.Keyword 'RETURNS'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'BEGIN'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'DECLARE'\nToken.Text.Whitespace ' '\nToken.Name 'y'\nToken.Text.Whitespace ' '\nToken.Name.Builtin 'INT'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'SET'\nToken.Text.Whitespace ' '\nToken.Name 'y'\nToken.Text.Whitespace ' '\nToken.Operator.Comparison '='\nToken.Text.Whitespace ' '\nToken.Name 'x'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'RETURN'\nToken.Text.Whitespace ' '\nToken.Name 'y'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'END'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword.DML 'SELECT'\nToken.Text.Whitespace ' '\nToken.Name 'f'\nToken.Punctuation '('\nToken.Literal.Number.Integer '1'\nToken.Punctuation ')'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 39,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -rn \\\"M_OPEN\\\\|M_CLOSE\\\" sqlparse/sql.py | sed -n 1,40p && sed -n 1,120p sqlparse/sql.py\"}"
+     },
+     "id": "zmBS6HhVLeiLtyKAHT6k9RwA7siHr8oO"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "489:    M_OPEN = [(T.Name.Builtin, None), (T.Keyword, \"TIMESTAMP\")]\n490:    M_CLOSE = T.String.Single, None\n496:    M_OPEN = T.Punctuation, '('\n497:    M_CLOSE = T.Punctuation, ')'\n506:    M_OPEN = T.Punctuation, '['\n507:    M_CLOSE = T.Punctuation, ']'\n520:    M_OPEN = T.Keyword, 'IF'\n521:    M_CLOSE = T.Keyword, 'END IF'\n526:    M_OPEN = T.Keyword, ('FOR', 'FOREACH')\n527:    M_CLOSE = T.Keyword, 'END LOOP'\n551:    M_OPEN = T.Keyword, 'WHERE'\n552:    M_CLOSE = T.Keyword, (\n559:    M_OPEN = T.Keyword, 'OVER'\n564:    M_OPEN = T.Keyword, 'HAVING'\n565:    M_CLOSE = T.Keyword, ('ORDER BY', 'LIMIT')\n570:    M_OPEN = T.Keyword, 'CASE'\n571:    M_CLOSE = T.Keyword, 'END'\n646:    M_OPEN = T.Keyword, 'BEGIN'\n647:    M_CLOSE = T.Keyword, 'END'\n#\n# Copyright (C) 2009-2020 the sqlparse authors and contributors\n# <see AUTHORS file>\n#\n# This module is part of python-sqlparse and is released under\n# the BSD License: https://opensource.org/licenses/BSD-3-Clause\n\n\"\"\"This module contains classes representing syntactical elements of SQL.\"\"\"\n\nimport re\n\nfrom sqlparse import tokens as T\nfrom sqlparse.utils import imt, remove_quotes\n\n\nclass NameAliasMixin:\n    \"\"\"Implements get_real_name and get_alias.\"\"\"\n\n    def get_real_name(self):\n        \"\"\"Returns the real name (object name) of this identifier.\"\"\"\n        # a.b\n        dot_idx, _ = self.token_next_by(m=(T.Punctuation, '.'))\n        return self._get_first_name(dot_idx, real_name=True)\n\n    def get_alias(self):\n        \"\"\"Returns the alias for this identifier or ``None``.\"\"\"\n\n        # \"name AS alias\"\n        kw_idx, kw = self.token_next_by(m=(T.Keyword, 'AS'))\n        if kw is not None:\n            return self._get_first_name(kw_idx + 1, keywords=True)\n\n        # \"name alias\" or \"complicated column expression alias\"\n        _, ws = self.token_next_by(t=T.Whitespace)\n        if len(self.tokens) > 2 and ws is not None:\n            return self._get_first_name(reverse=True)\n\n\nclass Token:\n    \"\"\"Base class for all other classes in this module.\n\n    It represents a single token and has two instance attributes:\n    ``value`` is the unchanged value of the token and ``ttype`` is\n    the type of the token.\n    \"\"\"\n\n    __slots__ = ('value', 'ttype', 'parent', 'normalized', 'is_keyword',\n                 'is_group', 'is_whitespace', 'is_newline')\n\n    def __init__(self, ttype, value):\n        value = str(value)\n        self.value = value\n        self.ttype = ttype\n        self.parent = None\n        self.is_group = False\n        self.is_keyword = ttype in T.Keyword\n        self.is_whitespace = self.ttype in T.Whitespace\n        self.is_newline = self.ttype in T.Newline\n        self.normalized = value.upper() if self.is_keyword else value\n\n    def __str__(self):\n        return self.value\n\n    # Pending tokenlist __len__ bug fix\n    # def __len__(self):\n    #     return len(self.value)\n\n    def __repr__(self):\n        cls = self._get_repr_name()\n        value = self._get_repr_value()\n\n        q = '\"' if value.startswith(\"'\") and value.endswith(\"'\") else \"'\"\n        return \"<{cls} {q}{value}{q} at 0x{id:2X}>\".format(\n            id=id(self), **locals())\n\n    def _get_repr_name(self):\n        return str(self.ttype).split('.')[-1]\n\n    def _get_repr_value(self):\n        raw = str(self)\n        if len(raw) > 7:\n            raw = raw[:6] + '...'\n        return re.sub(r'\\s+', ' ', raw)\n\n    def flatten(self):\n        \"\"\"Resolve subgroups.\"\"\"\n        yield self\n\n    def match(self, ttype, values, regex=False):\n        \"\"\"Checks whether the token matches the given arguments.\n\n        *ttype* is a token type as defined in `sqlparse.tokens`. If it does\n        not match, ``False`` is returned.\n        *values* is a list of possible values for this token. For match to be\n        considered valid, the token value needs to be in this list. For tokens\n        of type ``Keyword`` the comparison is case-insensitive. For\n        convenience, a single value can be given passed as a string.\n        If *regex* is ``True``, the"
+  },
+  {
+   "turn": 40,
+   "content": "",
+   "reasoning": "Now let me look at the StatementSplitter more carefully. The current logic:\n\n```python\nif unified == 'BEGIN':\n    self._begin_depth += 1\n    if self._is_create:\n        return 1\n    return 0\n```\n\nWait \u2014 for BEGIN, when `_is_create`, returns 1 (increases level). When not _is_create, returns 0 \u2014 this means `BEGIN` alone doesn't raise the split level, so `BEGIN` in a bare statement doesn't protect semicolons. Then END decrements.\n\nHmm, but the bug: for a CREATE OR REPLACE PROCEDURE, BEGIN returns 1 and END returns -1. That works... except it worked in the first example. Wait, the first example already works. But the bug report says it doesn't. Let me check: the bug report says \"sqlparse.split() cuts my BigQuery procedure into pieces at every semicolon inside its body\". But when I ran it, it returned 1 statement. Hmm! Maybe the issue depends on the full example including a `BEGIN ... END` where END... wait let me re-check. In my test above it returned 1 statement. But the bug report claims it cuts. Maybe the bug manifests with different versions of tokens, e.g. `CREATE OR REPLACE PROCEDURE` where... Actually wait \u2014 let me re-check `T.Keyword.DDL` and `unified.startswith('CREATE')`. In the example, `CREATE OR REPLACE` is a single Keyword.DDL token. `_is_create` = True. Then BEGIN returns 1 \u2014 good. DECLARE raises 1 (because `_is_create and self._begin_depth == 0` \u2014 wait begin depth is 1 after BEGIN, so DECLARE's condition `self._begin_depth == 0` is False \u2014 good, no extra increment). Then each `;` inside the BEGIN block... level = 1 (from BEGIN) + 2 (parens?) Let's trace:\n\nTokens: CREATE OR REPLACE (DDL, level 0) \u2192 PROCEDURE (Keyword, 0) \u2192 mydataset.create_customer() (Name, ., Name, ( \u2192 +1, ) \u2192 -1) \u2192 BEGIN (+1 \u2192 level 1) \u2192 DECLARE... (level 1) \u2192 ';' at level 1, not \u2264 0, so no split. ... END (-1 \u2192 level 0) \u2192 ';' at level 0 \u2192 split \u2192 consume_ws. Then end of input, pending statement yield... hmm, wait \u2014 at the END, consume_ws = True and then there are no more tokens... the final `yield sql.Statement(self.tokens)` at the end yields the buffered statement which is the whole thing. Good \u2014 that works.\n\nSo the reported BigQuery procedure actually already works? Let me double check the exact example with `split()` vs `parse()`. I did \u2014 split returns 1 statement. Hmm. But the bug report might be stale? No wait \u2014 maybe the issue is when the statement is NOT preceded by CREATE, e.g. plain `BEGIN ... END` blocks in a query. The report mentions the WITH FUNCTION case which fails. And also, \"The same happens for a WITH FUNCTION...\". For the first example, maybe it works since it has CREATE. Let me also try other variants like CREATE PROCEDURE without OR REPLACE \u2014 same thing.\n\nBut the bug report explicitly says the BigQuery procedure example is also broken. Let me test exactly as in the report... I did, it worked. Hmm, maybe there's something subtle: `split()` vs `parse()`. I used split. OK.\n\nWait \u2014 maybe I should check how the test file `casewhen_procedure.sql` works, since there is a `test_split_casewhen_procedure`. That works too.\n\nHmm, but maybe with a semicolon directly at the END before the final semicolon? E.g., the `SET id = ...` \u2014 all fine.\n\nActually wait. Maybe I mis-tested. Let me look at the exact reported SQL again:\n\n```sql\nCREATE OR REPLACE PROCEDURE mydataset.create_customer()\nBEGIN\n  DECLARE id STRING;\n  SET id = GENERATE_UUID();\n  INSERT INTO mydataset.customers (customer_id)\n    VALUES(id);\n  SELECT FORMAT(\"Created customer %s\", id);\nEND;\n```\n\nI tested this exact thing and got 1 statement. Interesting. So the first reported example doesn't reproduce. But the WITH FUNCTION example fails. The report says \"",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# Test variants of the WITH FUNCTION example and other begin-end forms\\nsqls = [\\n  # WITH FUNCTION exact\\n  '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);''',\\n  # WITH FUNCTION with semicolon after END\\n  '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND;\\nSELECT f(1);''',\\n  # plain BEGIN..END then SELECT\\n  '''BEGIN\\n  DECLARE y INT;\\n  SET y = x;\\nEND\\nSELECT 1;''',\\n  # CREATE FUNCTION without BEGIN count issue: nested IF\\n  '''CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  IF x > 1 THEN SET y = 1; END IF;\\n  SELECT 1;\\nEND;''',\\n]\\nfor s in sqls:\\n    print(len(sqlparse.split(s)), '->', repr(sqlparse.split(s)[:2]))\\nEOF\"}"
+     },
+     "id": "ryE2lRP5AWVPn34rH7uwCPnCEpP4h752"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "4 -> ['WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;', 'SET y = x;']\n5 -> ['WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;', 'SET y = x;']\n3 -> ['BEGIN\\n  DECLARE y INT;', 'SET y = x;']\n1 -> ['CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  IF x > 1 THEN SET y = 1; END IF;\\n  SELECT 1;\\nEND;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 41,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# Check nested IF inside create procedure: does END IF decrement begin depth properly? Investigate token types for 'END IF'\\nfrom sqlparse import lexer\\nsql = '''CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  IF x > 1 THEN SET y = 1; END IF;\\n  SELECT 1;\\nEND;'''\\nfor tt, v in lexer.tokenize(sql): print(tt, repr(v))\\nEOF\"}"
+     },
+     "id": "TtYQr0VgJDBZbCCHiT2htWzT5q8T5q1u"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "Token.Keyword.DDL 'CREATE OR REPLACE'\nToken.Text.Whitespace ' '\nToken.Keyword 'PROCEDURE'\nToken.Text.Whitespace ' '\nToken.Name 'p'\nToken.Punctuation '('\nToken.Punctuation ')'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'BEGIN'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword 'IF'\nToken.Text.Whitespace ' '\nToken.Name 'x'\nToken.Text.Whitespace ' '\nToken.Operator.Comparison '>'\nToken.Text.Whitespace ' '\nToken.Literal.Number.Integer '1'\nToken.Text.Whitespace ' '\nToken.Keyword 'THEN'\nToken.Text.Whitespace ' '\nToken.Keyword 'SET'\nToken.Text.Whitespace ' '\nToken.Name 'y'\nToken.Text.Whitespace ' '\nToken.Operator.Comparison '='\nToken.Text.Whitespace ' '\nToken.Literal.Number.Integer '1'\nToken.Punctuation ';'\nToken.Text.Whitespace ' '\nToken.Keyword 'END IF'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Text.Whitespace ' '\nToken.Text.Whitespace ' '\nToken.Keyword.DML 'SELECT'\nToken.Text.Whitespace ' '\nToken.Literal.Number.Integer '1'\nToken.Punctuation ';'\nToken.Text.Whitespace.Newline '\\n'\nToken.Keyword 'END'\nToken.Punctuation ';'\n\n[exit code 0]"
+  },
+  {
+   "turn": 42,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"grep -rn \\\"begin_depth\\\\|BEGIN\\\\|END\\\" sqlparse/engine/grouping.py sqlparse/sql.py | head -30 && sed -n 130,220p sqlparse/sql.py\"}"
+     },
+     "id": "ylJmbsM7pTNp9V6bNLiwXcZbaU4dIH8q"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "sqlparse/engine/grouping.py:148:        return token is not None and token.match(*sql.TypedLiteral.M_EXTEND)\nsqlparse/sql.py:491:    M_EXTEND = T.Keyword, (\"DAY\", \"HOUR\", \"MINUTE\", \"MONTH\", \"SECOND\", \"YEAR\")\nsqlparse/sql.py:521:    M_CLOSE = T.Keyword, 'END IF'\nsqlparse/sql.py:527:    M_CLOSE = T.Keyword, 'END LOOP'\nsqlparse/sql.py:571:    M_CLOSE = T.Keyword, 'END'\nsqlparse/sql.py:603:            elif token.match(T.Keyword, 'END'):\nsqlparse/sql.py:645:    \"\"\"A BEGIN/END block.\"\"\"\nsqlparse/sql.py:646:    M_OPEN = T.Keyword, 'BEGIN'\nsqlparse/sql.py:647:    M_CLOSE = T.Keyword, 'END'\n        while parent:\n            if isinstance(parent, group_cls):\n                return True\n            parent = parent.parent\n        return False\n\n    def is_child_of(self, other):\n        \"\"\"Returns ``True`` if this token is a direct child of *other*.\"\"\"\n        return self.parent == other\n\n    def has_ancestor(self, other):\n        \"\"\"Returns ``True`` if *other* is in this tokens ancestry.\"\"\"\n        parent = self.parent\n        while parent:\n            if parent == other:\n                return True\n            parent = parent.parent\n        return False\n\n\nclass TokenList(Token):\n    \"\"\"A group of tokens.\n\n    It has an additional instance attribute ``tokens`` which holds a\n    list of child-tokens.\n    \"\"\"\n\n    __slots__ = 'tokens'\n\n    def __init__(self, tokens=None):\n        self.tokens = tokens or []\n        [setattr(token, 'parent', self) for token in self.tokens]\n        super().__init__(None, str(self))\n        self.is_group = True\n\n    def __str__(self):\n        return ''.join(token.value for token in self.flatten())\n\n    # weird bug\n    # def __len__(self):\n    #     return len(self.tokens)\n\n    def __iter__(self):\n        return iter(self.tokens)\n\n    def __getitem__(self, item):\n        return self.tokens[item]\n\n    def _get_repr_name(self):\n        return type(self).__name__\n\n    def _pprint_tree(self, max_depth=None, depth=0, f=None, _pre=''):\n        \"\"\"Pretty-print the object tree.\"\"\"\n        token_count = len(self.tokens)\n        for idx, token in enumerate(self.tokens):\n            cls = token._get_repr_name()\n            value = token._get_repr_value()\n\n            last = idx == (token_count - 1)\n            pre = '`- ' if last else '|- '\n\n            q = '\"' if value.startswith(\"'\") and value.endswith(\"'\") else \"'\"\n            print(f\"{_pre}{pre}{idx} {cls} {q}{value}{q}\", file=f)\n\n            if token.is_group and (max_depth is None or depth < max_depth):\n                parent_pre = '   ' if last else '|  '\n                token._pprint_tree(max_depth, depth + 1, f, _pre + parent_pre)\n\n    def get_token_at_offset(self, offset):\n        \"\"\"Returns the token that is on position offset.\"\"\"\n        idx = 0\n        for token in self.flatten():\n            end = idx + len(token.value)\n            if idx <= offset < end:\n                return token\n            idx = end\n\n    def flatten(self):\n        \"\"\"Generator yielding ungrouped tokens.\n\n        This method is recursively called for all child tokens.\n        \"\"\"\n        for token in self.tokens:\n            if token.is_group:\n                yield from token.flatten()\n            else:\n                yield token\n\n    def get_sublists(self):\n        for token in self.tokens:\n            if token.is_group:\n\n[exit code 0]"
+  },
+  {
+   "turn": 43,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# Test the full CREATE PROCEDURE with nested END IF to see the split level behavior with IF inside\\nsql = '''CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  IF x > 1 THEN SET y = 1; END IF;\\n  SELECT 1;\\nEND;\\nSELECT 2;'''\\nprint(sqlparse.split(sql))\\nEOF\"}"
+     },
+     "id": "9vyrMNFETXDhUziF02KPBaNdkXMPcqqe"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['CREATE OR REPLACE PROCEDURE p()\\nBEGIN\\n  IF x > 1 THEN SET y = 1; END IF;\\n  SELECT 1;\\nEND;', 'SELECT 2;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 44,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# strip_semicolon on WITH FUNCTION\\nsql = '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);'''\\nprint(sqlparse.split(sql, strip_semicolon=True))\\nEOF\"}"
+     },
+     "id": "mmtGwqcWX9x57y3vKQ2hCmwHNjQZ0I3f"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT', 'SET y = x', 'RETURN y', 'END\\nSELECT f(1)']\n\n[exit code 0]"
+  },
+  {
+   "turn": 45,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# Check: Does 'BEGIN' without CREATE need tracking at all for BEGIN...END (e.g., begintag.sql expects 3 statements)?\\n# Current behavior: 'begin;' 'update...;' 'commit;' (3 statements) \u2014 that must keep working\\n# But the task says: semicolons inside BEGIN...END don't end the statement.\\n# Conflict? Test case: \\\"begin; update foo set bar = 1; commit;\\\" \u2014 inside BEGIN...END?\\n# begintag.sql has no END token, so no BEGIN..END block \u2014 fine to keep splitting there.\\nsql = '''begin;\\nupdate foo set bar = 1;\\nend;\\ncommit;'''\\nprint(sqlparse.split(sql))\\nEOF\"}"
+     },
+     "id": "W6iuKZnTZAXa6y42GCgS0WdBKHgNjKtW"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['begin;', 'update foo set bar = 1;', 'end;', 'commit;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 46,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# How does the current code handle BEGIN...END without CREATE?\\nsql = '''BEGIN\\n  DECLARE y INT;\\n  SET y = x;\\nEND;\\nSELECT 1;'''\\nprint(sqlparse.split(sql))\\nEOF\"}"
+     },
+     "id": "ATB7R4Hu8989Gks721DBQ8QbvHd765LI"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['BEGIN\\n  DECLARE y INT;', 'SET y = x;', 'END;', 'SELECT 1;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 47,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# With a plain BEGIN block, semicolons should be inside the block\\nsql = '''BEGIN\\n  SET x = 1;\\n  SET y = 2;\\nEND;\\nSELECT 3;'''\\nprint(sqlparse.split(sql))\\nEOF\"}"
+     },
+     "id": "K9s0TOyic75HJVHSlm3XqapL4rZiDXdB"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['BEGIN\\n  SET x = 1;', 'SET y = 2;', 'END;', 'SELECT 3;']\n\n[exit code 0]"
+  },
+  {
+   "turn": 48,
+   "content": "",
+   "reasoning": "Let me plan the fix. The StatementSplitter should track `BEGIN ... END` blocks (any BEGIN block, not just within CREATE) and keep incrementing the level inside, so semicolons inside the block don't split.\n\nDesign:\n- Track `_begin_depth` for any BEGIN (not just CREATE). On `BEGIN`: `_begin_depth += 1`, return +1 (increase level). On `END` (matching): `_begin_depth = max(0, _begin_depth - 1)`, return -1.\n\nBut careful about existing behavior that must not change:\n- begintag.sql: `begin; update...; commit;` \u2014 no END present. If we treat BEGIN as depth+1, then level stays at 1 after \"begin;\" \u2014 then semicolon inside would not split... wait, BEGIN adds +1, so semicolons after BEGIN would not split until an END. In begintag.sql there is no END, so the entire input would become ONE statement \u2014 that breaks test_split_begintag (expects 3).\n\nHmm. So we can't blindly treat every BEGIN as a block opener. The current logic treats BEGIN as increasing level only in `_is_create` (CREATE ...) or with DECLARE. The bug report says the expected behavior is: \"semicolons inside a BEGIN ... END block do not end the statement\". Test begintag.sql has begin; ... commit; \u2014 no END! So \"BEGIN ... END block\" requires END. Maybe the right approach: treat BEGIN...END as a block only when there's a matching END? That's hard in a streaming filter.\n\nAlternative: check whether BEGIN...END appears as a whole. But the splitter is streaming.\n\nLet's look at git history / upstream sqlparse to see how this was fixed in real sqlparse. Actually in real sqlparse, the statement_splitter handles:\n\n```python\nif unified == 'BEGIN':\n    self._begin_depth += 1\n    if self._is_create:\n        # FIXME(andi): This makes no sense.  ## this comment neither\n        return 1\n    return 0\n```\n\nHmm \u2014 in real sqlparse (upstream master), this is the same. The bug report asks for new behavior: BEGIN...END blocks should not split inside, regardless of CREATE. But that breaks begintag.sql test... wait, begintag.sql:\n\n```\nbegin;\nupdate foo\n       set bar = 1;\ncommit;\n```\n\nThere's no END here, so treating BEGIN as block start would merge everything into one statement. The test expects 3 statements. So the fix can't be purely streaming-BEGIN.\n\nBetter approach: treat BEGIN...END as a block only when there is a matching END \u2014 e.g., pre-scan the input? The StatementSplitter works on the token stream, and statements are yielded as we go. We could precompute the set of positions... Hmm.\n\nAlternative approach: count END tokens. If we see BEGIN and there's an END later, treat it as block. Streaming problem.\n\nAnother approach used by real sqlparse fix: check whether BEGIN is a keyword that begins a block like CREATE FUNCTION. Let me look at how sqlparse fixed similar issues upstream... Actually the bug report says \"The same happens for a WITH FUNCTION ... BEGIN ... END SELECT ... query (MySQL-style function defined in a WITH clause), which should stay one statement.\" So the intended fix is about BEGIN...END blocks in general.\n\nOption: scan-ahead \u2014 but the filter receives the token stream lazily. However, we could do a pre-pass over the stream... The StatementSplitter could buffer the whole stream? It already buffers tokens in self.tokens, but yields statements at separators. To do a pre-scan, we'd need to consume the whole stream first. We can collect all (ttype, value) pairs, preprocess, then process. That's feasible: in process(), read tokens into a list first, then iterate. Statements are still yielded in order. But memory: it already holds all tokens of a statement; buffering entire input could be big, but StatementSplitter currently also accumulates... no, it resets per statement. Buffering whole input is a behavior change but functionally fine. Alternatively, we can track BEGIN depth and only split at semicolons when the depth state matches... \n\nWait \u2014 what about the begintag.sql case? `begin;` then `update ...;` then `commit;` with no END. If we treat BEGIN as block opener, we'd never split.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# begintag_2: BEGIN inside CREATE TRIGGER \u2014 handled by _is_create + DECLARE? Test current behavior:\\nprint(sqlparse.split(open('tests/files/begintag_2.sql').read()))\\nprint()\\n# Check what BEGIN handling does with the parenthesized condition in CREATE TRIGGER\\nEOF\"}"
+     },
+     "id": "REPufcxtIQGCqGyfAyhdBdYBdWsMAVOv"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "[\"CREATE TRIGGER IF NOT EXISTS remove_if_it_was_the_last_file_link\\n-- Delete the direntry when is removed it's last static link\\n    AFTER DELETE ON links\\n    WHEN NOT EXISTS\\n    (\\n        SELECT * FROM links\\n        WHERE child_entry = OLD.child_entry\\n        LIMIT 1\\n    )\\nBEGIN\\n    DELETE FROM dir_entries\\n    WHERE dir_entries.inode = OLD.child_entry;\\nEND;\"]\n\n\n[exit code 0]"
+  },
+  {
+   "turn": 49,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\n# Current behavior for WITH FUNCTION with END before SELECT\\nsql = '''WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;\\n  SET y = x;\\n  RETURN y;\\nEND\\nSELECT f(1);'''\\nprint(sqlparse.split(sql))\\nEOF\"}"
+     },
+     "id": "aMnI8O6I06XT521CVtHNkptIjf4SLsFD"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['WITH FUNCTION f(x INT) RETURNS INT\\nBEGIN\\n  DECLARE y INT;', 'SET y = x;', 'RETURN y;', 'END\\nSELECT f(1);']\n\n[exit code 0]"
+  },
+  {
+   "turn": 50,
+   "content": "",
+   "reasoning": "So the current `_is_create` flag is only set by `CREATE` DDL keywords. The WITH FUNCTION case doesn't set `_is_create`. The fix: track BEGIN/END blocks generally (not just for CREATE), so semicolons inside BEGIN...END don't split.\n\nBut careful: begintag.sql (`begin; update foo...; commit;`) splits into 3 statements. That's the existing test that must keep working? The task says \"Everything split() already handles must keep working.\" Hmm \u2014 begintag.sql has `begin;` with no matching `END`, so semicolons there don't have a corresponding END. If we track BEGIN..END generally, then `begin; update foo set bar = 1; commit;` would be: BEGIN (depth 1), `;` inside \u2192 not split; then `update...` no semicolon \u2014 wait, update has `;` inside the block then... but there's no `END` in the input. When there's no matching END, we'd treat everything after BEGIN as inside the block forever, which would break the begintag test (expects 3 statements splitting at each semicolon).\n\nHmm. Let me check the test again: `begintag.sql`:\n```\nbegin;\nupdate foo\n       set bar = 1;\ncommit;\n```\nExpects 3 statements: 'begin;', 'update foo\\n set bar=1;', 'commit;'.\n\nIf we track BEGIN depth generally and increment on BEGIN, then `begin;` \u2192 semicolon at level... the current code returns 0 for BEGIN when not create. So `;` after BEGIN splits \u2014 the test passes because current code ignores BEGIN entirely unless _is_create.\n\nSo if I make BEGIN tracking universal (regardless of _is_create), then this test breaks (begin; update; commit; would become 1 statement since there's no END).\n\nOptions:\n1. Track BEGIN..END blocks universally but only suppress splitting if the block actually terminates (has END)... too complex to know in advance.\n2. Track BEGIN..END blocks universally, but if EOF happens at depth > 0, reset/split at the last level? That could break the begintag test since EOF at depth 1... Actually we could handle EOF-unbalanced by ending the statement at each semicolon within the block... that's getting complicated.\n\nAlternative: follow the task requirement exactly. The task says:\n\n\"Expected: semicolons inside a `BEGIN ... END` block do not end the statement; the statement ends at the first semicolon after the block's `END`, or at the end of the input. Everything split() already handles must keep working.\"\n\nSo in BEGIN...END blocks, semicolons don't split. begintag.sql has `begin;` but no END. If BEGIN increments depth and we have no END, then `begin;` \u2014 the semicolon comes while depth is 1. If semicolons inside a BEGIN block never split, this would break begintag.sql.\n\nHmm, but maybe we should treat \"BEGIN\" as starting a block only when... Actually maybe the safest approach matching the task: track BEGIN depth generally, and at the END token decrement. For the begintag.sql case: BEGIN depth 1, then `;` \u2192 inside block \u2192 no split. That would merge everything into one statement. That breaks the existing test.\n\nAlternatively \u2014 hmm. Perhaps the right interpretation: a BEGIN block only suppresses splitting when there IS an END. Since we process token-stream linearly, we could buffer and look ahead... too complex.\n\nAlternative: count depth of BEGIN/END and treat a BEGIN as a \"block\" only if a matching END appears later in the same statement... We can't look ahead easily in the streaming fashion.\n\nLet me think about what design would pass both the existing tests and the new requirement.\n\nExisting tests to keep:\n- begintag.sql: `begin; update ...; commit;` \u2192 3 statements. begin never has END. So a BEGIN without matching END should NOT suppress semicolons? Or... maybe it should suppress until... hmm.\n\nActually wait \u2014 maybe the rule should be: a BEGIN block suppresses splitting until END. If EOF arrives while depth > 0 (unbalanced), fall back to splitting at semicolons? That handles begintag.sql by... no \u2014 we already consumed tokens; tokens are emitted into statement buffer; we can't easily \"un-split\".\n\nHmm, actually we could: when a semicolon occurs at level <= 0 and",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"python << 'EOF'\\nimport sqlparse\\nsql = '''BEGIN\\n  DECLARE x INT;\\n  SET x = 1;\\nEND;\\nSELECT 1;'''\\nprint(sqlparse.split(sql))\\nEOF\"}"
+     },
+     "id": "BooooOLirHbS3fzYsXBfxjoJh4DQ2OK2"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "['BEGIN\\n  DECLARE x INT;', 'SET x = 1;', 'END;', 'SELECT 1;']\n\n[exit code 0]"
+  }
+ ]
+}

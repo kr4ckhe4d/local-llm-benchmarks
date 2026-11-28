@@ -82,6 +82,41 @@ The two models fail differently:
 * **Stock ran out of turns more often** (22 runs against 17). Those runs neither pass nor
   claim; they fail honestly.
 
+## Inkling-2-Mini, 2026-11-28: more passes, no false claims, twice the time
+
+Same harness, tasks and limits, on the router's `inkling-2-mini-q8-128k` preset (Unsloth UD-Q8_K_XL, R9700 alone,
+128K, `-ub 512`, the preset's sampling: temperature 1.0, top-p 1.0), router build `ad3ef916b`. "Thinking off" is not
+quite off for Inkling: its template has no off switch, the preset asks for effort 0 and the router's thinking patch
+gives it up to 1,024 tokens per turn, so it thinks briefly on every turn where Qwen3.8 writes none.
+
+| | runs pass | tasks passed all 3 runs | false claims | correct when it says "done" | synthetic / real | turn limit | wall / run | tokens / run |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Qwen3.8-27B (stock) | 42/63 (67%) | 11/21 | 4 | 37/41 (90%) | 26/30 / 16/33 | 22 | 132 s | 4.9K |
+| Huihui-Qwen3.8-27B | 42/63 (67%) | 10/21 | 6 | 39/45 (87%) | 24/30 / 18/33 | 17 | 135 s | 4.4K |
+| **Inkling-2-Mini Q8** | **47/63 (75%)** | **14/21** | **0** | **42/42 (100%)** | **30/30** / 17/33 | 20 | **270 s** | **12.8K** |
+
+* **The gain is all on the synthetic repos** (30 of 30, where the Qwens dropped 4 and 6), including `slow-dedupe`
+  3/3, which both Qwen models failed every time. On the real repos it is level with them: 17 of 33 against 16 and 18.
+  Five runs is inside this eval's noise (about 6 of 63), so the overall lead is suggestive, not settled.
+* **It never said "done" when it wasn't.** 42 claims, 42 passes. Every one of its 16 failures ran out of turns
+  (or, once, lost the server; below) rather than ending with a wrong claim. On click `func-type-message`, where stock
+  claimed done 3 times with the wrong reading of an empty error message, Inkling passed 3/3.
+* **Where it is weaker:** click `default-map-nargs` 0/3 (both Qwens 3/3), tomlkit `multiline-comment` 0/3 (stock 2/3),
+  and Python-Markdown 1/3 like stock.
+* **It takes twice as long:** 283 minutes for the 63 runs against 139 for stock. It writes 2.6 times the tokens
+  (12.8K a run against 4.9K) in fewer turns (25.4 against 27.1), and about three quarters of what it writes is its
+  per-turn think. It generates at about the same speed as Qwen3.8-27B Q6 with MTP (49 tok/s in this run's log,
+  against ~57 empty for the Q6), so the extra time is the thinking, not the engine.
+* **One server crash.** On the last run (`tomlkit-sort-keys`, repeat 3, turn 42) the Inkling `llama-server` child
+  segfaulted inside `libamdhip64` while launching a captured one-token graph (`ggml_cuda_graph_launch_chunk`), after
+  about 4.7 hours of serving and ~800K graph reuses; the router reported `exited with status 1` and the run ended on
+  an HTTP 500. It passed the other two repeats of that task, so the crash probably cost one pass. Not reproduced or
+  diagnosed; it is the same family as the `hipGraphExecUpdate` segfault that made the branch capture graphs for
+  one-token batches only.
+
+Results: [`results/inkling-2-mini-q8/`](benchmarks/agent-eval/results/inkling-2-mini-q8/summary.txt). The one-task pilot
+(`results/pilot-inkling/`) checked that Inkling's tool calls parse through this loop before the full run.
+
 ## Per task
 
 | task | kind | Huihui | stock |

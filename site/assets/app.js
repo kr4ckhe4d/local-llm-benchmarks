@@ -889,7 +889,7 @@
     setTitle('Agentic coding');
     const A = D.m.agent || [];
     const NAMES = {
-      'huihui-qwen3.8-27B-q6': 'Huihui-Qwen3.8-27B UD-Q6_K_XL', 'qwen3.8-27B-q6': 'Qwen3.8-27B UD-Q6_K (stock)',
+      'inkling-2-mini-q8': 'Inkling-2-Mini UD-Q8_K_XL', 'huihui-qwen3.8-27B-q6': 'Huihui-Qwen3.8-27B UD-Q6_K_XL', 'qwen3.8-27B-q6': 'Qwen3.8-27B UD-Q6_K (stock)',
       'qwen3.5-27B-uncensored-q6': 'Qwen3.5-27B Uncensored Q6_K', 'qwen3.5-9B-uncensored-q8': 'Qwen3.5-9B Uncensored Q8_0',
     };
     const name = a => NAMES[a.label] || a.label;
@@ -907,7 +907,7 @@
     const heat = (k, n) => { if (!n) return `<td class="c">—</td>`; const lv = Math.round(6 * k / n); return `<td class="c l${lv}" title="${k} of ${n} runs pass">${k}/${n}</td>`; };
     app.innerHTML = `<div class="wrap">
       <div class="page-h"><div class="eyebrow">agent-eval · ${esc(full[0]?.date || '')}</div><h1>Agentic coding: real bugs, hidden tests</h1>
-      <p>Each model gets a repo it has never seen and a bug report, in one small tool loop (<span class="mono">bash</span>, <span class="mono">read_file</span>, <span class="mono">write_file</span>, <span class="mono">edit_file</span>, <span class="mono">finish</span>) with every command sandboxed and no network. Hidden tests decide whether the work is done. 21 tasks: 10 synthetic repos and 11 real fixes from click, tomlkit, sqlparse and Python-Markdown; 3 repeats; thinking off. A <b>false claim</b> is <span class="mono">finish("done")</span> with the hidden tests failing. Write-up: ${doc ? `<a href="#/doc/agent-eval">agent-eval.md</a>` : 'agent-eval.md'} · harness, tasks and transcripts: <a href="#/files/benchmarks/agent-eval/">agent-eval/</a>.</p></div>
+      <p>Each model gets a repo it has never seen and a bug report, in one small tool loop (<span class="mono">bash</span>, <span class="mono">read_file</span>, <span class="mono">write_file</span>, <span class="mono">edit_file</span>, <span class="mono">finish</span>) with every command sandboxed and no network. Hidden tests decide whether the work is done. 21 tasks: 10 synthetic repos and 11 real fixes from click, tomlkit, sqlparse and Python-Markdown; 3 repeats; thinking off (Inkling-2-Mini keeps a short think on every turn, which its template cannot turn off). A <b>false claim</b> is <span class="mono">finish("done")</span> with the hidden tests failing. Write-up: ${doc ? `<a href="#/doc/agent-eval">agent-eval.md</a>` : 'agent-eval.md'} · harness, tasks and transcripts: <a href="#/files/benchmarks/agent-eval/">agent-eval/</a>.</p></div>
       <div class="tiles">${full.map(tile).join('')}</div>
       <div class="grid2">
         <div class="card"><h3>Runs that pass</h3><p class="sub">Percent of runs whose hidden tests pass. Partial runs are faded; hover for the full-run models on the same tasks.</p><div id="g-pass"></div></div>

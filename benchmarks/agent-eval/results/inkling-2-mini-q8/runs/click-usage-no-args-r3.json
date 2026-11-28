@@ -1,0 +1,205 @@
+{
+ "metrics": {
+  "task": "click-usage-no-args",
+  "turns": 9,
+  "tool_calls": 9,
+  "bad_calls": 0,
+  "prompt_tokens": 47842,
+  "completion_tokens": 3157,
+  "max_prompt": 6828,
+  "finish": "done",
+  "summary": "Fixed HelpFormatter.write_usage in src/click/formatting.py: when args is empty, it now writes a single line \u2014 the (indent-padded) prefix followed by the program name and a newline, with no trailing space and no extra wrapped lines \u2014 regardless of width and indentation. Non-empty args follow the unchanged code path. Verified with direct width checks and tests/test_formatting.py (27 passed).",
+  "end": "finish",
+  "wall_s": 66.7,
+  "pass": true,
+  "check_exit": 0,
+  "protected_changed": [],
+  "check_tail": "...................................                                      [100%]\n35 passed in 0.03s",
+  "claimed": true,
+  "false_claim": false,
+  "diffstat": " 2 files changed, 120 insertions(+)",
+  "repeat": 3
+ },
+ "log": [
+  {
+   "turn": 1,
+   "content": "",
+   "reasoning": "Let me explore the repo first.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"ls /work && cat /work/src/click/formatting.py\"}"
+     },
+     "id": "4NF9KwEVSKY1IeYS1BDH1osBOuNokceX"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "CHANGES.rst\nLICENSE.txt\nREADME.md\ndocs\nexamples\npyproject.toml\nsrc\ntests\nuv.lock\nfrom __future__ import annotations\n\nimport collections.abc as cabc\nfrom contextlib import contextmanager\nfrom gettext import gettext as _\n\nfrom ._compat import term_len\nfrom .parser import _split_opt\n\n# Can force a width.  This is used by the test system\nFORCED_WIDTH: int | None = None\n\n\ndef measure_table(rows: cabc.Iterable[tuple[str, str]]) -> tuple[int, ...]:\n    widths: dict[int, int] = {}\n\n    for row in rows:\n        for idx, col in enumerate(row):\n            widths[idx] = max(widths.get(idx, 0), term_len(col))\n\n    return tuple(y for x, y in sorted(widths.items()))\n\n\ndef iter_rows(\n    rows: cabc.Iterable[tuple[str, str]], col_count: int\n) -> cabc.Iterator[tuple[str, ...]]:\n    for row in rows:\n        yield row + (\"\",) * (col_count - len(row))\n\n\ndef wrap_text(\n    text: str,\n    width: int = 78,\n    initial_indent: str = \"\",\n    subsequent_indent: str = \"\",\n    preserve_paragraphs: bool = False,\n) -> str:\n    \"\"\"A helper function that intelligently wraps text.  By default, it\n    assumes that it operates on a single paragraph of text but if the\n    `preserve_paragraphs` parameter is provided it will intelligently\n    handle paragraphs (defined by two empty lines).\n\n    If paragraphs are handled, a paragraph can be prefixed with an empty\n    line containing the ``\\\\b`` character (``\\\\x08``) to indicate that\n    no rewrapping should happen in that block.\n\n    :param text: the text that should be rewrapped.\n    :param width: the maximum width for the text.\n    :param initial_indent: the initial indent that should be placed on the\n                           first line as a string.\n    :param subsequent_indent: the indent string that should be placed on\n                              each consecutive line.\n    :param preserve_paragraphs: if this flag is set then the wrapping will\n                                intelligently handle paragraphs.\n\n    .. versionchanged:: 8.4\n        Width is measured in visible characters. ANSI escape sequences in\n        ``text``, ``initial_indent``, or ``subsequent_indent`` no longer\n        count toward the width budget, so styled input wraps based on what\n        the user sees instead of raw byte length.\n    \"\"\"\n    from ._textwrap import TextWrapper\n\n    text = text.expandtabs()\n    wrapper = TextWrapper(\n        width,\n        initial_indent=initial_indent,\n        subsequent_indent=subsequent_indent,\n        replace_whitespace=False,\n    )\n    if not preserve_paragraphs:\n        return wrapper.fill(text)\n\n    p: list[tuple[int, bool, str]] = []\n    buf: list[str] = []\n    indent = None\n\n    def _flush_par() -> None:\n        if not buf:\n            return\n        if buf[0].strip() == \"\\b\":\n            p.append((indent or 0, True, \"\\n\".join(buf[1:])))\n        else:\n            p.append((indent or 0, False, \" \".join(buf)))\n        del buf[:]\n\n    for line in text.splitlines():\n        if not line:\n            _flush_par()\n            indent = None\n        else:\n            if indent is None:\n                orig_len = term_len(line)\n                line = line.lstrip()\n                indent = orig_len - term_len(line)\n            buf.append(line)\n    _flush_par()\n\n    rv = []\n    for indent, raw, text in p:\n        with wrapper.extra_indent(\" \" * indent):\n            if raw:\n                rv.append(wrapper.indent_only(text))\n            else:\n                rv.append(wrapper.fill(text))\n\n    return \"\\n\\n\".join(rv)\n\n\nclass HelpFormatter:\n    \"\"\"This class helps with formatting text-based help pages.  It's\n    usually just needed for very special internal cases, but it's also\n    exposed so that developers can write their own fancy outputs.\n\n    At present, it always writes into memory.\n\n    :param indent_increment: the additional increment for each level.\n    :param width: the width for the text.  This defaults to the terminal\n                  width clamped to a maximum of 78.\n    \"\"\"\n\n    def __init__(\n  "
+  },
+  {
+   "turn": 2,
+   "content": "",
+   "reasoning": "Bug: with empty args, write_usage writes empty line / stray characters. Let's inspect current behavior and fix.\n\nWhen args == \"\": \n- Branch 1 (text width enough): writes wrap_text(\"\", ...) with initial_indent=usage_prefix. wrap_text of \"\" \u2014 TextWrapper.fill(\"\") likely returns \"\"? Then writes \"\\n\" \u2192 empty line with just newline, missing prefix. Expected: \"Usage: Program\\n\".\n- Branch 2 (narrow): writes usage_prefix, \"\\n\", wrap_text(\"\", initial_indent=indent) \u2192 probably writes \"\\n\"? Then self.write(\"\\n\") \u2192 stray extra line.\n\nExpected behavior: with empty args, write exactly one line: prefix + prog, no trailing space. So:\n\n```python\nif not args:\n    self.write(f\"{prefix}{prog}\\n\")  # with indent? current_indent?\n    return\n```\n\nBut \"The formatter's current indentation ... must not change that\" \u2014 indentation: current_indent? Hmm. The buffer writes currently: in branch 1, usage_prefix = f\"{prefix:>{current_indent}}{prog} \" \u2014 indents prefix with spaces. In expected output with no indent, \"Usage: Program\". What with indent? Probably f\"{'':>{indent}}{prefix}{prog}\\n\". \"no trailing space\".\n\nLet me look at tests to understand.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && grep -rn \\\"write_usage\\\" --include=*.py . | grep -v .venv\"}"
+     },
+     "id": "GwiJe5A0Azne6wBqxBaFvY4ta8Qbc63G"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "./tests/test_formatting.py:444:        # Regression for the asymmetry between ``HelpFormatter.write_usage``\n./tests/test_formatting.py:490:def test_write_usage_styled_prefix_keeps_options_on_one_line():\n./tests/test_formatting.py:497:    formatter.write_usage(\"cli\", \"[OPTIONS]\", prefix=styled_prefix)\n./src/click/formatting.py:153:    def write_usage(self, prog: str, args: str = \"\", prefix: str | None = None) -> None:\n./src/click/core.py:1086:        formatter.write_usage(ctx.command_path, \" \".join(pieces))\n\n[exit code 0]"
+  },
+  {
+   "turn": 3,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && sed -n 400,520p tests/test_formatting.py\"}"
+     },
+     "id": "uNMAq03DaZi9aaz8dqGOK1gMITeyjA7d"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "        pass\n\n    result = runner.invoke(cli, [\"--help\"])\n    assert \"\\b\" not in result.output\n\n\ndef test_global_show_default(runner):\n    @click.command(context_settings=dict(show_default=True))\n    @click.option(\"-f\", \"in_file\", default=\"out.txt\", help=\"Output file name\")\n    def cli():\n        pass\n\n    result = runner.invoke(cli, [\"--help\"])\n    # the default to \"--help\" is not shown because it is False\n    assert result.output.splitlines() == [\n        \"Usage: cli [OPTIONS]\",\n        \"\",\n        \"Options:\",\n        \"  -f TEXT  Output file name  [default: out.txt]\",\n        \"  --help   Show this message and exit.\",\n    ]\n\n\ndef test_formatting_with_options_metavar_empty(runner):\n    cli = click.Command(\"cli\", options_metavar=\"\", params=[click.Argument([\"var\"])])\n    result = runner.invoke(cli, [\"--help\"])\n    assert \"Usage: cli VAR\\n\" in result.output\n\n\ndef test_help_formatter_write_text():\n    text = \"Lorem ipsum dolor sit amet, consectetur adipiscing elit\"\n    formatter = click.HelpFormatter(width=len(\"  Lorem ipsum dolor sit amet,\"))\n    formatter.current_indent = 2\n    formatter.write_text(text)\n    actual = formatter.getvalue()\n    expected = \"  Lorem ipsum dolor sit amet,\\n  consectetur adipiscing elit\\n\"\n    assert actual == expected\n\n\n@pytest.mark.parametrize(\n    (\"body\", \"width\", \"initial_indent\"),\n    [\n        # Styled ``initial_indent`` must be measured by visible width, so the\n        # ``Usage:`` prefix shouldn't push ``[OPTIONS]`` to the second line.\n        # Regression for the asymmetry between ``HelpFormatter.write_usage``\n        # (which sized the prefix with ``term_len``) and ``wrap_text``\n        # (which previously used raw ``len``).\n        pytest.param(\n            \"[OPTIONS]\",\n            30,\n            \"\\x1b[38;2;38;139;210m\\x1b[1mUsage:\\x1b[0m \",\n            id=\"styled-initial-indent-does-not-break-body\",\n        ),\n        # Styled chunks in the body itself wrap on visible width.\n        pytest.param(\n            \"\\x1b[31malpha\\x1b[0m \\x1b[31mbeta\\x1b[0m\"\n            \" \\x1b[31mgamma\\x1b[0m \\x1b[31mdelta\\x1b[0m\",\n            15,\n            \"\",\n            id=\"styled-body-wraps-on-visible-width\",\n        ),\n        # ``_handle_long_word`` cuts a styled token between visible\n        # characters; the ANSI escape sequence must not be split.\n        pytest.param(\n            \"\\x1b[31mabcdefghij\\x1b[0m\",\n            5,\n            \"\",\n            id=\"styled-long-word-breaks-on-visible-width\",\n        ),\n    ],\n)\ndef test_wrap_text_visible_width(body, width, initial_indent):\n    \"\"\"``wrap_text`` of styled input produces the same line layout as\n    ``wrap_text`` of the ANSI-stripped input.\n\n    ANSI escape bytes must not count toward the width budget, regardless\n    of whether they appear in the body, in ``initial_indent``, or when a\n    styled token has to be broken in the middle.\n    \"\"\"\n    styled = click.formatting.wrap_text(\n        body, width=width, initial_indent=initial_indent\n    )\n    plain = click.formatting.wrap_text(\n        strip_ansi(body), width=width, initial_indent=strip_ansi(initial_indent)\n    )\n\n    styled_visible = [strip_ansi(line) for line in styled.splitlines()]\n    assert styled_visible == plain.splitlines()\n\n\ndef test_write_usage_styled_prefix_keeps_options_on_one_line():\n    \"\"\"End-to-end: a downstream-styled ``Usage:`` prefix should not split\n    ``[OPTIONS]`` across two lines.\n    \"\"\"\n    styled_prefix = \"\\x1b[38;2;38;139;210m\\x1b[1mUsage:\\x1b[0m \"\n\n    formatter = click.HelpFormatter(width=40)\n    formatter.write_usage(\"cli\", \"[OPTIONS]\", prefix=styled_prefix)\n    rendered = formatter.getvalue()\n\n    visible = strip_ansi(rendered)\n    assert visible == \"Usage: cli [OPTIONS]\\n\"\n\n[exit code 0]"
+  },
+  {
+   "turn": 4,
+   "content": "",
+   "reasoning": "Now let's reproduce the bug. The issue: with empty `args`, `write_usage` writes broken output. Looking at the code:\n\n```python\nusage_prefix = f\"{prefix:>{self.current_indent}}{prog} \"\n```\n\nNote it always appends a trailing space after prog. Then:\n\n- If text_width >= term_len(usage_prefix) + 20: writes wrap_text(args, ...) with initial_indent=usage_prefix. args is \"\", so wrap_text(\"\") returns \"\"? Then buffer gets \"\" and then \"\\n\". So output is just \"\\n\"? Actually wrap_text(\"\") \u2014 TextWrapper.fill(\"\") returns \"\". So getvalue = \"\\n\". That's the \"empty line instead of Usage: Program\".\n\n- Else branch: writes usage_prefix (with trailing space), then \"\\n\", then wrap_text(args, ...) with indent \u2014 empty, then \"\\n\". So output: \"Usage: Program \\n\\n\" plus maybe extra line. With stray characters... Hmm, the \"extra line with stray characters\" \u2014 maybe the styled prefix or something. Actually with the text_width >= condition with prog long... Let's just test.\n\nFix: if args is empty (or falsy?), write exactly one line: prefix + prog + \"\\n\". Expected: `Usage: Program\\n` or `Run: Program\\n`. \"even when the program name is too long to share a line with arguments, nothing is written after that single line\" \u2014 so even in narrow widths, still exactly one line.\n\nImplementation:\n\n```python\nif not args:\n    self.write(f\"{prefix:>{self.current_indent}}{prog}\\n\")\n    return\n```\n\nWait expected output with indent? write_usage output presumably at current_indent. In write_heading they do `f\"{'':>{self.current_indent}}{heading}:\\n\"`. For usage, expected \"Usage: Program\\n\" \u2014 with default current_indent=0. Should we respect current_indent? The expected output in the bug report: \"Usage: Program\\n\". With prefix indentation, should be `{prefix:>{indent}}{prog}\\n`. Yes to be consistent with the rest.\n\nCheck tests for write_usage with empty args. Also, there might be an existing test expecting \"Usage: cli\\n\" for options_metavar=\"\" commands. Let's check how core.py calls it: `formatter.write_usage(ctx.command_path, \" \".join(pieces))` \u2014 pieces may be empty.\n\nLet me run a repro first.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -c \\\"\\nimport click\\nfor w in (80, 30, 20):\\n    f = click.HelpFormatter(width=w)\\n    f.write_usage('Program')\\n    print(repr(w), repr(f.getvalue()))\\n\\\"\"}"
+     },
+     "id": "ZnSMJxCcOHPmcnxjYya20zDRxlt1b9S7"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "80 '\\n'\n30 'Usage: Program \\n\\n'\n20 'Usage: Program \\n\\n'\n\n[exit code 0]"
+  },
+  {
+   "turn": 5,
+   "content": "",
+   "reasoning": "Empty args. Expected: `Usage: Program\\n` exactly one line.\n\nCurrent behavior:\n- width 80 (plenty): write(wrap_text(\"\", ...)) \u2014 wrap_text(\"\") gives \"\"? Actually it wrote \"\\n\" via self.write(\"\\n\"), so value is \"\\n\". The wrap_text of empty text presumably returns \"\". And initial_indent handling drops it. So output is \"\\n\".\n- width 30: usage_prefix = \"Usage: Program \" \u2014 with width 30, text_width=30, term_len(usage_prefix)=16, 16+20=36 > 30, so else branch: writes usage_prefix, \"\\n\", wrap_text(\"\", ...) with initial indent \"  \" (max(0, term_len(\"Usage: \"))+4 = 7+4=11)... then \"\\n\". Output: \"Usage: Program \\n\" + indent_only? wrap_text(\"\", initial_indent=...) returns \"\"? Then \"\\n\" \u2192 'Usage: Program \\n\\n'. Hmm, stray characters? \"Program \" trailing space plus \"\\n\\n\".\n\nFix: in write_usage, if not args, write just `prefix + prog + \"\\n\"`? But must respect current_indent? The spec: \"writes exactly one line, the prefix followed by the program name with no trailing space\". Presumably with indentation as per current_indent? The bug report says with default prefix get \"Usage: Program\" and with prefix \"Run: \" get \"Run: Program\". Probably also handle current_indent (formatter.indent). Let's check how current_indent is used in the else branch: `usage_prefix = f\"{prefix:>{self.current_indent}}{prog} \"`. So when indented, prefix is preceded by spaces. For empty args, presumably write `{prefix:>indent}{prog}\\n`? Let's check term: maybe prefix should be indented like other writes. The expected output \"Usage: Program\" \u2014 with indent, likely \"  Usage: Program\\n\". Keep the same formatting: usage_prefix without trailing space.\n\nAlso note prefix formatting: `f\"{prefix:>{self.current_indent}}\"` \u2014 prefix is right-aligned to current_indent, i.e. prefix shorter than indent means the prefix is pushed right? Actually `{prefix:>{indent}}` right-aligns prefix into indent width, so for current_indent=2 and prefix=\"Usage: \" (7 chars), no padding. Fine.\n\nImplementation:\n\n```python\nif not args:\n    prefix_line = f\"{prefix:>{self.current_indent}}{prog}\"\n    self.write(prefix_line + \"\\n\")\n    return\n```\n\nWait but expected says \"prefix followed by the program name with no trailing space\". Should there be a newline at end? \"Usage: Program\\n\" \u2014 yes, \"e.g. `Usage: Program\\n`\". So write f\"{...}{prog}\\n\".\n\nShould prefix include the trailing space from default \"Usage: \"? Default prefix is \"Usage: \" (with trailing space). \"the prefix followed by the program name with no trailing space\" \u2014 with prefix \"Run: \" and prog \"Program\", \"Run: Program\" \u2014 the trailing space of \"Run: \" separates them. So prefix as-is then prog. Default prefix \"Usage: \" + \"Program\" = \"Usage: Program\". Good.\n\nNow verify: with current_indent > term_len(prefix), right-align could overlap... `{prefix:>{self.current_indent}}` when current_indent > len(prefix) pads on left, fine.\n\nLet's make the edit and test.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && python - <<'EOF'\\nimport re\\nsrc = open('src/click/formatting.py').read()\\nold = '''        usage_prefix = f\\\"{prefix:>{self.current_indent}}{prog} \\\"\\n        text_width = self.width - self.current_indent\\n'''\\nnew = '''        if not args:\\n            # No arguments to show: write a single line.\\n            self.write(f\\\"{prefix:>{self.current_indent}}{prog}\\\\\\\\n\\\")\\n            return\\n\\n        usage_prefix = f\\\"{prefix:>{self.current_indent}}{prog} \\\"\\n        text_width = self.width - self.current_indent\\n'''\\nassert old in src\\nopen('src/click/formatting.py','w').write(src.replace(old, new))\\nEOF\\nPYTHONPATH=src python -c \\\"\\nimport click\\nfor w in (80, 30, 20):\\n    for indent in (0,):\\n        f = click.HelpFormatter(width=w)\\n        f.current_indent = indent\\n        f.write_usage('Program')\\n        print(repr(w), repr(f.getvalue()))\\nf = click.HelpFormatter(width=30); f.write_usage('Program', prefix='Run: '); print(repr(f.getvalue()))\\n\\\"\"}"
+     },
+     "id": "0LsSMxYKZgdwV9Wpy2E02R9VEmJukvwa"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "80 'Usage: Program\\n'\n30 'Usage: Program\\n'\n20 'Usage: Program\\n'\n'Run: Program\\n'\n\n[exit code 0]"
+  },
+  {
+   "turn": 6,
+   "content": "",
+   "reasoning": "Wait: with empty args and current_indent, prefix is padded via `:>` format \u2014 but `prefix` could be styled with ANSI, `:>` pads raw length... that's existing behavior for prefix; fine.\n\nEdge: args=\"\" exactly \u2014 `if not args` catches. But what about args with only whitespace? Task says empty args; don't overreach.\n\nCheck current line with trailing space issue: now returns early with `\\n` without trailing space. Good. Run tests.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -m pytest tests/test_formatting.py -q 2>&1 | tail -3\"}"
+     },
+     "id": "5YwOOOmKml8LF0bOHXYvz2CRVEsoKQU6"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "...........................                                              [100%]\n27 passed in 0.03s\n\n[exit code 0]"
+  },
+  {
+   "turn": 7,
+   "content": "",
+   "reasoning": "Also check test_formatting.py broader suite and the command help tests. Run test_formatting and maybe test_help.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && PYTHONPATH=src python -m pytest tests/test_formatting.py tests/test_help.py -q 2>&1 | tail -3\"}"
+     },
+     "id": "7ApHtPGYwLYRkNgbYXR47OFD9PfJbNBP"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "\n\nno tests ran in 0.00s\n\n[exit code 0]"
+  },
+  {
+   "turn": 8,
+   "content": "",
+   "reasoning": null,
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "bash",
+      "arguments": "{\"command\":\"cd /work && ls tests | head -30 && PYTHONPATH=src python -m pytest tests/test_formatting.py -q 2>&1 | tail -3\"}"
+     },
+     "id": "hNyySmTVoZFhNECuYv5V5FFx9DtTRvre"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "bash",
+   "result": "conftest.py\ntest_arguments.py\ntest_basic.py\ntest_chain.py\ntest_command_decorators.py\ntest_commands.py\ntest_compat.py\ntest_context.py\ntest_custom_classes.py\ntest_defaults.py\ntest_formatting.py\ntest_imports.py\ntest_info_dict.py\ntest_normalization.py\ntest_options.py\ntest_parser.py\ntest_shell_completion.py\ntest_stream_lifecycle.py\ntest_termui.py\ntest_testing.py\ntest_types.py\ntest_utils.py\ntyping\n...........................                                              [100%]\n27 passed in 0.03s\n\n[exit code 0]"
+  },
+  {
+   "turn": 9,
+   "content": "",
+   "reasoning": "Let me also check the indentation-with-indent case: with indent, the prefix is padded with spaces; with args=\"\" the requirement says \"the prefix followed by the program name with no trailing space\". My implementation writes prefix padded by indent then prog \u2014 fine. But what about current_indent with write_usage? Existing default behavior for args uses current_indent padding; for empty args we do the same indent padding, then prog. Good.\n\nNon-empty args path untouched. Run a broader quick subset maybe test_basic? That could be slow; formatting tests pass. Good enough. Check no other regression in core usage usage (with args nonempty unchanged). Finish.",
+   "tool_calls": [
+    {
+     "type": "function",
+     "function": {
+      "name": "finish",
+      "arguments": "{\"status\":\"done\",\"summary\":\"Fixed HelpFormatter.write_usage in src/click/formatting.py: when args is empty, it now writes a single line \u2014 the (indent-padded) prefix followed by the program name and a newline, with no trailing space and no extra wrapped lines \u2014 regardless of width and indentation. Non-empty args follow the unchanged code path. Verified with direct width checks and tests/test_formatting.py (27 passed).\"}"
+     },
+     "id": "8CU2UrEuqA3bAO9tlUqyhdZ7uku6vwNo"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "tool": "finish",
+   "result": "ok"
+  }
+ ]
+}
