@@ -9,13 +9,17 @@
 # settings). The model files are not touched. strata-*.json is backed up first and any change is printed, because a
 # setup run has dropped hand-tuned keys before (strata.md).
 #
-# llama.cpp: ~/llama.cpp runs branch `router` = upstream master + inkling2-strata-ideas (which is inkling2-speedups plus
-# the Strata-inspired commits on top, since 2026-11-23), with the per-request thinking
-# patch uncommitted on top. This follows the steps in the llama-router-branch memory:
+# llama.cpp, three branches on the fork (kr4ckhe4d/llama.cpp, remote "fork"):
+#   master                 upstream as it is, never committed to
+#   inkling2-strata-ideas  the Inkling fixes, rebased onto master ($BRANCH, worktree ~/llama.cpp-inkling)
+#   router                 $BRANCH + local-only commits (the per-request thinking patch), what ~/llama.cpp builds
+# Steps:
 #   1. ~/llama.cpp-inkling: fetch, stash its local edits, rebase $BRANCH onto origin/master, restore edits.
-#   2. ~/llama.cpp: take the thinking patch off, `git reset --keep $BRANCH` with the models/ symlink moved
-#      out of the way (llama-models-symlink memory), put the patch back (3-way), rebuild build/.
-# Any conflict stops the script with the tree left as it is and says what to finish by hand. Nothing is pushed.
+#   2. ~/llama.cpp: rebase router's local commits onto the new $BRANCH tip with the models/ symlink moved out of
+#      the way (llama-models-symlink memory), refresh patches/llama-per-request-thinking.patch, rebuild build/.
+# Any conflict stops the script and says what to finish by hand. Nothing is pushed; afterwards, once checked:
+#   git -C ~/llama.cpp push fork origin/master:master
+#   git -C ~/llama.cpp push --force-with-lease fork inkling2-strata-ideas router
 #
 # Afterwards, before trusting a rebased llama.cpp: the KLD/llama-bench comparison and the 7-request per-request
 # thinking check (see the memories). This script does not load models.
@@ -51,12 +55,12 @@ status() {
   git -C "$WT" fetch -q origin
   local behind; behind=$(git -C "$WT" rev-list --count "$BRANCH"..origin/master)
   echo "  $BRANCH: $(git -C "$WT" rev-list --count origin/master.."$BRANCH") local commits, upstream $behind commits ahead of its base"
-  if [[ "$(git -C "$LLAMA" rev-parse HEAD)" == "$(git -C "$WT" rev-parse "$BRANCH")" ]]; then
-    echo "  ~/llama.cpp: on $BRANCH's tip ($(git -C "$LLAMA" rev-parse --short HEAD))"
+  if [[ "$(git -C "$LLAMA" merge-base router "$BRANCH")" == "$(git -C "$WT" rev-parse "$BRANCH")" ]]; then
+    echo "  ~/llama.cpp: router $(git -C "$LLAMA" rev-parse --short router) on $BRANCH's tip"
   else
-    echo "  ~/llama.cpp: $(git -C "$LLAMA" rev-parse --short HEAD), NOT $BRANCH's tip $(git -C "$WT" rev-parse --short "$BRANCH")"
+    echo "  ~/llama.cpp: router $(git -C "$LLAMA" rev-parse --short router) is NOT on $BRANCH's tip $(git -C "$WT" rev-parse --short "$BRANCH")"
   fi
-  echo "  thinking patch: $(git -C "$LLAMA" diff --quiet -- tools/server/ && echo NOT applied || echo applied)"
+  echo "  router: $(git -C "$LLAMA" rev-list --count "$BRANCH"..router) local commits on top of $BRANCH ($(git -C "$LLAMA" log --format=%s "$BRANCH"..router | grep -q 'per-request thinking' && echo thinking patch included || echo NO thinking patch))"
   echo "  router: $(router_up && echo running || echo down)"
 }
 
@@ -136,47 +140,33 @@ update_llama() {
   fi
 
   local target; target=$(git -C "$WT" rev-parse "$BRANCH")
-  if [[ "$(git -C "$LLAMA" rev-parse HEAD)" == "$target" ]] && ! git -C "$LLAMA" diff --quiet -- tools/server/; then
-    echo "    ~/llama.cpp is already on $(git -C "$LLAMA" rev-parse --short HEAD) with the thinking patch: nothing to build"
+  cd "$LLAMA"
+  [[ "$(git branch --show-current)" == "router" ]] || die "$LLAMA is not on branch router"
+  if [[ "$(git merge-base router "$target")" == "$target" ]]; then
+    echo "    router ($(git rev-parse --short HEAD)) already carries $BRANCH's tip $(git rev-parse --short "$target"): nothing to build"
     return 0
   fi
 
-  # 2. move ~/llama.cpp (router build) to the new tip
-  cd "$LLAMA"
-  [[ "$(git branch --show-current)" == "router" ]] || die "$LLAMA is not on branch router"
-  local patch="$BK/llama/thinking.patch"
-  if git diff --quiet -- tools/server/; then
-    echo "    thinking patch is not applied in ~/llama.cpp; using the saved copy"
-    cp "$SAVED_PATCH" "$patch"
-  else
-    git diff -- tools/server/ > "$patch"
-    git apply -R "$patch"
-  fi
+  # 2. move router's local-only commits (the thinking patch) onto the new tip: router = $BRANCH + those commits
   local other; other=$(git status --porcelain --untracked-files=no | grep -v '^ D models/' || true)
-  [[ -z "$other" ]] || { git apply --3way "$patch" >/dev/null 2>&1; git reset -q -- tools/server/;
-                         die "~/llama.cpp has other tracked edits, not touching it:
-$other"; }
-
-  say "llama.cpp: ~/llama.cpp $(git rev-parse --short HEAD) -> $(git rev-parse --short "$target")"
+  [[ -z "$other" ]] || die "~/llama.cpp has tracked edits, not touching it:
+$other"
+  local old_base; old_base=$(git merge-base router "$tip_before")
+  git rev-parse HEAD > "$BK/llama/router.old-sha"
+  say "llama.cpp: router $(git rev-parse --short HEAD) -> $(git rev-parse --short "$target") + $(git rev-list --count "$old_base"..router) local commits"
   mv models models.symlink-tmp
   git sparse-checkout reapply
-  if ! git reset -q --keep "$BRANCH"; then
+  if ! git rebase -q --onto "$target" "$old_base" router; then
+    git rebase --abort || true
     mv models.symlink-tmp models
-    git apply --3way "$patch" >/dev/null 2>&1 && git reset -q -- tools/server/
-    die "git reset --keep $BRANCH refused in ~/llama.cpp (patch put back, nothing else changed)"
+    die "router's local commits no longer apply on $(git rev-parse --short "$target"). router is back at $(cat "$BK/llama/router.old-sha").
+       Rebase by hand: git -C ~/llama.cpp rebase --onto $target $old_base router (move models/ aside first)"
   fi
-  [[ -e models ]] && die "reset created a real models/ next to models.symlink-tmp; move it away and rename the symlink back by hand"
+  [[ -e models ]] && die "the rebase created a real models/ next to models.symlink-tmp; move it away and rename the symlink back by hand"
   mv models.symlink-tmp models
-  [[ -L models ]] || die "models/ is not a symlink after the reset"
-
-  if ! git apply --3way "$patch"; then
-    die "the thinking patch no longer applies cleanly to tools/server/. Resolve the conflict markers there, then
-       git -C ~/llama.cpp reset -q -- tools/server/  &&  git -C ~/llama.cpp diff -- tools/server/ > $SAVED_PATCH
-       and rebuild: cmake --build ~/llama.cpp/build -j$(nproc). The patch as it was: $patch"
-  fi
-  git reset -q -- tools/server/
-  git diff -- tools/server/ > "$SAVED_PATCH"
-  echo "    thinking patch re-applied (saved copy refreshed: patches/$(basename "$SAVED_PATCH"))"
+  [[ -L models ]] || die "models/ is not a symlink after the rebase"
+  git diff "$target" router -- tools/server/ > "$SAVED_PATCH"
+  echo "    router at $(git rev-parse --short HEAD); thinking patch refreshed in patches/$(basename "$SAVED_PATCH")"
 
   # 3. rebuild with the router stopped (it spawns children from its own binary and libs)
   if router_up; then "$SWITCH" stop; fi

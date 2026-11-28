@@ -220,5 +220,50 @@ same client and GGUF as above, Strata updated to 0.2.22 / engine 0.1.69 the same
 | 125K prompt: reading / generating | 532 / 37.8 | 523 / 38.5 | 541 / 34.2 | 540 / 34.2 |
 
 Strata did not move across three engine versions. The branch gained ~3% generating and lost 1.7% reading the 125K
-prompt, which is undiagnosed. The empty-context gap is now about 10%, down from 14% at 7 commits. Through the
+prompt; the next section finds where that went, and wins it back with more. The empty-context gap is now about 10%, down from 14% at 7 commits. Through the
 server the branch generates 61.7 where `llama-bench` says 63.2: the server holds a 128K context and samples.
+
+## The 125K reading dip, and prompt batches through upstream's depth mix (2026-11-28)
+
+**The dip is real and it is flash attention.** A whole 125K prompt in `llama-bench` (R9700, `-fa 1 -ub 512
+-b 2048`), the two builds alternated twice: pre-rebase `b93bef94f` 573.6 and 573.5 tok/s, rebased `484c0fa9a`
+562.5 and 562.5, 1.9% lower. At depth 0 the two are equal (902 against 903), so it grows with the context. The
+per-launch timer (`strata-vs-llama/node-prof-timer.patch`, ported to the new dispatch site) on 512-token batches
+at 64K depth puts it in one op: `FLASH_ATTN_EXT` 437 ms against 476 (+39), while the MoE products got 23 ms
+faster and the lost `SSM_CONV`+`SCALE` prompt fusion cost about 10. The FA sources on the branch are byte-for-byte
+upstream's, and the only FA change across that rebase is upstream's loader refactor and indexed bias (#32901,
+#33063), so that is the likely cause; I did not run the old kernel against the new graph to prove it. It is not
+a general regression: Gemma 4 at 32K depth reads at 328 tok/s on all three builds. Routing Inkling's prompt
+batches through upstream's indexed-bias FA instead of the branch's `REL_BIAS` mask was 2% slower (540 against 552),
+so that is not the fix.
+
+**The bigger finding was beside it.** Plain upstream read faster than the branch at every depth (983 against 903
+at depth 0) without faster attention: its FA is the slowest of the three (510 ms). The branch builds the depth
+mix (attention over the earlier block outputs) in the shape its one-token kernel wants, transposed stacks with the
+states on the left of the second product. For 512 tokens that runs as matrix products with 2 to 5 columns per token,
+plus the `CONCAT`s that build the transposed stacks: about 150 ms per batch at 64K depth, where upstream builds
+the same math in the node order its fused `depth_mix` kernel (#33060) takes, in 30-40 ms. Commit `d5adb4cb5` builds
+prompt batches in upstream's order and permutes the multi-query results back for the callers; one-token graphs are
+unchanged.
+
+`llama-bench` on the R9700, Q8 GGUF: pre-rebase `b93bef94f`, plain upstream `15fcfc735`, branch `484c0fa9a`,
+the same with the depth-mix fix, and that rebased onto upstream `8e23278c7`:
+
+| tok/s | pre-rebase | upstream | branch | + fix | rebased |
+|---|---:|---:|---:|---:|---:|
+| pp2048, empty | 902 | 983 | 903 | 968 | **989** |
+| pp2048 at 32K depth | 687 | 716 | 678 | 724 | **725** |
+| whole 125K prompt | 573.6 | 578.3 | 562.5 | 590.0 | **589.9** |
+| tg128 | | | 63.21 | 63.12 | 63.19 |
+
+The 125K prompt now reads 2.8% faster than before the first rebase and 4.9% faster than yesterday; generation
+did not move. KLD against fresh base logits from `484c0fa9a`: `-ub 1` mean 0.000000 at 100% same top token, as
+at every earlier step; `-ub 512` mean 0.0019 at 98.2% same top, perplexity ratio 1.0011 ± 0.0013. That is
+rounding, not a mismatch: with the fused kernel switched off the new graph alone gives 0.0013 (a softmax over the
+states in a different order, different product kernels), and the previous rebase moved the same number by the
+same 0.0019. Upstream's `DEPTH_MIX` op tests pass, including the multi-token cases.
+
+The branch was then rebased onto upstream `8e23278c7` (9 commits, among them #28898, which moved weight scales
+onto the matmul itself and made the branch's scaled-`MUL_MAT_ID` alloc dep obsolete; removed in `f60336b90`).
+Every number above holds on it. Served numbers against Strata were not re-run.
+
