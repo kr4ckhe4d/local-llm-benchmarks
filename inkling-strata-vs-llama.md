@@ -265,5 +265,11 @@ same 0.0019. Upstream's `DEPTH_MIX` op tests pass, including the multi-token cas
 
 The branch was then rebased onto upstream `8e23278c7` (9 commits, among them #28898, which moved weight scales
 onto the matmul itself and made the branch's scaled-`MUL_MAT_ID` alloc dep obsolete; removed in `f60336b90`).
-Every number above holds on it. Served numbers against Strata were not re-run.
+Every number above holds on it.
+
+Served, at 128K ([`engine-ab-inkling`](benchmarks/raw/engine-ab-inkling/README.md#two-more-arms-2026-11-28-the-depth-mix-fix-and-plain-upstream-at-the-presets--ub-512)):
+the router build reads a 33K prompt at 755 tok/s (was 711) and a 125K one at 548 (was 523), now ahead of Strata's
+642 and 540; generation stays 61.7 against Strata's 68. Plain upstream `8e23278c7` with the same preset flags loads
+the 128K context at `-ub 512` without `REL_BIAS`, in 3.4 GB less VRAM (26.4 against 29.7 GB, the size of the branch's
+F16 mask), reads at 764 and 533, and generates at 39.4.
 

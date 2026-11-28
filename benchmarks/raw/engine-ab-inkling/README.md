@@ -60,7 +60,7 @@ labels (`llama-q8-branch-rebased`, `strata-q8-nodraft-0.2.22`), so the rows abov
   7 commits). At 33K Strata decodes 4% faster and the branch reads the prompt 11% faster (711 against 642). At 125K
   the branch decodes 13% faster (38.5 against 34.2) and Strata reads 3% faster (540 against 523).
 * **One cell went the wrong way: 125K prefill is 1.7% down** (532 to 523, two repetitions each, 522.2 and 523.6
-  against the old 531.5 and its pair). Not diagnosed.
+  against the old 531.5 and its pair). Diagnosed and more than won back the same day, next section.
 
 Medians of 3 (generation) and 2 (depth), as above; the widest spread across repetitions is 1.3% (the branch's prose
 generation, 60.97 to 61.78), inside the 1.5% bound above. The branch's `llama-server` was
@@ -68,6 +68,32 @@ built from `~/llama.cpp-inkling`, whose working tree carries the uncommitted per
 request handling only). Not re-run: the DSpark and SQ-20 arms, and the refusal probe below. Strata's
 no-thinking prefill and its `temperature: 0` handling (see Pitfalls) are as they were on 0.2.20 until someone checks
 them on 0.2.22.
+
+## Two more arms, 2026-11-28: the depth-mix fix, and plain upstream at the preset's `-ub 512`
+
+After the 125K dip was traced and the branch's prompt batches moved onto upstream's fused depth mix
+([`inkling-strata-vs-llama.md`](../../../inkling-strata-vs-llama.md#the-125k-reading-dip-and-prompt-batches-through-upstreams-depth-mix-2026-11-28)),
+the router build (`f60336b90` + the thinking commit, branch `router`, `ad3ef916b`) was run again, and plain
+upstream `8e23278c7` with the same 128K preset flags, to see whether upstream still needs the branch's `REL_BIAS`
+to fit 128K at `-ub 512`. `ARMS="llama-q8-upstream-8e2 llama-q8-router-depthmix" ./run.sh`, router stopped.
+
+| Arm | Code | Prose | Explain | 33K prefill | 33K decode | 125K prefill | 125K decode | Peak VRAM R9700 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| llama.cpp Q8, branch rebased, `484c0fa9a` (above) | 61.6 | 61.7 | 61.8 | 711 | 52.5 | 523 | 38.5 | 29.7 GB |
+| llama.cpp Q8, **router with the depth-mix fix**, `-ub 512` | 61.6 | 61.7 | 61.8 | **755** | 52.8 | **548** | 38.5 | 29.7 GB |
+| llama.cpp Q8, **plain upstream `8e23278c7`**, `-ub 512` | 39.3 | 39.3 | 39.4 | 764 | 36.3 | 533 | 30.7 | **26.4 GB** |
+| Strata Q8, 0.2.22 (above) | 67.7 | 68.1 | 67.8 | 642 | 54.6 | 540 | 34.2 | 27.1 GB |
+
+* **Upstream no longer needs `REL_BIAS` to fit.** Its indexed-bias attention (#33053, #33063) loads the 128K preset
+  at `-ub 512` and runs a 125K prompt through, at 3.4 GB less than the branch. That is the branch's F16 mask:
+  131,072 x 512 x 24 heads x 2 bytes is 3.2 GB.
+* **The fix shows through the server:** prompt reading +6% at 33K (711 to 755) and +4.8% at 125K (523 to 548);
+  generation unchanged. The branch now reads a 125K prompt faster than Strata (548 against 540), and a 33K one 18%
+  faster (755 against 642).
+* **Upstream reads a 33K prompt 1.2% faster than the branch** (764 against 755) and a 125K one 2.7% slower; it
+  generates 36% slower (39.4 against 61.7) and decodes 15-20% slower at depth.
+
+Medians of 3 and 2; widest spread across repetitions 1.0% (upstream's 125K prefill, 530.8 to 536.2).
 
 ## What it says
 

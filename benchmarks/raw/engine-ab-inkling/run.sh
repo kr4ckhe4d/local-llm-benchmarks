@@ -92,6 +92,10 @@ for arm in $ARMS; do
     llama-q8)          llama_arm llama-q8 ;;
     # 2026-11-23: branch inkling2-strata-ideas (~/llama.cpp-inkling), which lets 128K take -ub 512
     llama-q8-branch)   llama_arm llama-q8-branch "$HOME/llama.cpp-inkling/build/bin/llama-server" 512 ;;
+    # 2026-11-28: plain upstream 8e23278c7 (~/llama.cpp-upstream) at the preset's -ub 512, to see whether upstream's
+    # indexed-bias attention fits 128K without the branch's REL_BIAS; and the router build with the depth-mix fix
+    llama-q8-upstream-8e2) llama_arm llama-q8-upstream-8e2 "$HOME/llama.cpp-upstream/build/bin/llama-server" 512 ;;
+    llama-q8-router-depthmix) llama_arm llama-q8-router-depthmix "$LLAMA" 512 ;;
     strata-q8-nodraft) strata_arm strata-q8-nodraft "$ST/strata-inkling-2-mini-ud-q8_k_xl-nodraft.json" ;;
     strata-q8-dspark)  strata_arm strata-q8-dspark "$ST/strata-inkling-2-mini-ud-q8_k_xl.json" ;;
     # Strata's own format (SF4+MX8, 19.3 GB, DSpark drafter inside the file); output tokens still counted with the Q8 GGUF's tokenizer

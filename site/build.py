@@ -892,7 +892,10 @@ def main():
                       "strata-sq20-dspark": "Strata SQ-20 + DSpark",
                       # the same two arms re-run 2026-11-28, after the rebase and the Strata update
                       "llama-q8-branch-rebased": "llama.cpp Q8, rebased branch",
-                      "strata-q8-nodraft-0.2.22": "Strata Q8, 0.2.22"}
+                      "strata-q8-nodraft-0.2.22": "Strata Q8, 0.2.22",
+                      # 2026-11-28, later: the depth-mix fix on the router build, and plain upstream at -ub 512
+                      "llama-q8-router-depthmix": "llama.cpp Q8, depth-mix fix",
+                      "llama-q8-upstream-8e2": "llama.cpp Q8, upstream only"}
     measurements["engineab"] = []
     for e in tree:
         f = e["p"]
